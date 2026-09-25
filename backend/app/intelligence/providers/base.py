@@ -28,6 +28,7 @@ class LLMResponse:
     content: str | None = None
     tool_calls: tuple = ()
     finish_reason: str = "stop"
+    usage: dict | None = None
 
 
 @dataclass(frozen=True, slots=True)

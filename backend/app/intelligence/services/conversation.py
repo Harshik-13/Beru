@@ -2,6 +2,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from app.intelligence.services.rate_limiter import (
+    get_rate_limiter,
+)
+
 if TYPE_CHECKING:
     from app.intelligence.models.context import (
         ConversationContext,
@@ -137,6 +141,11 @@ class ConversationService:
         if not self.llm_provider:
             # Mock interpretation for testing
             return await self._mock_interpret_intent(student_context, message)
+
+        # Rate limiting check
+        limiter = get_rate_limiter()
+        if limiter:
+            limiter.check_limit(student_context.student_id)
 
         # Build context
         available_tools = self.tool_registry.get_all_definitions()
