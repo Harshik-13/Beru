@@ -12,6 +12,10 @@
 - **Pydantic schemas for internal data validation**
 - **Alembic migration for initial schema**
 - **Ownership isolation tests**
+- **Authentication context and identity resolution**
+- **Authorization primitives and service**
+- **Audit logging foundation (AuditEvent model)**
+- **Provider-neutral WhatsApp identity abstraction**
 
 ## Planned Architecture
 
@@ -23,13 +27,13 @@ Beru is a single-deployment application with clear module boundaries. Background
 
 ```
 WhatsApp ──→ [WhatsApp Adapter] ──→ [API Layer] ──→ [Security/Auth] ──→ [Service Layer] ──→ [Domain Logic]
-                                                                               │
+                                                                                │
 LLM ──→ [LLM Adapter] ──→ [Tool Dispatcher] ──→ [Backend Authorization] ──┘    │
-                                                                               │
+                                                                                │
 College Portal ──→ [Portal Adapter] ──→ [Validation] ──→ [Service Layer] ──────┘
-                                                                               │
-                                                                               ▼
-                                                                      [Database (PostgreSQL)]
+                                                                                │
+                                                                                ▼
+                                                                       [Database (PostgreSQL)]
 ```
 
 - **Backend** is the security boundary. All operations pass through authorization.
@@ -43,13 +47,13 @@ College Portal ──→ [Portal Adapter] ──→ [Validation] ──→ [Serv
 | `app/api/` | HTTP endpoints, request routing | Scaffolded |
 | `app/core/` | Configuration, environment, database | Implemented |
 | `app/domain/` | Deterministic business logic | Empty (planned) |
-| `app/models/` | SQLAlchemy ORM models | **Implemented (Student, WhatsAppIdentity)** |
-| `app/repositories/` | Database access | **Implemented (StudentRepository, WhatsAppIdentityRepository)** |
+| `app/models/` | SQLAlchemy ORM models | **Implemented (Student, WhatsAppIdentity, AuditEvent)** |
+| `app/repositories/` | Database access | **Implemented (StudentRepository, WhatsAppIdentityRepository, AuditEventRepository)** |
 | `app/schemas/` | Pydantic request/response schemas | **Implemented (internal schemas)** |
 | `app/services/` | Application services | Empty (planned) |
 | `app/integrations/` | External adapters (portal, etc.) | Empty (planned) |
 | `app/workers/` | Background jobs | Empty (planned) |
-| `app/security/` | Auth, authorization, audit | Empty (planned) |
+| `app/security/` | Auth, authorization, audit | **Implemented (context, auth, authz, audit)** |
 | `app/llm/` | LLM abstraction layer | Empty (planned) |
 | `app/whatsapp/` | WhatsApp abstraction layer | Empty (planned) |
 
@@ -71,6 +75,31 @@ External providers are behind Python abstract base classes (ABCs) or Protocols. 
 - Repositories receive an `AsyncSession` and perform operations within it.
 - Repositories do not commit; they flush to generate IDs.
 - Services commit or rollback the transaction.
+
+### Authentication & Authorization Flow
+
+```
+WhatsApp Bridge
+       ↓
+Raw IncomingIdentity (provider + external_id)
+       ↓
+AuthenticationResolver (DatabaseStudentResolver)
+       ↓
+WhatsAppIdentity lookup (provider, external_identity_id)
+       ↓
+If ACTIVE → AuthenticatedIdentity (student_id, provider, method)
+       ↓
+AuthorizationService.authorize_resource(student_id, resource_owner_id)
+       ↓
+If authorized → Service executes domain operation
+       ↓
+AuditService logs security event
+```
+
+- **No username/password authentication** — Beru is WhatsApp-first
+- **Identity resolution** — External WhatsApp identity → WhatsAppIdentity → Student
+- **Authorization** — Every resource access validated against authenticated student
+- **Audit logging** — All auth/authz events recorded immutably
 
 ### Future: WhatsApp Flow
 
@@ -122,7 +151,7 @@ Workers run as isolated processes. They consume from a job queue (to be determin
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Foundation scaffolding | ✅ Complete |
-| 2 | Database, auth, multi-user ownership | 🚧 **In Progress** (DB + ownership foundation) |
+| 2 | Database, auth, multi-user ownership | ✅ **Complete** (DB + ownership + auth + audit) |
 | 3 | WhatsApp abstraction, message processing | Not started |
 | 4 | LLM abstraction, tool dispatch | Not started |
 | 5 | Attendance domain engine | Not started |

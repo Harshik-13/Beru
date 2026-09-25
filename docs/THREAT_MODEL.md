@@ -22,6 +22,11 @@
 | **External identity collision** | Unique constraint on (provider, provider_user_id) prevents same WhatsApp identity linking to multiple students. |
 | **Ownership bypass via client input** | Student.id derived from authenticated session, never from client request. Repository layer does not enforce auth — service layer does. |
 | **Database credential leakage** | DATABASE_URL from environment only. No hardcoded credentials. Migrations contain no secrets. |
+| **Authentication bypass via identity spoofing** | WhatsAppIdentity status must be ACTIVE; disabled/revoked identities rejected. |
+| **Disabled/revoked identity reuse** | StudentResolver checks status before returning AuthenticatedIdentity. |
+| **Audit log tampering** | AuditEvent is append-only; no UPDATE/DELETE methods exposed. No public API for audit modification. |
+| **Sensitive data in audit logs** | AuditEvent stores only metadata; no secrets, tokens, or raw message contents. |
+| **Client-controlled student_id in authz** | AuthorizationService uses authenticated_student_id from context, never from request body/params. |
 
 ## Database-Specific Threats
 
@@ -31,6 +36,16 @@
 | Connection string exposure | Environment variables only. `.env.example` contains no real credentials. |
 | Migration tampering | Migrations are version-controlled. Review required for schema changes. |
 | Enum value injection | Native enums disabled (`native_enum=False`); values validated at application layer. |
+
+## Authentication-Specific Threats
+
+| Threat | Mitigation |
+|---|---|
+| WhatsApp identity spoofing | Provider-neutral identity resolution; bridge must verify identity before calling resolver. |
+| Replay attacks | Future: WhatsApp bridge provides message IDs; idempotency keys stored in audit. |
+| Bridge compromise | AuthenticationResolver interface allows swapping providers; core not tied to single bridge. |
+| Unknown identity enumeration | `get_identity_status` returns "unknown" for non-existent identities — no enumeration. |
+| Privilege escalation via authz bypass | AuthorizationService enforces ownership at service layer; repository layer has no auth. |
 
 ## Future Threats (Post-Implementation)
 

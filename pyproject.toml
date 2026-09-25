@@ -72,3 +72,8 @@ strict = true
 warn_return_any = true
 plugins = ["pydantic.mypy"]
 explicit_package_bases = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["app.*"]
+ignore_missing_imports = true

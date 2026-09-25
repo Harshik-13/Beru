@@ -1,6 +1,6 @@
 # Data Model — Beru
 
-## Implemented Entities (Milestone 2: Database Foundation)
+## Implemented Entities (Milestone 2: Database Foundation + Milestone 3: Auth Foundation)
 
 ### Student
 **Table:** `students`
@@ -36,6 +36,29 @@
 - Status enum: `active`, `disabled`, `revoked`.
 - Provider-neutral design — not tied to specific WhatsApp bridge implementation.
 
+### AuditEvent
+**Table:** `audit_events`
+
+| Column | Type | Constraints |
+|---|---|---|
+| id | UUID | PRIMARY KEY, DEFAULT gen_random_uuid() |
+| event_type | VARCHAR(50) | NOT NULL |
+| student_id | UUID | FOREIGN KEY → students.id ON DELETE SET NULL |
+| provider | VARCHAR(50) | NULLABLE |
+| external_identity_id | VARCHAR(255) | NULLABLE |
+| resource_type | VARCHAR(50) | NULLABLE |
+| resource_id | UUID | NULLABLE |
+| success | BOOLEAN | NOT NULL, DEFAULT true |
+| error_message | TEXT | NULLABLE |
+| event_metadata | TEXT | NULLABLE |
+| created_at | TIMESTAMP WITH TIME ZONE | NOT NULL, DEFAULT now() |
+| updated_at | TIMESTAMP WITH TIME ZONE | NOT NULL, DEFAULT now() |
+
+- **Indexes** on `(student_id, created_at)` and `(event_type, created_at)` for query performance.
+- Event type enum: `authentication_success`, `authentication_failure`, `identity_disabled`, `identity_revoked`, `unauthorized_access`, `authorization_failure`, `student_created`, `whatsapp_identity_created`, `whatsapp_identity_updated`.
+- Append-only by design — no UPDATE/DELETE paths in application code.
+- No secrets, credentials, or raw message payloads stored.
+
 ## Planned Entities (Future Milestones)
 
 ### AttendanceRecord
@@ -48,10 +71,6 @@
 - State machine: UPLOADED → EXTRACTING → REVIEW_REQUIRED → CONFIRMED → ARCHIVED.
 - Linked to Student.
 
-### AuditLog
-- Security-sensitive operations.
-- Immutable append-only.
-
 ## Notes
 
 - All resources must have `owner_id` (Student.id) for ownership enforcement.
@@ -63,6 +82,8 @@
 
 ```
 Student (1) ───< (N) WhatsAppIdentity
+  │
+  ├── (N) AuditEvent (nullable student_id for auth failures)
   │
   └── Future: AttendanceRecord, Timetable, etc.
 ```
