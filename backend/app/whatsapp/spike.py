@@ -165,9 +165,14 @@ class MockBaileysProvider(WhatsAppProvider):
         async def simulate_delivery():
             await asyncio.sleep(0.05)
             if self._running:
-                receipt.status = WhatsAppDeliveryStatus.DELIVERED
-                receipt.provider_timestamp = int(datetime.now(UTC).timestamp())
-                await self._delivery_queue.put(receipt)
+                delivered_receipt = WhatsAppMessageDeliveryReceipt(
+                    message_id=receipt.message_id,
+                    provider_message_id=receipt.provider_message_id,
+                    status=WhatsAppDeliveryStatus.DELIVERED,
+                    provider_timestamp=int(datetime.now(UTC).timestamp()),
+                    recipient=receipt.recipient,
+                )
+                await self._delivery_queue.put(delivered_receipt)
 
         task = asyncio.create_task(simulate_delivery())
         self._tasks.append(task)
@@ -263,7 +268,7 @@ async def run_spike():
     from app.whatsapp.provider import provider_registry
 
     provider_registry.register(MockBaileysProvider)
-    print(f"✓ Registered providers: {provider_registry.list_providers()}")
+    print(f"[OK] Registered providers: {provider_registry.list_providers()}")
 
     # 2. Create and configure provider
     provider_class = provider_registry.get("baileys")
@@ -276,7 +281,7 @@ async def run_spike():
 
     print("\n1. Initializing provider...")
     await provider.initialize(config)
-    print("   ✓ Initialized")
+    print("   [OK] Initialized")
 
     # 3. Start and observe connection lifecycle
     print("\n2. Starting provider (simulated connection)...")
@@ -285,7 +290,7 @@ async def run_spike():
     print("   Waiting for connection events...")
     connected = False
     async for event in provider.connection_events():
-        print(f"   📡 Connection: {event.state.value}")
+        print(f"   [OK] Connection: {event.state.value}")
         if event.qr_code:
             print(f"      QR Code: {event.qr_code[:30]}...")
         if event.state == WhatsAppConnectionState.CONNECTED:
@@ -300,14 +305,14 @@ async def run_spike():
         await provider.stop()
         return
 
-    print("   ✓ Connected!")
+    print("   [OK] Connected!")
 
     # 4. Get our identity
     print("\n3. Getting our WhatsApp identity...")
     our_identity = await provider.get_our_identity()
-    print(f"   ✓ Provider User ID: {our_identity.provider_user_id}")
-    print(f"   ✓ Normalized: {our_identity.normalized_identifier}")
-    print(f"   ✓ Display Name: {our_identity.display_name}")
+    print(f"   [OK] Provider User ID: {our_identity.provider_user_id}")
+    print(f"   [OK] Normalized: {our_identity.normalized_identifier}")
+    print(f"   [OK] Display Name: {our_identity.display_name}")
 
     # 4. Test authentication integration
     print("\n4. Testing authentication integration...")
@@ -340,7 +345,7 @@ async def run_spike():
 
     auth_result = await auth_resolver.resolve(incoming)
     if hasattr(auth_result, "student_id"):
-        print(f"   ✓ Authenticated as student: {auth_result.student_id}")
+        print(f"   [OK] Authenticated as student: {auth_result.student_id}")
     else:
         print(f"   ✗ Authentication failed: {auth_result.reason}")
 
@@ -350,7 +355,7 @@ async def run_spike():
 
     print("   Waiting for inbound message...")
     async for msg in provider.incoming_messages():
-        print(f"   📨 Received: {msg.text}")
+        print(f"   [MSG] Received: {msg.text}")
         print(f"      Event ID: {msg.event_id}")
         print(f"      From: {msg.from_contact.provider_user_id}")
         print(f"      Type: {msg.message_type.value}")
@@ -371,12 +376,12 @@ async def run_spike():
     )
 
     provider_msg_id = await provider.send_message(outgoing)
-    print(f"   ✓ Sent, provider message ID: {provider_msg_id}")
+    print(f"   [OK] Sent, provider message ID: {provider_msg_id}")
 
     # Wait for delivery receipt
     async for receipt in provider.delivery_receipts():
         print(
-            f"   📦 Delivery: {receipt.status.value} "
+            f"   [OK] Delivery: {receipt.status.value} "
             f"(provider ID: {receipt.provider_message_id})"
         )
         if receipt.status == WhatsAppDeliveryStatus.DELIVERED:
@@ -385,20 +390,25 @@ async def run_spike():
     # 7. Stop provider
     print("\n7. Stopping provider...")
     await provider.stop()
-    print("   ✓ Stopped")
+    print("   [OK] Stopped")
 
     print("\n" + "=" * 60)
     print("Spike completed successfully!")
     print("=" * 60)
     print("\nVerified:")
-    print("  ✓ Provider abstraction interface")
-    print("  ✓ Normalized connection lifecycle")
-    print("  ✓ Normalized message model")
-    print("  ✓ Authentication integration")
-    print("  ✓ Core isolation (no Baileys in core)")
-    print("  ✓ Idempotency key generation")
-    print("  ✓ Message normalization")
+print("  [OK] Provider abstraction interface")
+print("  [OK] Normalized connection lifecycle")
+print("  [OK] Normalized message model")
+print("  [OK] Authentication integration")
+print("  [OK] Core isolation (no Baileys in core)")
+print("  [OK] Idempotency key generation")
+print("  [OK] Message normalization")
 
 
 if __name__ == "__main__":
-    asyncio.run(run_spike())
+    try:
+        asyncio.run(asyncio.wait_for(run_spike(), timeout=30.0))
+    except TimeoutError:
+        print("Spike timed out after 30 seconds")
+    except KeyboardInterrupt:
+        print("Spike interrupted")
