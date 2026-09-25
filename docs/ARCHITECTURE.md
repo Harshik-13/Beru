@@ -7,7 +7,7 @@
 - Project structure with module boundaries
 - Linting (ruff) and type checking (mypy) configured
 - **Async SQLAlchemy 2.x database layer with PostgreSQL**
-- **Student and WhatsAppIdentity models with UUID primary keys**
+- **Student, WhatsAppIdentity, AuditEvent models with UUID primary keys**
 - **Repository pattern for data access**
 - **Pydantic schemas for internal data validation**
 - **Alembic migration for initial schema**
@@ -16,6 +16,11 @@
 - **Authorization primitives and service**
 - **Audit logging foundation (AuditEvent model)**
 - **Provider-neutral WhatsApp identity abstraction**
+- **WhatsApp provider abstraction layer** (`app/whatsapp/provider.py`)
+- **Normalized WhatsApp event models** (`app/whatsapp/models.py`)
+- **WhatsApp authentication integration** (`app/whatsapp/auth.py`)
+- **Mock spike for Baileys adapter** (`app/whatsapp/spike.py`)
+- **Core isolation tests** (`backend/tests/test_whatsapp_isolation.py`)
 
 ## Planned Architecture
 
@@ -27,13 +32,13 @@ Beru is a single-deployment application with clear module boundaries. Background
 
 ```
 WhatsApp ──→ [WhatsApp Adapter] ──→ [API Layer] ──→ [Security/Auth] ──→ [Service Layer] ──→ [Domain Logic]
-                                                                                │
+                                                                               │
 LLM ──→ [LLM Adapter] ──→ [Tool Dispatcher] ──→ [Backend Authorization] ──┘    │
-                                                                                │
+                                                                               │
 College Portal ──→ [Portal Adapter] ──→ [Validation] ──→ [Service Layer] ──────┘
-                                                                                │
-                                                                                ▼
-                                                                       [Database (PostgreSQL)]
+                                                                               │
+                                                                               ▼
+                                                                      [Database (PostgreSQL)]
 ```
 
 - **Backend** is the security boundary. All operations pass through authorization.
@@ -55,7 +60,7 @@ College Portal ──→ [Portal Adapter] ──→ [Validation] ──→ [Serv
 | `app/workers/` | Background jobs | Empty (planned) |
 | `app/security/` | Auth, authorization, audit | **Implemented (context, auth, authz, audit)** |
 | `app/llm/` | LLM abstraction layer | Empty (planned) |
-| `app/whatsapp/` | WhatsApp abstraction layer | Empty (planned) |
+| `app/whatsapp/` | WhatsApp abstraction layer | **Implemented (provider abstraction, models, auth, spike)** |
 
 ### Data Ownership Model
 
@@ -101,7 +106,7 @@ AuditService logs security event
 - **Authorization** — Every resource access validated against authenticated student
 - **Audit logging** — All auth/authz events recorded immutably
 
-### Future: WhatsApp Flow
+### WhatsApp Flow (Implemented Abstraction)
 
 ```
 Student sends WhatsApp message
@@ -151,8 +156,8 @@ Workers run as isolated processes. They consume from a job queue (to be determin
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Foundation scaffolding | ✅ Complete |
-| 2 | Database, auth, multi-user ownership | ✅ **Complete** (DB + ownership + auth + audit) |
-| 3 | WhatsApp abstraction, message processing | Not started |
+| 2 | Database, auth, multi-user ownership | ✅ **Complete** |
+| 3 | WhatsApp abstraction, message processing | ✅ **Complete** (abstraction + spike) |
 | 4 | LLM abstraction, tool dispatch | Not started |
 | 5 | Attendance domain engine | Not started |
 | 6 | Timetable ingestion and state machine | Not started |
@@ -163,7 +168,7 @@ Workers run as isolated processes. They consume from a job queue (to be determin
 
 ## Open Questions
 
-- WhatsApp bridge choice for personal alpha (whatsapp-web.js vs Baileys vs official API)
 - LLM provider selection
 - Background job queue technology
 - Deployment target (VPS, Railway, Fly.io, local)
+- Production WhatsApp provider (Meta Cloud API migration path)

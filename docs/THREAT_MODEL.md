@@ -47,9 +47,27 @@
 | Unknown identity enumeration | `get_identity_status` returns "unknown" for non-existent identities — no enumeration. |
 | Privilege escalation via authz bypass | AuthorizationService enforces ownership at service layer; repository layer has no auth. |
 
+## WhatsApp-Specific Threats
+
+| Threat | Mitigation |
+|---|---|
+| **WhatsApp identity spoofing** | Provider-neutral identity resolution; bridge must verify identity before calling resolver. |
+| **Replay attacks** | Idempotency keys stored in database with unique constraint; duplicate messages rejected at ingestion. |
+| **Bridge compromise** | AuthenticationResolver interface allows swapping providers; core not tied to single bridge. |
+| **Unknown identity enumeration** | `get_identity_status` returns "unknown" for non-existent identities — no enumeration. |
+| **Privilege escalation via authz bypass** | AuthorizationService enforces ownership at service layer; repository layer has no auth. |
+| **Session hijacking** | Session state (creds + Signal keys) encrypted at rest; keys rotated on each message; `creds.update` persisted immediately. |
+| **QR code interception** | QR codes displayed only in secure terminal; never logged; pairing code alternative available. |
+| **Provider-specific data leakage** | Provider abstraction boundary; core never receives raw Baileys/Meta objects. |
+| **Idempotency key collision** | Keys include provider prefix; database unique constraint prevents collisions. |
+| **Message content in logs** | Raw provider data never logged; only normalized event metadata in audit. |
+| **Session credential theft** | Session credentials encrypted at rest; database access controlled; no plaintext in logs. |
+| **WhatsApp Web protocol changes** | Provider abstraction allows swap; spike validates abstraction completeness. |
+| **Baileys key management failure** | `creds.update` event handler mandatory; `useMultiFileAuthState` handles automatically; custom DB implementation must save on every `keys.set()`. |
+
 ## Future Threats (Post-Implementation)
 
-- WhatsApp webhook signature validation
+- WhatsApp webhook signature validation (Meta Cloud API)
 - LLM tool call schema validation
 - Portal session hijacking prevention
 - Rate limiting on API endpoints
