@@ -29,7 +29,7 @@ class GetBeruIdentityHandler(ToolHandler):
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
             name="get_beru_identity",
-            description="Get Beru's identity, role, capabilities, and limitations",
+            description=("Get Beru's identity, role, capabilities, and limitations"),
             arguments_schema={
                 "type": "object",
                 "properties": {},
@@ -42,7 +42,10 @@ class GetBeruIdentityHandler(ToolHandler):
                     "full_name": {"type": "string"},
                     "role": {"type": "string"},
                     "purpose": {"type": "string"},
-                    "responsibilities": {"type": "array", "items": {"type": "string"}},
+                    "responsibilities": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
                     "available_capabilities": {
                         "type": "array",
                         "items": {
@@ -65,7 +68,10 @@ class GetBeruIdentityHandler(ToolHandler):
                             "required": ["name", "description"],
                         },
                     },
-                    "limitations": {"type": "array", "items": {"type": "string"}},
+                    "limitations": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
                 },
                 "required": [
                     "name",
@@ -156,8 +162,8 @@ class GetUserContextHandler(ToolHandler):
         arguments: dict,
         conversation_context: dict | None = None,
     ) -> dict:
-        # In real implementation, this would get context from the conversation service
-        # For mock, return placeholder
+        # In real implementation, this would get context from the conversation
+        # service. For mock, return placeholder.
         return {
             "student_id": str(student_id),
             "display_name": "Test Student",
@@ -184,7 +190,10 @@ class GetCurrentContextHandler(ToolHandler):
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
             name="get_current_context",
-            description="Get the current conversation context including active intent and pending clarifications",
+            description=(
+                "Get the current conversation context including active intent "
+                "and pending clarifications"
+            ),
             arguments_schema={
                 "type": "object",
                 "properties": {},
@@ -198,7 +207,12 @@ class GetCurrentContextHandler(ToolHandler):
                     "recent_tool_results": {"type": "array"},
                     "referenced_entities": {"type": "array"},
                 },
-                "required": ["active_intent", "pending_clarification", "recent_tool_results", "referenced_entities"],
+                "required": [
+                    "active_intent",
+                    "pending_clarification",
+                    "recent_tool_results",
+                    "referenced_entities",
+                ],
             },
             requires_authorization=True,
         )

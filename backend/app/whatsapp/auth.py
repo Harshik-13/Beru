@@ -34,7 +34,9 @@ class WhatsAppIncomingIdentity:
         )
 
     @classmethod
-    def from_contact(cls, contact: WhatsAppContactIdentity) -> "WhatsAppIncomingIdentity":
+    def from_contact(
+        cls, contact: WhatsAppContactIdentity
+    ) -> "WhatsAppIncomingIdentity":
         """Create from normalized WhatsApp contact identity."""
         return cls(
             provider=contact.provider,

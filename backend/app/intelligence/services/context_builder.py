@@ -68,7 +68,9 @@ class ContextBuilder:
 
         # Current intent
         if student_context.conversation.active_intent:
-            parts.append(f"Current Intent: {student_context.conversation.active_intent}")
+            parts.append(
+                f"Current Intent: {student_context.conversation.active_intent}"
+            )
 
         # Pending clarification
         pending = student_context.conversation.pending_clarification
@@ -143,7 +145,9 @@ class ContextBuilder:
             lines.append("  Referenced Entities:")
             for e in entities[-5:]:
                 res = f" -> {e.resolved_id}" if e.resolved_id else ""
-                lines.append(f"  - {e.entity_type}: {e.display_name} ({e.identifier}){res}")
+                lines.append(
+                    f"  - {e.entity_type}: {e.display_name} ({e.identifier}){res}"
+                )
 
         # Pending clarification
         if ctx.conversation.pending_clarification:
@@ -157,7 +161,9 @@ class ContextBuilder:
 
         return "\n".join(lines)
 
-    def _build_user_prompt(self, student_context: StudentContext, current_message: str) -> str:
+    def _build_user_prompt(
+        self, student_context: StudentContext, current_message: str
+    ) -> str:
         """Build the user prompt with the current message."""
         return f"Student: {current_message}"
 
@@ -185,7 +191,7 @@ class ContextBuilder:
 
 def create_student_context(
     student_id: UUID,
-    profile: StudentProfile | None = None,
+    profile: "StudentProfile | None" = None,
     conversation: Optional["ConversationContext"] = None,
     beru_identity: Optional["BeruIdentity"] = None,
 ) -> "StudentContext":
@@ -196,9 +202,10 @@ def create_student_context(
     return StudentContext(
         student_id=student_id,
         profile=profile or StudentProfile(student_id=student_id),
-        conversation=conversation or ConversationContext(
+        conversation=conversation
+        or ConversationContext(
             student_id=student_id,
-            conversation_id=UUID(bytes=b'\x00' * 16),
+            conversation_id=UUID(bytes=b"\x00" * 16),
         ),
         beru_identity=beru_identity or BERU_IDENTITY,
     )

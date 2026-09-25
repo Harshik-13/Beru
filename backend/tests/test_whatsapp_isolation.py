@@ -257,6 +257,7 @@ class TestAuthenticationIntegration:
         repo.get_by_provider_identity = AsyncMock(return_value=mock_identity)
 
         from app.security.student_resolver import DatabaseStudentResolver
+
         return DatabaseStudentResolver(repo)
 
     @pytest.mark.asyncio
@@ -283,6 +284,7 @@ class TestAuthenticationIntegration:
         mock_repo.get_by_provider_identity = AsyncMock(return_value=None)
 
         from app.security.student_resolver import DatabaseStudentResolver
+
         resolver = DatabaseStudentResolver(mock_repo)
         auth_resolver = WhatsAppIdentityResolver(resolver)
 
@@ -302,6 +304,7 @@ class TestAuthenticationIntegration:
             WhatsAppIdentity,
             WhatsAppIdentityStatus,
         )
+
         mock_identity = WhatsAppIdentity(
             provider="baileys",
             provider_user_id="919876543210@s.whatsapp.net",
@@ -311,6 +314,7 @@ class TestAuthenticationIntegration:
         mock_repo.get_by_provider_identity = AsyncMock(return_value=mock_identity)
 
         from app.security.student_resolver import DatabaseStudentResolver
+
         resolver = DatabaseStudentResolver(mock_repo)
         auth_resolver = WhatsAppIdentityResolver(resolver)
 
@@ -473,7 +477,7 @@ class TestAuthenticationFlow:
 
     @pytest.mark.asyncio
     async def test_full_flow_provider_to_authorization(self):
-        """Test: Provider → Normalized Identity → AuthResolver → AuthenticatedIdentity → Authorization"""
+        """Test auth flow: Provider → Identity → AuthResolver → AuthIdentity → Authz"""
         # 1. Provider creates normalized identity
         incoming = create_whatsapp_incoming_identity(
             provider="baileys",
@@ -489,20 +493,26 @@ class TestAuthenticationFlow:
         mock_repo.get_by_provider_identity = AsyncMock(return_value=mock_identity)
 
         from app.security.student_resolver import DatabaseStudentResolver
+
         resolver = DatabaseStudentResolver(mock_repo)
         from app.whatsapp.auth import WhatsAppIdentityResolver
+
         auth_resolver = WhatsAppIdentityResolver(resolver)
 
         auth_result = await auth_resolver.resolve(incoming)
 
         # 3. Use in authorization
         from app.security.authorization import authorize_student_resource
+
         authorize_student_resource(auth_result.student_id, "student-123", "attendance")
 
         # 4. Cross-student access denied
         from app.security.authorization import AuthorizationError
+
         with pytest.raises(AuthorizationError):
-            authorize_student_resource(auth_result.student_id, "student-999", "attendance")
+            authorize_student_resource(
+                auth_result.student_id, "student-999", "attendance"
+            )
 
 
 if __name__ == "__main__":

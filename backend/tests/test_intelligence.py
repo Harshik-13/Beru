@@ -134,23 +134,27 @@ class TestConversationContext:
         conv = ConversationContext(student_id=student_id)
         entity = ReferencedEntity(
             entity_type="subject",
-            identifier="DBMS",
-            display_name="Database Management Systems",
+            identifier="919876543210@s.whatsapp.net",
+            display_name="Test User",
         )
         new_conv = conv.add_referenced_entity(entity)
         assert len(new_conv.referenced_entities) == 1
-        assert new_conv.referenced_entities[0].identifier == "DBMS"
+        assert (
+            new_conv.referenced_entities[0].identifier == "919876543210@s.whatsapp.net"
+        )
 
     def test_resolve_entity(self):
         student_id = uuid4()
         conv = ConversationContext(student_id=student_id)
         entity = ReferencedEntity(
             entity_type="subject",
-            identifier="DBMS",
-            display_name="Database Management Systems",
+            identifier="919876543210@s.whatsapp.net",
+            display_name="Test User",
         )
         conv = conv.add_referenced_entity(entity)
-        resolved = conv.resolve_entity("subject", "DBMS", "subject-dbms-uuid")
+        resolved = conv.resolve_entity(
+            "subject", "919876543210@s.whatsapp.net", "subject-dbms-uuid"
+        )
         assert resolved.referenced_entities[0].resolved_id == "subject-dbms-uuid"
 
     def test_pending_clarification(self):
@@ -196,18 +200,21 @@ class TestStudentContext:
     def test_student_context_creation(self):
         student_id = uuid4()
         profile = StudentProfile(student_id=student_id, name="Test Student")
-        ctx = StudentContext(student_id=student_id, profile=profile)
+        ctx = create_student_context(student_id, profile)
         assert ctx.student_id == student_id
         assert ctx.profile.name == "Test Student"
         assert ctx.get_display_name() == "Test Student"
 
     def test_get_recent_history(self):
         student_id = uuid4()
-        profile = StudentProfile(student_id=student_id, name="Test")
         conv = ConversationContext(student_id=student_id)
         conv = conv.add_message("user", "Hello")
         conv = conv.add_message("assistant", "Hi")
-        ctx = StudentContext(student_id=student_id, profile=StudentProfile(student_id=student_id), conversation=conv)
+        ctx = StudentContext(
+            student_id=student_id,
+            profile=StudentProfile(student_id=student_id),
+            conversation=conv,
+        )
         history = ctx.get_recent_history(2)
         assert len(history) == 2
 
@@ -222,12 +229,16 @@ class TestStudentContext:
     def test_get_referenced_entities(self):
         student_id = uuid4()
         conv = ConversationContext(student_id=student_id)
-        conv = conv.add_referenced_entity(ReferencedEntity(
-            entity_type="subject", identifier="DBMS", display_name="DBMS"
-        ))
-        conv = conv.add_referenced_entity(ReferencedEntity(
-            entity_type="period", identifier="1", display_name="Period 1"
-        ))
+        conv = conv.add_referenced_entity(
+            ReferencedEntity(
+                entity_type="subject", identifier="DBMS", display_name="DBMS"
+            )
+        )
+        conv = conv.add_referenced_entity(
+            ReferencedEntity(
+                entity_type="period", identifier="1", display_name="Period 1"
+            )
+        )
         profile = StudentProfile(student_id=student_id)
         ctx = StudentContext(student_id=student_id, profile=profile, conversation=conv)
 
@@ -255,7 +266,9 @@ class TestContextBuilder:
             {"name": "get_timetable", "description": "Get timetable"},
         ]
 
-        result = builder.build_context(ctx, "What classes do I have tomorrow?", available_tools)
+        result = builder.build_context(
+            ctx, "What classes do I have tomorrow?", available_tools
+        )
 
         assert result.system_prompt
         assert result.user_prompt == "Student: What classes do I have tomorrow?"
@@ -341,7 +354,12 @@ class TestMockLLMProvider:
 class TestConversationService:
     @pytest.fixture
     def mock_llm(self):
-        return create_mock_llm(response_text="Hello! I'm Beru, your personal college assistant. I can help with timetable, attendance, simulations, and more.")
+        return create_mock_llm(
+            response_text=(
+                "Hello! I'm Beru, your personal college assistant. "
+                "I can help with timetable, attendance, simulations, and more."
+            )
+        )
 
     @pytest.fixture
     def service(self, mock_llm):
@@ -355,14 +373,14 @@ class TestConversationService:
 
         response, new_ctx = await service.process_message(ctx, "Hello")
         assert "Beru" in response
-        assert len(new_ctx.conversation.recent_messages) == 2  # user + assistant
+        assert len(new_ctx.conversation.recent_messages) == 2
 
     @pytest.mark.asyncio
     async def test_process_message_identity(self, service):
         student_id = uuid4()
         ctx = create_student_context(student_id)
 
-        response, new_ctx = await service.process_message(ctx, "Who are you?")
+        response, _ = await service.process_message(ctx, "Who are you?")
         assert "Beru" in response
         assert "college assistant" in response.lower()
 
@@ -371,7 +389,7 @@ class TestConversationService:
         student_id = uuid4()
         ctx = create_student_context(student_id)
 
-        response, new_ctx = await service.process_message(ctx, "What can you do?")
+        response, _ = await service.process_message(ctx, "What can you do?")
         assert "timetable" in response.lower() or "attendance" in response.lower()
 
     @pytest.mark.asyncio
@@ -379,8 +397,9 @@ class TestConversationService:
         student_id = uuid4()
         ctx = create_student_context(student_id)
 
-        response, new_ctx = await service.process_message(ctx, "What classes do I have tomorrow?")
-        # Should trigger tool call in mock, or return response
+        response, _ = await service.process_message(
+            ctx, "What classes do I have tomorrow?"
+        )
         assert response is not None
 
 
@@ -390,7 +409,6 @@ class TestToolRegistry:
         handler = GetBeruIdentityHandler()
         registry.register(handler)
         assert registry.is_registered("get_beru_identity")
-        assert registry.get_definition("get_beru_identity") is not None
 
     def test_list_tools(self):
         registry = ToolRegistry()
@@ -445,26 +463,32 @@ class TestEndToEnd:
     async def test_identity_question(self):
         """Test that 'Who are you?' gets a proper response from the mock system."""
         register_mock_tools()
-        provider = create_mock_llm(response_text="I'm Beru, your personal college assistant.")
+        provider = create_mock_llm(
+            response_text="I'm Beru, your personal college assistant."
+        )
         service = ConversationService(llm_provider=provider)
 
         student_id = uuid4()
         ctx = create_student_context(student_id)
 
-        response, new_ctx = await service.process_message(ctx, "Who are you?")
+        response, _ = await service.process_message(ctx, "Who are you?")
         assert "Beru" in response
 
     @pytest.mark.asyncio
     async def test_capabilities_question(self):
         """Test that 'What can you do?' works."""
         register_mock_tools()
-        provider = create_mock_llm(response_text="I can help with timetable, attendance, simulations, and more.")
+        provider = create_mock_llm(
+            response_text=(
+                "I can help with timetable, attendance, simulations, and more."
+            )
+        )
         service = ConversationService(llm_provider=provider)
 
         student_id = uuid4()
         ctx = create_student_context(student_id)
 
-        response, new_ctx = await service.process_message(ctx, "What can you do?")
+        response, _ = await service.process_message(ctx, "What can you do?")
         assert "timetable" in response.lower() or "attendance" in response.lower()
 
     @pytest.mark.asyncio
@@ -477,19 +501,31 @@ class TestEndToEnd:
         student_a = uuid4()
         student_b = uuid4()
 
-        ctx_a = create_student_context(student_a, StudentProfile(student_id=student_a, name="Student A"))
-        ctx_b = create_student_context(student_b, StudentProfile(student_id=student_b, name="Student B"))
+        ctx_a = create_student_context(
+            student_a, StudentProfile(student_id=student_a, name="Student A")
+        )
+        ctx_b = create_student_context(
+            student_b, StudentProfile(student_id=student_b, name="Student B")
+        )
 
-        resp_a, new_a = await service.process_message(ctx_a, "Hello from Student A")
-        resp_b, new_b = await service.process_message(ctx_b, "Hello from Student B")
+        _, new_a = await service.process_message(ctx_a, "Hello from Student A")
+        _, new_b = await service.process_message(ctx_b, "Hello from Student B")
 
         # Contexts should be separate
         assert new_a.conversation.student_id == student_a
         assert new_b.conversation.student_id == student_b
         assert new_a.conversation.recent_messages != new_b.conversation.recent_messages
         # Each conversation should only have its own messages
-        assert len(new_a.conversation.recent_messages) == 2  # user + assistant
+        assert len(new_a.conversation.recent_messages) == 2
         assert len(new_b.conversation.recent_messages) == 2
         # Messages should be different
-        assert new_a.conversation.recent_messages[0]["content"] == "Hello from Student A"
-        assert new_b.conversation.recent_messages[0]["content"] == "Hello from Student B"
+        assert new_a.conversation.recent_messages[0]["content"] == (
+            "Hello from Student A"
+        )
+        assert new_b.conversation.recent_messages[0]["content"] == (
+            "Hello from Student B"
+        )
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

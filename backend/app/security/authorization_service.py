@@ -17,9 +17,7 @@ class AuthorizationService:
     def __init__(self, audit_service: AuditService | None = None):
         self._audit = audit_service
 
-    def get_authenticated_student(
-        self, identity: AuthenticatedIdentity | None
-    ) -> UUID:
+    def get_authenticated_student(self, identity: AuthenticatedIdentity | None) -> UUID:
         """Extract student ID from authenticated identity."""
         return require_student(require_authenticated_identity(identity))
 

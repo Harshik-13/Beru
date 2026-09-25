@@ -96,11 +96,7 @@ class ToolRegistry:
 
     def list_tools(self) -> list[ToolDefinition]:
         """List all tool definitions."""
-        return [
-            h.definition
-            for h in self._tools.values()
-            if h.definition.enabled
-        ]
+        return [h.definition for h in self._tools.values() if h.definition.enabled]
 
     def get_all_definitions(self) -> list[ToolDefinition]:
         """Get all tool definitions (including disabled)."""

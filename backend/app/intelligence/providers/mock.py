@@ -14,10 +14,10 @@ class MockLLMConfig:
 
     provider_name: str = "mock"
     default_intent: str | None = None
-    default_entities: dict = None
+    default_entities: dict | None = None
     should_request_tool: bool = False
     tool_name: str | None = None
-    tool_arguments: dict = None
+    tool_arguments: dict | None = None
     response_text: str | None = None
     should_clarify: bool = False
     clarification_question: str | None = None
@@ -50,7 +50,7 @@ class MockLLMProvider(LLMProvider):
         if isinstance(config, MockLLMConfig):
             # Direct MockLLMConfig passed (for testing)
             self._config = config
-        elif hasattr(config, 'config') and config.config:
+        elif hasattr(config, "config") and config.config:
             for key, value in config.config.items():
                 if hasattr(self._config, key):
                     setattr(self._config, key, value)
@@ -72,7 +72,7 @@ class MockLLMProvider(LLMProvider):
         self._config.clarification_question = question
         self._config.clarification_candidates = candidates
 
-    def set_intent(self, intent: str, entities: dict = None) -> None:
+    def set_intent(self, intent: str, entities: dict | None = None) -> None:
         self._config.default_intent = intent
         self._config.default_entities = entities or {}
 
@@ -105,7 +105,10 @@ class MockLLMProvider(LLMProvider):
 
         if self._config.default_intent:
             return LLMResponse(
-                content=f"[MOCK] Intent: {self._config.default_intent}, Entities: {self._config.default_entities}",
+                content=(
+                    f"[MOCK] Intent: {self._config.default_intent}, "
+                    f"Entities: {self._config.default_entities}"
+                ),
                 finish_reason="stop",
             )
 
@@ -117,7 +120,10 @@ class MockLLMProvider(LLMProvider):
 
         # Default response
         return LLMResponse(
-            content="[MOCK] I'm a mock LLM. Configure me with set_response_text() or set_tool_call().",
+            content=(
+                "[MOCK] I'm a mock LLM. Configure me with "
+                "set_response_text() or set_tool_call()."
+            ),
             finish_reason="stop",
         )
 
@@ -139,9 +145,9 @@ class MockLLMProvider(LLMProvider):
 def create_mock_llm(
     response_text: str | None = None,
     tool_name: str | None = None,
-    tool_args: dict = None,
+    tool_args: dict | None = None,
     intent: str | None = None,
-    entities: dict = None,
+    entities: dict | None = None,
     clarification_question: str | None = None,
     clarification_candidates: tuple = (),
 ) -> MockLLMProvider:

@@ -276,9 +276,7 @@ class TestDatabaseStudentResolver:
     ) -> None:
         mock_identity_repo.get_by_provider_identity = AsyncMock(return_value=None)
 
-        status = await resolver.get_identity_status(
-            "whatsapp_web_js", "unknown@c.us"
-        )
+        status = await resolver.get_identity_status("whatsapp_web_js", "unknown@c.us")
         assert status == "unknown"
 
 

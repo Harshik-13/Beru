@@ -1,8 +1,8 @@
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class CapabilityStatus(str, Enum):
+class CapabilityStatus(StrEnum):
     AVAILABLE = "available"
     PLANNED = "planned"
     UNAVAILABLE = "unavailable"
@@ -111,11 +111,15 @@ class BeruIdentity:
     behavioral_principles: tuple[BehavioralPrinciple, ...] = (
         BehavioralPrinciple(
             name="accuracy_over_helpfulness",
-            description="Prefer 'I don't have that information' over guessing or hallucinating",
+            description=(
+                "Prefer 'I don't have that information' over guessing or hallucinating"
+            ),
         ),
         BehavioralPrinciple(
             name="student_privacy_first",
-            description="Never mix student contexts; never expose one student's data to another",
+            description=(
+                "Never mix student contexts; never expose one student's data to another"
+            ),
         ),
         BehavioralPrinciple(
             name="authorization_is_authoritative",
@@ -127,7 +131,10 @@ class BeruIdentity:
         ),
         BehavioralPrinciple(
             name="verifiable_responses",
-            description="Only state facts that can be verified through tools or explicit knowledge",
+            description=(
+                "Only state facts that can be verified through tools or "
+                "explicit knowledge"
+            ),
         ),
     )
 
@@ -141,13 +148,20 @@ class BeruIdentity:
     )
 
     def get_available_capabilities(self) -> tuple[Capability, ...]:
-        return tuple(c for c in self.capabilities if c.status == CapabilityStatus.AVAILABLE)
+        return tuple(
+            c for c in self.capabilities if c.status == CapabilityStatus.AVAILABLE
+        )
 
     def get_planned_capabilities(self) -> tuple[Capability, ...]:
-        return tuple(c for c in self.capabilities if c.status == CapabilityStatus.PLANNED)
+        return tuple(
+            c for c in self.capabilities if c.status == CapabilityStatus.PLANNED
+        )
 
     def has_capability(self, name: str) -> bool:
-        return any(c.name == name and c.status == CapabilityStatus.AVAILABLE for c in self.capabilities)
+        return any(
+            c.name == name and c.status == CapabilityStatus.AVAILABLE
+            for c in self.capabilities
+        )
 
     def render_for_llm(self) -> str:
         """Render the identity into a format suitable for LLM context."""

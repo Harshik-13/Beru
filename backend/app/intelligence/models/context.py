@@ -1,7 +1,12 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Optional
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
+
+if TYPE_CHECKING:
+    from app.intelligence.models.identity import BeruIdentity
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,12 +26,14 @@ class StudentProfile:
     timezone: str = "Asia/Kolkata"
 
     def has_academic_info(self) -> bool:
-        return all([
-            self.year is not None,
-            self.course is not None,
-            self.branch is not None,
-            self.semester is not None,
-        ])
+        return all(
+            [
+                self.year is not None,
+                self.course is not None,
+                self.branch is not None,
+                self.semester is not None,
+            ]
+        )
 
     def get_display_name(self) -> str:
         return self.name or f"Student {str(self.student_id)[:8]}"
@@ -89,16 +96,16 @@ class ConversationContext:
 
     onboarding_state: str | None = None
 
-    def add_message(self, role: str, content: str) -> "ConversationContext":
+    def add_message(self, role: str, content: str) -> ConversationContext:
         """Add a message to history, returning new context."""
         message = {
             "role": role,
             "content": content,
             "timestamp": datetime.now(UTC).isoformat(),
         }
-        new_messages = self.recent_messages + (message,)
+        new_messages = (*self.recent_messages, message)
         if len(new_messages) > self.max_history:
-            new_messages = new_messages[-self.max_history:]
+            new_messages = new_messages[-self.max_history :]
         return ConversationContext(
             student_id=self.student_id,
             conversation_id=self.conversation_id,
@@ -113,7 +120,7 @@ class ConversationContext:
             onboarding_state=self.onboarding_state,
         )
 
-    def set_active_intent(self, intent: str) -> "ConversationContext":
+    def set_active_intent(self, intent: str) -> ConversationContext:
         return ConversationContext(
             student_id=self.student_id,
             conversation_id=self.conversation_id,
@@ -128,8 +135,8 @@ class ConversationContext:
             onboarding_state=self.onboarding_state,
         )
 
-    def add_referenced_entity(self, entity: ReferencedEntity) -> "ConversationContext":
-        new_entities = self.referenced_entities + (entity,)
+    def add_referenced_entity(self, entity: ReferencedEntity) -> ConversationContext:
+        new_entities = (*self.referenced_entities, entity)
         if len(new_entities) > 20:
             new_entities = new_entities[-20:]
         return ConversationContext(
@@ -146,18 +153,22 @@ class ConversationContext:
             onboarding_state=self.onboarding_state,
         )
 
-    def resolve_entity(self, entity_type: str, identifier: str, resolved_id: str) -> "ConversationContext":
+    def resolve_entity(
+        self, entity_type: str, identifier: str, resolved_id: str
+    ) -> ConversationContext:
         """Resolve a referenced entity to its actual ID."""
         new_entities = []
         for e in self.referenced_entities:
             if e.entity_type == entity_type and e.identifier == identifier:
-                new_entities.append(ReferencedEntity(
-                    entity_type=e.entity_type,
-                    identifier=e.identifier,
-                    display_name=e.display_name,
-                    resolved_id=resolved_id,
-                    metadata=e.metadata,
-                ))
+                new_entities.append(
+                    ReferencedEntity(
+                        entity_type=e.entity_type,
+                        identifier=e.identifier,
+                        display_name=e.display_name,
+                        resolved_id=resolved_id,
+                        metadata=e.metadata,
+                    )
+                )
             else:
                 new_entities.append(e)
         return ConversationContext(
@@ -174,7 +185,9 @@ class ConversationContext:
             onboarding_state=self.onboarding_state,
         )
 
-    def set_pending_clarification(self, clarification: PendingClarification) -> "ConversationContext":
+    def set_pending_clarification(
+        self, clarification: PendingClarification
+    ) -> ConversationContext:
         return ConversationContext(
             student_id=self.student_id,
             conversation_id=self.conversation_id,
@@ -189,7 +202,7 @@ class ConversationContext:
             onboarding_state=self.onboarding_state,
         )
 
-    def clear_pending_clarification(self) -> "ConversationContext":
+    def clear_pending_clarification(self) -> ConversationContext:
         return ConversationContext(
             student_id=self.student_id,
             conversation_id=self.conversation_id,
@@ -204,8 +217,8 @@ class ConversationContext:
             onboarding_state=self.onboarding_state,
         )
 
-    def add_tool_result(self, tool_result: ToolResultRef) -> "ConversationContext":
-        new_results = self.recent_tool_results + (tool_result,)
+    def add_tool_result(self, tool_result: ToolResultRef) -> ConversationContext:
+        new_results = (*self.recent_tool_results, tool_result)
         if len(new_results) > 10:
             new_results = new_results[-10:]
         return ConversationContext(
@@ -222,25 +235,10 @@ class ConversationContext:
             onboarding_state=self.onboarding_state,
         )
 
-    def resolve_pending_clarification(self, answer: str) -> "ConversationContext":
+    def resolve_pending_clarification(self, answer: str) -> ConversationContext:
         """Resolve pending clarification with user's answer."""
         # The actual resolution logic will be in the service layer
         return self.clear_pending_clarification()
-
-    def clear_pending_clarification(self) -> "ConversationContext":
-        return ConversationContext(
-            student_id=self.student_id,
-            conversation_id=self.conversation_id,
-            created_at=self.created_at,
-            updated_at=datetime.now(UTC),
-            recent_messages=self.recent_messages,
-            max_history=self.max_history,
-            active_intent=self.active_intent,
-            referenced_entities=self.referenced_entities,
-            pending_clarification=None,
-            recent_tool_results=self.recent_tool_results,
-            onboarding_state=self.onboarding_state,
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,9 +251,15 @@ class StudentContext:
 
     student_id: UUID
     profile: StudentProfile
-    conversation: ConversationContext = field(default_factory=lambda: ConversationContext(student_id=UUID(int=0)))
-    beru_identity: "BeruIdentity" = field(default_factory=lambda: __import__(
-        'app.intelligence.models.identity', fromlist=['BERU_IDENTITY']).BERU_IDENTITY
+    conversation: ConversationContext = field(
+        default_factory=lambda: ConversationContext(student_id=UUID(int=0))
+    )
+    beru_identity: BeruIdentity = field(
+        default_factory=lambda: (
+            __import__(
+                "app.intelligence.models.identity", fromlist=["BERU_IDENTITY"]
+            ).BERU_IDENTITY
+        )
     )
 
     def get_display_name(self) -> str:
@@ -270,14 +274,16 @@ class StudentContext:
     def get_active_intent(self) -> str | None:
         return self.conversation.active_intent
 
-    def get_pending_clarification(self) -> Optional["PendingClarification"]:
+    def get_pending_clarification(self) -> PendingClarification | None:
         return self.conversation.pending_clarification
 
-    def get_referenced_entities(self, entity_type: str | None = None) -> tuple[ReferencedEntity, ...]:
+    def get_referenced_entities(
+        self, entity_type: str | None = None
+    ) -> tuple[ReferencedEntity, ...]:
         entities = self.conversation.referenced_entities
         if entity_type:
             return tuple(e for e in entities if e.entity_type == entity_type)
         return entities
 
-    def get_recent_tool_results(self, limit: int = 3) -> tuple["ToolResultRef", ...]:
+    def get_recent_tool_results(self, limit: int = 3) -> tuple[ToolResultRef, ...]:
         return self.conversation.recent_tool_results[-limit:]

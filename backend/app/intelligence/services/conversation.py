@@ -1,23 +1,43 @@
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 from uuid import UUID
 
-from app.intelligence.models.context import (
-    ConversationContext,
-    StudentContext,
-    StudentProfile,
-    ToolResultRef,
-)
-from app.intelligence.models.identity import BERU_IDENTITY, BeruIdentity
-from app.intelligence.providers.base import (
-    LLMProvider,
-    LLMResponse,
-)
-from app.intelligence.services.context_builder import (
-    ContextBuilder,
-    create_student_context,
-)
-from app.intelligence.tools.registry import ToolDefinition, ToolRegistry, tool_registry
+if TYPE_CHECKING:
+    from app.intelligence.models.context import (
+        ConversationContext,
+        StudentContext,
+        StudentProfile,
+        ToolResultRef,
+    )
+    from app.intelligence.models.identity import BERU_IDENTITY, BeruIdentity
+    from app.intelligence.providers.base import LLMProvider, LLMResponse
+    from app.intelligence.services.context_builder import (
+        ContextBuilder,
+        create_student_context,
+    )
+    from app.intelligence.tools.registry import (
+        ToolDefinition,
+        ToolRegistry,
+        tool_registry,
+    )
+else:
+    from app.intelligence.models.context import (
+        ConversationContext,
+        StudentContext,
+        StudentProfile,
+        ToolResultRef,
+    )
+    from app.intelligence.models.identity import BERU_IDENTITY, BeruIdentity
+    from app.intelligence.providers.base import LLMProvider, LLMResponse
+    from app.intelligence.services.context_builder import (
+        ContextBuilder,
+        create_student_context,
+    )
+    from app.intelligence.tools.registry import (
+        ToolDefinition,
+        ToolRegistry,
+        tool_registry,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,17 +45,13 @@ class IntentResult:
     """Result of intent interpretation."""
 
     intent: str | None = None
-    entities: dict = None
+    entities: dict = field(default_factory=dict)
     requires_clarification: bool = False
     clarification_question: str | None = None
     clarification_candidates: tuple = ()
     tool_request: dict | None = None
     confidence: float = 0.0
     raw_response: str | None = None
-
-    def __post_init__(self):
-        if self.entities is None:
-            object.__setattr__(self, "entities", {})
 
 
 class ConversationService:
@@ -50,7 +66,7 @@ class ConversationService:
         tool_registry_instance: ToolRegistry | None = None,
         context_builder: ContextBuilder | None = None,
         llm_provider: LLMProvider | None = None,
-        beru_identity: Optional["BeruIdentity"] = None,
+        beru_identity: BeruIdentity | None = None,
     ):
         self.tool_registry = tool_registry_instance or tool_registry
         self.context_builder = context_builder or ContextBuilder()
@@ -61,7 +77,7 @@ class ConversationService:
         self,
         student_id: UUID,
         profile: StudentProfile | None = None,
-        conversation: Optional["ConversationContext"] = None,
+        conversation: "ConversationContext | None" = None,
     ) -> "StudentContext":
         """Create a new student context."""
         return create_student_context(
@@ -93,13 +109,17 @@ class ConversationService:
 
         # Step 2: Handle based on intent result
         if intent_result.requires_clarification:
-            return await self._handle_clarification(student_context, intent_result, message)
+            return await self._handle_clarification(
+                student_context, intent_result, message
+            )
 
         if intent_result.tool_request:
             return await self._execute_tool(student_context, intent_result)
 
         # No tool needed - direct response
-        response = intent_result.raw_response or "I understand. Is there anything specific you'd like help with?"
+        response = intent_result.raw_response or (
+            "I understand. Is there anything specific you'd like help with?"
+        )
         new_conv = student_context.conversation.add_message("assistant", response)
         student_context = StudentContext(
             student_id=student_context.student_id,
@@ -122,7 +142,6 @@ class ConversationService:
         available_tools = self.tool_registry.get_all_definitions()
         tool_defs = [self._tool_def_to_dict(t) for t in available_tools]
 
-        context_builder = ContextBuilder(self.beru_identity)
         context_result = self.context_builder.build_context(
             student_context, message, tool_defs
         )
@@ -130,11 +149,13 @@ class ConversationService:
         # Add tool definitions to system prompt
         messages = context_result.messages
         system_prompt = context_result.system_prompt
-        if tool_defs:
-            tool_descriptions = "\n".join([
-                f"- {t.name}: {t.description} (args: {t.arguments_schema})"
-                for t in available_tools
-            ])
+        if self.tool_registry.list_tools():
+            tool_descriptions = "\n".join(
+                [
+                    f"- {t.name}: {t.description} (args: {t.arguments_schema})"
+                    for t in available_tools
+                ]
+            )
             system_prompt += f"\n\nAvailable Tools:\n{tool_descriptions}"
 
         messages[0] = {"role": "system", "content": system_prompt}
@@ -193,20 +214,38 @@ class ConversationService:
         msg_lower = message.lower()
 
         # Simple keyword-based mock (only for testing!)
-        if any(w in msg_lower for w in ["who are you", "what are you", "your name", "identity"]):
+        if any(
+            w in msg_lower
+            for w in ["who are you", "what are you", "your name", "identity"]
+        ):
             return IntentResult(
-                raw_response="I'm Beru, your personal college assistant. I help with timetable, attendance, academic info, and college workflows.",
+                raw_response=(
+                    "I'm Beru, your personal college assistant. I help with "
+                    "timetable, attendance, academic info, and college workflows."
+                ),
                 confidence=0.9,
             )
 
-        if any(w in msg_lower for w in ["what can you", "capabilities", "help me", "what do you do"]):
-            caps = [c.name.replace("_", " ") for c in self.beru_identity.get_available_capabilities()]
+        if any(
+            w in msg_lower
+            for w in ["what can you", "capabilities", "help me", "what do you do"]
+        ):
+            caps = [
+                c.name.replace("_", " ")
+                for c in self.beru_identity.get_available_capabilities()
+            ]
             return IntentResult(
-                raw_response=f"I can help you with: {', '.join(caps)}. What would you like to do?",
+                raw_response=(
+                    f"I can help you with: {', '.join(caps)}. "
+                    "What would you like to do?"
+                ),
                 confidence=0.9,
             )
 
-        if any(w in msg_lower for w in ["timetable", "schedule", "classes", "what do i have"]):
+        if any(
+            w in msg_lower
+            for w in ["timetable", "schedule", "classes", "what do i have"]
+        ):
             return IntentResult(
                 intent="get_timetable",
                 entities={"period": "tomorrow" if "tomorrow" in msg_lower else "today"},
@@ -220,19 +259,29 @@ class ConversationService:
                 confidence=0.8,
             )
 
-        if "skip" in msg_lower or "miss" in msg_lower:
-            if any(w in msg_lower for w in ["class", "first", "second", "period"]):
-                return IntentResult(
-                    intent="simulate_absence",
-                    entities={"target": "first" if "first" in msg_lower else "unspecified"},
-                    requires_clarification=True,
-                    clarification_question="Which class do you want to simulate skipping?",
-                    clarification_candidates=("first class", "second class", "all classes"),
-                    confidence=0.7,
-                )
+        if ("skip" in msg_lower or "miss" in msg_lower) and any(
+            w in msg_lower for w in ["class", "first", "second", "period"]
+        ):
+            return IntentResult(
+                intent="simulate_absence",
+                entities={"target": "first" if "first" in msg_lower else "unspecified"},
+                requires_clarification=True,
+                clarification_question=(
+                    "Which class do you want to simulate skipping?"
+                ),
+                clarification_candidates=(
+                    "first class",
+                    "second class",
+                    "all classes",
+                ),
+                confidence=0.7,
+            )
 
         return IntentResult(
-            raw_response="I'm not sure what you mean. Could you rephrase? I can help with timetable, attendance, simulations, and more.",
+            raw_response=(
+                "I'm not sure what you mean. Could you rephrase? I can help "
+                "with timetable, attendance, simulations, and more."
+            ),
             confidence=0.3,
         )
 
@@ -273,7 +322,10 @@ class ConversationService:
                 )
             else:
                 # No match - ask again
-                response = f"I didn't understand. Please choose from: {', '.join(pending.candidates)}"
+                response = (
+                    "I didn't understand. Please choose from: "
+                    f"{', '.join(pending.candidates)}"
+                )
                 new_conv = new_conv.add_message("assistant", response)
                 return response, student_context
 
@@ -347,10 +399,18 @@ class ConversationService:
             return str(result)
 
         # Build context for response generation
-        system = "Generate a natural, helpful response for a college student based on the tool result."
+        system = (
+            "Generate a natural, helpful response for a college student "
+            "based on the tool result."
+        )
         messages = [
             {"role": "system", "content": system},
-            {"role": "user", "content": f"Tool: {tool_name}\nResult: {result}\nGenerate a natural response."},
+            {
+                "role": "user",
+                "content": (
+                    f"Tool: {tool_name}\nResult: {result}\nGenerate a natural response."
+                ),
+            },
         ]
 
         response = await self.llm_provider.chat_completion(messages=messages)
@@ -360,7 +420,8 @@ class ConversationService:
         """Get a summary of the current conversation state."""
         conv = student_context.conversation
         return (
-            f"Conversation {conv.conversation_id} for {student_context.profile.get_display_name()}\n"
+            f"Conversation {conv.conversation_id} for "
+            f"{student_context.profile.get_display_name()}\n"
             f"Messages: {len(conv.recent_messages)}\n"
             f"Active Intent: {conv.active_intent or 'none'}\n"
             f"Pending Clarification: {conv.pending_clarification is not None}\n"

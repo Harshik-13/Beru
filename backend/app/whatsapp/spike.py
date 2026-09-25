@@ -190,7 +190,9 @@ class MockBaileysProvider(WhatsAppProvider):
     async def delivery_receipts(self) -> AsyncGenerator:
         while self._running:
             try:
-                receipt = await asyncio.wait_for(self._delivery_queue.get(), timeout=1.0)
+                receipt = await asyncio.wait_for(
+                    self._delivery_queue.get(), timeout=1.0
+                )
                 yield receipt
             except TimeoutError:
                 continue
@@ -396,6 +398,8 @@ async def run_spike():
     print("Spike completed successfully!")
     print("=" * 60)
     print("\nVerified:")
+
+
 print("  [OK] Provider abstraction interface")
 print("  [OK] Normalized connection lifecycle")
 print("  [OK] Normalized message model")
