@@ -6,6 +6,12 @@
 - Environment-based configuration via Pydantic Settings
 - Project structure with module boundaries
 - Linting (ruff) and type checking (mypy) configured
+- **Async SQLAlchemy 2.x database layer with PostgreSQL**
+- **Student and WhatsAppIdentity models with UUID primary keys**
+- **Repository pattern for data access**
+- **Pydantic schemas for internal data validation**
+- **Alembic migration for initial schema**
+- **Ownership isolation tests**
 
 ## Planned Architecture
 
@@ -17,13 +23,13 @@ Beru is a single-deployment application with clear module boundaries. Background
 
 ```
 WhatsApp ──→ [WhatsApp Adapter] ──→ [API Layer] ──→ [Security/Auth] ──→ [Service Layer] ──→ [Domain Logic]
-                                                                              │
+                                                                               │
 LLM ──→ [LLM Adapter] ──→ [Tool Dispatcher] ──→ [Backend Authorization] ──┘    │
-                                                                              │
+                                                                               │
 College Portal ──→ [Portal Adapter] ──→ [Validation] ──→ [Service Layer] ──────┘
-                                                                              │
-                                                                              ▼
-                                                                     [Database (PostgreSQL)]
+                                                                               │
+                                                                               ▼
+                                                                      [Database (PostgreSQL)]
 ```
 
 - **Backend** is the security boundary. All operations pass through authorization.
@@ -35,11 +41,11 @@ College Portal ──→ [Portal Adapter] ──→ [Validation] ──→ [Serv
 | Module | Purpose | Status |
 |---|---|---|
 | `app/api/` | HTTP endpoints, request routing | Scaffolded |
-| `app/core/` | Configuration, environment | Implemented |
+| `app/core/` | Configuration, environment, database | Implemented |
 | `app/domain/` | Deterministic business logic | Empty (planned) |
-| `app/models/` | SQLAlchemy ORM models | Empty (planned) |
-| `app/repositories/` | Database access | Empty (planned) |
-| `app/schemas/` | Pydantic request/response schemas | Empty (planned) |
+| `app/models/` | SQLAlchemy ORM models | **Implemented (Student, WhatsAppIdentity)** |
+| `app/repositories/` | Database access | **Implemented (StudentRepository, WhatsAppIdentityRepository)** |
+| `app/schemas/` | Pydantic request/response schemas | **Implemented (internal schemas)** |
 | `app/services/` | Application services | Empty (planned) |
 | `app/integrations/` | External adapters (portal, etc.) | Empty (planned) |
 | `app/workers/` | Background jobs | Empty (planned) |
@@ -52,10 +58,19 @@ College Portal ──→ [Portal Adapter] ──→ [Validation] ──→ [Serv
 - Every resource has an `owner_id` derived from the authenticated user.
 - Client-supplied owner IDs are never trusted.
 - Multi-user isolation exists from day one.
+- **Student is the ownership root** — all student-owned resources resolve ownership through `Student.id`.
+- **WhatsAppIdentity links external identities to Student** — provider-neutral design allows multiple identity providers.
 
 ### Provider Abstraction Strategy
 
 External providers are behind Python abstract base classes (ABCs) or Protocols. The core application depends only on the interface, not the implementation. Concrete providers live in `integrations/`, `whatsapp/`, and `llm/`.
+
+### Database Transaction Convention
+
+- Services control transaction boundaries.
+- Repositories receive an `AsyncSession` and perform operations within it.
+- Repositories do not commit; they flush to generate IDs.
+- Services commit or rollback the transaction.
 
 ### Future: WhatsApp Flow
 
@@ -106,8 +121,8 @@ Workers run as isolated processes. They consume from a job queue (to be determin
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1 | Foundation scaffolding | **Current** |
-| 2 | Database, auth, multi-user ownership | Not started |
+| 1 | Foundation scaffolding | ✅ Complete |
+| 2 | Database, auth, multi-user ownership | 🚧 **In Progress** (DB + ownership foundation) |
 | 3 | WhatsApp abstraction, message processing | Not started |
 | 4 | LLM abstraction, tool dispatch | Not started |
 | 5 | Attendance domain engine | Not started |

@@ -19,7 +19,8 @@ dependencies = [
     "pydantic-settings>=2.7.0,<3.0",
     "sqlalchemy>=2.0.36,<3.0",
     "alembic>=1.14.0,<2.0",
-    "psycopg2-binary>=2.9.10,<3.0",
+    "asyncpg>=0.30.0,<1.0",
+    "greenlet>=3.0,<4.0",
 ]
 
 [project.optional-dependencies]
@@ -70,3 +71,4 @@ python_version = "3.11"
 strict = true
 warn_return_any = true
 plugins = ["pydantic.mypy"]
+explicit_package_bases = true

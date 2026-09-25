@@ -19,3 +19,22 @@
 | Attendance tampering via simulation | Simulations never mutate actual attendance records. |
 | Portal scraping abuse | Read-only integration. No credential storage. No bypass of access controls. |
 | WhatsApp account compromise | Bridge is replaceable. Core does not depend on single provider. |
+| **External identity collision** | Unique constraint on (provider, provider_user_id) prevents same WhatsApp identity linking to multiple students. |
+| **Ownership bypass via client input** | Student.id derived from authenticated session, never from client request. Repository layer does not enforce auth — service layer does. |
+| **Database credential leakage** | DATABASE_URL from environment only. No hardcoded credentials. Migrations contain no secrets. |
+
+## Database-Specific Threats
+
+| Threat | Mitigation |
+|---|---|
+| SQL injection | SQLAlchemy ORM with parameterized queries. No raw SQL in application code. |
+| Connection string exposure | Environment variables only. `.env.example` contains no real credentials. |
+| Migration tampering | Migrations are version-controlled. Review required for schema changes. |
+| Enum value injection | Native enums disabled (`native_enum=False`); values validated at application layer. |
+
+## Future Threats (Post-Implementation)
+
+- WhatsApp webhook signature validation
+- LLM tool call schema validation
+- Portal session hijacking prevention
+- Rate limiting on API endpoints

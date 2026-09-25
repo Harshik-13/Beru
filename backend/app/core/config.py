@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # Database
-    database_url: str = "postgresql+psycopg2://beru:changeme@localhost:5432/beru"
+    database_url: str = "postgresql+asyncpg://beru:changeme@localhost:5432/beru"
 
 
 settings = Settings()
