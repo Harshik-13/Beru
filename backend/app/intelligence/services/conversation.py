@@ -2,9 +2,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from app.intelligence.services.rate_limiter import (
-    get_rate_limiter,
-)
+from app.intelligence.services.rate_limiter import get_rate_limiter
 
 if TYPE_CHECKING:
     from app.intelligence.models.context import (
@@ -19,6 +17,7 @@ if TYPE_CHECKING:
         ContextBuilder,
         create_student_context,
     )
+    from app.intelligence.services.timetable_service import TimetableService
     from app.intelligence.tools.registry import (
         ToolDefinition,
         ToolRegistry,
@@ -37,6 +36,7 @@ else:
         ContextBuilder,
         create_student_context,
     )
+    from app.intelligence.services.timetable_service import TimetableService
     from app.intelligence.tools.registry import (
         ToolDefinition,
         ToolRegistry,
@@ -71,11 +71,13 @@ class ConversationService:
         context_builder: ContextBuilder | None = None,
         llm_provider: LLMProvider | None = None,
         beru_identity: BeruIdentity | None = None,
+        timetable_service: TimetableService | None = None,
     ):
         self.tool_registry = tool_registry_instance or tool_registry
         self.context_builder = context_builder or ContextBuilder()
         self.llm_provider = llm_provider
         self.beru_identity = beru_identity or BERU_IDENTITY
+        self.timetable_service = timetable_service
 
     def create_student_context(
         self,
@@ -255,10 +257,58 @@ class ConversationService:
             w in msg_lower
             for w in ["timetable", "schedule", "classes", "what do i have"]
         ):
+            # Check if needs lab batch
+            needs_lab = False
+            if self.timetable_service:
+                needs_lab = await self.timetable_service.needs_lab_batch(
+                    student_context.student_id
+                )
+
+            if needs_lab:
+                return IntentResult(
+                    intent="needs_lab_batch",
+                    entities={},
+                    requires_clarification=True,
+                    clarification_question=(
+                        "I found lab groups in your timetable. "
+                        "Which lab batch are you in?"
+                    ),
+                    clarification_candidates=("Batch 1", "Batch 2"),
+                    confidence=0.9,
+                )
+
+            if "tomorrow" in msg_lower:
+                return IntentResult(
+                    tool_request={
+                        "name": "get_tomorrow_schedule",
+                        "arguments": {"student_id": str(student_context.student_id)},
+                    },
+                    confidence=0.9,
+                )
             return IntentResult(
-                intent="get_timetable",
-                entities={"period": "tomorrow" if "tomorrow" in msg_lower else "today"},
-                confidence=0.8,
+                tool_request={
+                    "name": "get_today_schedule",
+                    "arguments": {"student_id": str(student_context.student_id)},
+                },
+                confidence=0.9,
+            )
+
+        if any(w in msg_lower for w in ["next class", "what's next", "upcoming class"]):
+            return IntentResult(
+                tool_request={
+                    "name": "get_next_class",
+                    "arguments": {"student_id": str(student_context.student_id)},
+                },
+                confidence=0.9,
+            )
+
+        if "first class tomorrow" in msg_lower or "tomorrow first" in msg_lower:
+            return IntentResult(
+                tool_request={
+                    "name": "get_first_class_tomorrow",
+                    "arguments": {"student_id": str(student_context.student_id)},
+                },
+                confidence=0.9,
             )
 
         if any(w in msg_lower for w in ["attendance", "how many classes"]):
@@ -319,6 +369,28 @@ class ConversationService:
                 # Resolve the clarification
                 new_conv = new_conv.clear_pending_clarification()
 
+                # Handle lab batch clarification
+                if (
+                    pending.question
+                    and "lab batch" in pending.question.lower()
+                    and self.timetable_service
+                ):
+                    from app.models.timetable import LabBatch
+
+                    batch = LabBatch.BATCH_1 if "1" in matched else LabBatch.BATCH_2
+                    await self.timetable_service.set_lab_batch(
+                        student_context.student_id, batch
+                    )
+                    response = (
+                        f"Lab batch set to {matched}. I'll now confirm your timetable."
+                    )
+                    new_conv = new_conv.add_message("assistant", response)
+                    return response, StudentContext(
+                        student_id=student_context.student_id,
+                        profile=student_context.profile,
+                        conversation=new_conv,
+                    )
+
                 # Re-interpret with resolved entity
                 resolved_message = f"{pending.original_message} {matched}"
                 return await self.process_message(
@@ -329,14 +401,14 @@ class ConversationService:
                     ),
                     resolved_message,
                 )
-            else:
-                # No match - ask again
-                response = (
-                    "I didn't understand. Please choose from: "
-                    f"{', '.join(pending.candidates)}"
-                )
-                new_conv = new_conv.add_message("assistant", response)
-                return response, student_context
+
+            # No match - ask again
+            response = (
+                "I didn't understand. Please choose from: "
+                f"{', '.join(pending.candidates)}"
+            )
+            new_conv = new_conv.add_message("assistant", response)
+            return response, student_context
 
         return "I'm not sure what you mean.", student_context
 
@@ -355,10 +427,34 @@ class ConversationService:
             return response, student_context
 
         try:
-            result = await tool.execute(
-                student_id=student_context.student_id,
-                arguments=tool_req["arguments"],
-            )
+            # Handle timetable tools with TimetableService
+            timetable_tools = {
+                "get_schedule",
+                "get_today_schedule",
+                "get_tomorrow_schedule",
+                "get_next_class",
+                "get_first_class_tomorrow",
+                "get_timetable_status",
+                "needs_lab_batch",
+                "set_lab_batch",
+            }
+
+            if tool_req["name"] in timetable_tools and self.timetable_service:
+                from app.intelligence.tools.timetable_tools import (
+                    execute_timetable_tool,
+                )
+
+                result = await execute_timetable_tool(
+                    self.timetable_service,
+                    tool_req["name"],
+                    str(student_context.student_id),
+                    **tool_req["arguments"],
+                )
+            else:
+                result = await tool.execute(
+                    student_id=student_context.student_id,
+                    arguments=tool_req["arguments"],
+                )
 
             # Format tool result
             tool_result = ToolResultRef(

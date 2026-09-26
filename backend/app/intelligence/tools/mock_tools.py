@@ -6,6 +6,9 @@ from app.intelligence.tools.registry import (
     ToolHandler,
     ToolRegistry,
 )
+from app.intelligence.tools.timetable_tools import (
+    TIMETABLE_TOOL_DEFINITIONS,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,10 +234,44 @@ class GetCurrentContextHandler(ToolHandler):
         }
 
 
+class TimetableToolHandler(ToolHandler):
+    """Base handler for timetable tools."""
+
+    def __init__(self, tool_name: str):
+        self._tool_name = tool_name
+        self._definition = next(
+            d for d in TIMETABLE_TOOL_DEFINITIONS if d["name"] == tool_name
+        )
+
+    @property
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name=self._definition["name"],
+            description=self._definition["description"],
+            arguments_schema=self._definition["arguments_schema"],
+            result_schema=self._definition["result_schema"],
+            requires_authorization=True,
+        )
+
+    async def execute(
+        self,
+        student_id: UUID,
+        arguments: dict,
+        conversation_context: dict | None = None,
+    ) -> dict:
+        # For mock, return placeholder. Real implementation uses TimetableService.
+        return {"mock": True, "tool": self._tool_name, "student_id": str(student_id)}
+
+
 def register_mock_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
     """Register all mock tools for testing."""
     reg = registry or ToolRegistry()
     reg.register(GetBeruIdentityHandler())
     reg.register(GetUserContextHandler())
     reg.register(GetCurrentContextHandler())
+
+    # Register timetable tools
+    for tool_def in TIMETABLE_TOOL_DEFINITIONS:
+        reg.register(TimetableToolHandler(tool_def["name"]))
+
     return reg

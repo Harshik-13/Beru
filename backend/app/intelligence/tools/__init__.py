@@ -10,14 +10,20 @@ from app.intelligence.tools.registry import (
     ToolRegistry,
     tool_registry,
 )
+from app.intelligence.tools.timetable_tools import (
+    TIMETABLE_TOOL_DEFINITIONS,
+    execute_timetable_tool,
+)
 
 __all__ = [
+    "TIMETABLE_TOOL_DEFINITIONS",
     "GetBeruIdentityHandler",
     "GetCurrentContextHandler",
     "GetUserContextHandler",
     "ToolDefinition",
     "ToolHandler",
     "ToolRegistry",
+    "execute_timetable_tool",
     "register_mock_tools",
     "tool_registry",
 ]

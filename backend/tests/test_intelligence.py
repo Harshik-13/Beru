@@ -455,7 +455,8 @@ class TestToolRegistryWithMockTools:
         assert registry.is_registered("get_beru_identity")
         assert registry.is_registered("get_user_context")
         assert registry.is_registered("get_current_context")
-        assert len(registry.list_tools()) == 3
+        # 3 original + 8 timetable tools = 11
+        assert len(registry.list_tools()) == 11
 
 
 class TestEndToEnd:
