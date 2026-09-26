@@ -11,7 +11,9 @@ Architecture:
 """
 
 import asyncio
+import contextlib
 import json
+import logging
 import os
 from asyncio import subprocess
 from collections.abc import AsyncGenerator
@@ -169,8 +171,10 @@ class BaileysAdapter(WhatsAppProvider):
             _, stderr = await baileys_check.communicate()
             if baileys_check.returncode != 0:
                 raise RuntimeError(f"Baileys not available: {stderr.decode()}")
-        except FileNotFoundError:
-            raise RuntimeError("Node.js not found in PATH. Please install Node.js 18+")
+        except FileNotFoundError as e:
+            raise RuntimeError(
+                "Node.js not found in PATH. Please install Node.js 18+"
+            ) from e
 
     async def _start_node_process(self) -> None:
         """Start the Node.js Baileys process."""
@@ -199,7 +203,13 @@ class BaileysAdapter(WhatsAppProvider):
     def _create_node_script(self) -> str:
         """Create the Node.js Baileys script."""
         script = """
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore } = require('@whiskeysockets/baileys');
+const {
+    default: makeWASocket,
+    useMultiFileAuthState,
+    DisconnectReason,
+    fetchLatestBaileysVersion,
+    makeCacheableSignalKeyStore,
+} = require('@whiskeysockets/baileys');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -232,9 +242,15 @@ sock.ev.on('connection.update', (update) => {
         const reason = lastDisconnect?.error;
         const statusCode = reason?.output?.statusCode;
         if (statusCode === DisconnectReason.loggedOut) {
-            sendToPython({ event: 'connection_state', data: { state: 'logged_out' } });
+            sendToPython({
+                event: 'connection_state',
+                data: { state: 'logged_out' },
+            });
         } else {
-            sendToPython({ event: 'connection_state', data: { state: 'reconnecting' } });
+            sendToPython({
+                event: 'connection_state',
+                data: { state: 'reconnecting' },
+            });
         }
     }
 });
@@ -274,7 +290,9 @@ function normalizeMessage(msg) {
         from_contact: {
             provider: 'baileys',
             provider_user_id: fromMe ? sock.user.id : remoteJid,
-            normalized_identifier: fromMe ? undefined : remoteJid.replace('@s.whatsapp.net', ''),
+            normalized_identifier: fromMe
+                ? undefined
+                : remoteJid.replace('@s.whatsapp.net', ''),
             display_name: fromMe ? undefined : msg.pushName,
         },
         to_contact: {
@@ -293,10 +311,15 @@ function normalizeMessage(msg) {
 }
 
 function normalizeReceipt(receipt) {
+    const status = receipt.type === 'DELIVERY'
+        ? 'delivered'
+        : receipt.type === 'READ'
+            ? 'read'
+            : 'pending';
     return {
         message_id: receipt.key.id,
         provider_message_id: receipt.key.id,
-        status: receipt.type === 'DELIVERY' ? 'delivered' : receipt.type === 'READ' ? 'read' : 'pending',
+        status,
         provider_timestamp: Math.floor(receipt.timestamp || Date.now() / 1000),
         recipient: {
             provider: 'baileys',
@@ -340,7 +363,13 @@ function getAttachment(msg) {
     const msgObj = msg.message;
     if (!msgObj) return null;
 
-    const mediaTypes = ['imageMessage', 'videoMessage', 'audioMessage', 'documentMessage', 'stickerMessage'];
+    const mediaTypes = [
+    'imageMessage',
+    'videoMessage',
+    'audioMessage',
+    'documentMessage',
+    'stickerMessage',
+];
     for (const type of mediaTypes) {
         if (msgObj[type]) {
             const media = msgObj[type];
@@ -445,7 +474,6 @@ console.log('Baileys adapter ready');
         self, new_state: WhatsAppConnectionState, data: dict
     ) -> None:
         """Handle connection state change."""
-        old_state = self._state
         self._state = new_state
 
         if new_state == WhatsAppConnectionState.CONNECTED:
@@ -541,12 +569,6 @@ console.log('Baileys adapter ready');
         )
         await self._connection_event_queue.put(event)
 
-    # ========== Public API ==========
-
-    async def initialize(self, config: WhatsAppProviderConfig) -> None:
-        """Initialize the provider with configuration."""
-        await self.initialize(config)
-
     async def start(self) -> None:
         """Start the provider (connect, begin listening)."""
         if self._running:
@@ -628,9 +650,9 @@ console.log('Baileys adapter ready');
         try:
             result = await asyncio.wait_for(future, timeout=30.0)
             return result.get("message_id", "")
-        except TimeoutError:
+        except TimeoutError as e:
             self._pending_requests.pop(None, None)
-            raise RuntimeError("Send message timeout")
+            raise RuntimeError("Send message timeout") from e
 
     async def incoming_messages(self) -> AsyncGenerator[IncomingWhatsAppMessage, None]:
         """Async generator yielding normalized inbound messages."""
@@ -680,14 +702,13 @@ console.log('Baileys adapter ready');
         try:
             result = await asyncio.wait_for(future, timeout=30.0)
             return result.get("code")
-        except TimeoutError:
+        except TimeoutError as e:
             self._pending_requests.pop(request_id, None)
-            raise RuntimeError("Pairing code request timeout")
+            raise RuntimeError("Pairing code request timeout") from e
 
     async def logout(self) -> None:
         """Log out and clear session."""
         if self._stdin_writer:
-            payload = {"method": "logout", "params": {}}
             self._stdin_writer.write(
                 (json.dumps({"method": "logout", "params": {}}) + "\n").encode()
             )
@@ -702,16 +723,12 @@ console.log('Baileys adapter ready');
         self._running = False
         if self._read_task:
             self._read_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._read_task
-            except asyncio.CancelledError:
-                pass
         if self._reconnect_task:
             self._reconnect_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._reconnect_task
-            except asyncio.CancelledError:
-                pass
 
     async def _reconnect_loop(self) -> None:
         """Auto-reconnect loop."""
@@ -729,12 +746,14 @@ console.log('Baileys adapter ready');
                     break
                 try:
                     await self._start_node_process()
-                except Exception:
-                    continue
+                except Exception as e:
+                    logging.warning("Reconnection attempt failed: %s", e)
 
     # Mock method for testing without Node.js
     async def inject_mock_message(
-        self, text: str, from_jid: str = "919876543210@s.whatsapp.net"
+        self,
+        text: str,
+        from_jid: str = "919876543210@s.whatsapp.net",
     ):
         """Inject a mock inbound message for testing."""
         if self._state != WhatsAppConnectionState.CONNECTED:

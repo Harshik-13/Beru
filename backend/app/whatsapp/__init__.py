@@ -25,6 +25,7 @@ from app.whatsapp.provider import (
 register_baileys_provider()
 
 __all__ = [
+    "BaileysAdapter",
     "IncomingWhatsAppMessage",
     "OutgoingWhatsAppMessage",
     "WhatsAppAuthenticatedIdentity",
@@ -40,5 +41,4 @@ __all__ = [
     "WhatsAppProvider",
     "WhatsAppProviderConfig",
     "provider_registry",
-    "BaileysAdapter",
 ]
