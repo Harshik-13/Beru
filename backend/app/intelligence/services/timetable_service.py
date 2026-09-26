@@ -251,8 +251,8 @@ class TimetableService:
         if not timetable:
             return []
 
-        day_of_week = target_date.weekday()  # 0=Monday
-        if day_of_week > 5:  # Saturday=5, Sunday=6 (no classes)
+        day_of_week = target_date.weekday()  # 0=Monday, 5=Saturday, 6=Sunday
+        if day_of_week == 6:  # Sunday (no classes)
             return []
 
         entries = await self.entry_repo.get_for_timetable(timetable.id)
@@ -274,7 +274,7 @@ class TimetableService:
         """Get the next class from a given time (defaults to now)."""
         today = date.today()
         day_of_week = today.weekday()
-        if day_of_week > 5:
+        if day_of_week == 6:  # Sunday
             return None
 
         timetable = await self.get_confirmed_timetable(student_id)
@@ -341,3 +341,29 @@ class TimetableService:
 
         await self.session.flush()
         return entry
+
+    async def count_classes_for_subject_on_date(
+        self, student_id: UUID, subject_code: str, target_date: date
+    ) -> int:
+        """
+        Count the number of classes for a subject on a specific date.
+
+        Only uses CONFIRMED timetable.
+        """
+        timetable = await self.get_confirmed_timetable(student_id)
+        if not timetable:
+            return 0
+
+        day_of_week = target_date.weekday()  # 0=Monday, 5=Saturday, 6=Sunday
+        if day_of_week == 6:  # Sunday (no classes)
+            return 0
+
+        entries = await self.entry_repo.get_for_timetable(timetable.id)
+        day_entries = [e for e in entries if e.day_of_week == day_of_week]
+
+        count = 0
+        for entry in day_entries:
+            if subject_code.lower() in entry.activity_name.lower():
+                count += 1
+
+        return count
