@@ -1,0 +1,287 @@
+"""
+Portal sync service.
+
+Orchestrates the complete flow of syncing attendance data from the
+Doctus portal into Beru's attendance domain.
+"""
+
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+from uuid import UUID
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.integrations.portal.credential_store import (
+    FernetCredentialConfig,
+    FernetCredentialStore,
+)
+from app.integrations.portal.doctus import (
+    DoctusAdapter,
+    DoctusAdapterError,
+    DoctusLoginError,
+    DoctusSessionError,
+)
+
+if TYPE_CHECKING:
+    from app.integrations.portal.dto import PortalAttendance
+    from app.models.attendance import AttendanceSnapshot, SubjectAttendance
+    from app.repositories.attendance import (
+        AttendanceSnapshotRepository,
+        SubjectAttendanceRepository,
+    )
+    from app.repositories.portal_credential import PortalCredentialRepository
+else:
+    from app.models.attendance import AttendanceSnapshot, SubjectAttendance
+    from app.repositories.attendance import (
+        AttendanceSnapshotRepository,
+        SubjectAttendanceRepository,
+    )
+    from app.repositories.portal_credential import PortalCredentialRepository
+
+
+class PortalSyncError(Exception):
+    """Base exception for portal sync errors."""
+
+    pass
+
+
+class PortalCredentialsMissingError(PortalSyncError):
+    """Raised when portal credentials are not configured for the student."""
+
+    pass
+
+
+class PortalLoginError(PortalSyncError):
+    """Raised when portal login fails."""
+
+    def __init__(self, message: str, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class PortalSessionError(PortalSyncError):
+    """Raised when portal session is invalid or expired."""
+
+    pass
+
+
+class SemesterNotFoundError(PortalSyncError):
+    """Raised when semester cannot be determined."""
+
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class PortalSyncResult:
+    """Result of a portal sync operation."""
+
+    success: bool
+    snapshot_id: str | None = None
+    captured_at: str | None = None
+    overall_percentage: float | None = None
+    subject_count: int = 0
+    message: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PortalSyncConfig:
+    """Configuration for portal sync."""
+
+    portal_base_url: str = "https://automation.vnrvjiet.ac.in"
+    portal_name: str = "doctus"
+
+
+class PortalSyncService:
+    """
+    Service for syncing attendance data from the Doctus portal.
+
+    Orchestrates:
+    - Credential retrieval and decryption
+    - Portal authentication
+    - Semester selection
+    - Attendance data retrieval and parsing
+    - Persistence as verified attendance snapshots
+    """
+
+    def __init__(
+        self,
+        session: AsyncSession,
+        config: PortalSyncConfig | None = None,
+    ):
+        self.session = session
+        self.config = config or PortalSyncConfig()
+        self._credential_store: FernetCredentialStore | None = None
+        self._credential_repo: PortalCredentialRepository | None = None
+        self._snapshot_repo: AttendanceSnapshotRepository | None = None
+        self._subject_repo: SubjectAttendanceRepository | None = None
+
+    @property
+    def credential_store(self) -> FernetCredentialStore:
+        if self._credential_store is None:
+            from app.core.config import settings
+
+            config = FernetCredentialConfig.from_settings(
+                settings.portal_credential_encryption_key
+            )
+            self._credential_store = FernetCredentialStore(self.session, config)
+        return self._credential_store
+
+    @property
+    def credential_repo(self) -> "PortalCredentialRepository":
+        if self._credential_repo is None:
+            self._credential_repo = PortalCredentialRepository(self.session)
+        return self._credential_repo
+
+    @property
+    def snapshot_repo(self) -> AttendanceSnapshotRepository:
+        if self._snapshot_repo is None:
+            self._snapshot_repo = AttendanceSnapshotRepository(self.session)
+        return self._snapshot_repo
+
+    @property
+    def subject_repo(self) -> SubjectAttendanceRepository:
+        if self._subject_repo is None:
+            self._subject_repo = SubjectAttendanceRepository(self.session)
+        return self._subject_repo
+
+    async def sync_attendance(
+        self,
+        student_id: UUID,
+        semester_id: str | None = None,
+    ) -> "PortalSyncResult":
+        """
+        Sync attendance data from the portal for a student.
+
+        Args:
+            student_id: The authenticated student's ID
+            semester_id: Optional specific semester to sync. If None,
+                         attempts to use the most recent available semester.
+
+        Returns:
+            PortalSyncResult with sync status and metadata
+
+        Raises:
+            PortalCredentialsMissingError: No stored credentials for the student
+            PortalLoginError: Portal authentication failed
+            PortalSyncError: Sync failed for any other reason
+        """
+        # Step 1: Retrieve and decrypt portal credentials
+        credential = await self.credential_repo.get_by_student_and_portal(
+            student_id, "doctus"
+        )
+        if not credential:
+            raise PortalCredentialsMissingError(
+                "No portal credentials configured. Please configure your "
+                "portal credentials in settings."
+            )
+
+        _roll_number, password = await self.credential_store.get_credential(
+            student_id, "doctus"
+        )
+        if not credential.roll_number or not credential.password:
+            raise PortalCredentialsMissingError(
+                "Portal credentials not configured correctly."
+            )
+
+        # Step 2: Create Doctus adapter and authenticate
+        async with DoctusAdapter() as adapter:
+            try:
+                await adapter.login(credential.roll_number, password)
+            except DoctusLoginError as e:
+                raise PortalLoginError(
+                    f"Portal login failed: {e}", status_code=e.status_code
+                ) from e
+            except DoctusAdapterError as e:
+                raise PortalSyncError(f"Portal communication error: {e}") from e
+
+            # Step 3: Get available semesters
+            try:
+                semesters = await adapter.get_semesters()
+            except Exception as e:
+                raise PortalSyncError(f"Failed to retrieve semesters: {e}") from e
+
+            if not semesters:
+                raise PortalSyncError("No semesters available from portal")
+
+            # Step 4: Determine which semester to use
+            target_semester_id = semester_id
+            if not target_semester_id:
+                # Use the first available semester (typically the most recent)
+                target_semester_id = semesters[0].semester_id
+
+            # Step 5: Fetch attendance data
+            try:
+                attendance, _ = await adapter.get_attendance(target_semester_id)
+            except DoctusSessionError:
+                raise PortalSyncError(
+                    "Portal session expired or invalid during attendance fetch"
+                ) from None
+            except DoctusAdapterError as e:
+                raise PortalSyncError(f"Attendance fetch failed: {e}") from e
+
+            # Step 6: Persist attendance data
+            snapshot = await self._persist_attendance(
+                student_id=student_id,
+                attendance=attendance,
+                semester_id=target_semester_id,
+            )
+
+            return PortalSyncResult(
+                success=True,
+                snapshot_id=str(snapshot.id),
+                captured_at=snapshot.captured_at.isoformat(),
+                overall_percentage=snapshot.overall_percentage(),
+                subject_count=len(snapshot.subjects),
+                message="Attendance synced successfully",
+            )
+
+    async def _persist_attendance(
+        self,
+        student_id: UUID,
+        attendance: "PortalAttendance",
+        semester_id: str,
+    ):
+        """
+        Persist attendance data as a new snapshot with subject records.
+
+        This creates an immutable snapshot that preserves the exact
+        state of attendance at the time of sync.
+        """
+        # Create the snapshot
+        snapshot = AttendanceSnapshot(
+            student_id=student_id,
+            source="doctus",
+            captured_at=datetime.now(UTC),
+            semester_id=attendance.semester_id or semester_id,
+            overall_attended=attendance.overall_attended,
+            overall_conducted=attendance.overall_conducted,
+        )
+        await self.snapshot_repo.create(snapshot)
+
+        # Create subject attendance records
+        subject_records = []
+        for subject in attendance.subjects:
+            subject_record = SubjectAttendance(
+                snapshot_id=snapshot.id,
+                subject_code=subject.subject_code,
+                subject_name=subject.subject_name,
+                monthly_period=subject.monthly_period,
+                monthly_attended=subject.monthly_attended,
+                monthly_conducted=subject.monthly_conducted,
+                cumulative_attended=subject.cumulative_attended,
+                cumulative_conducted=subject.cumulative_conducted,
+            )
+            subject_records.append(subject_record)
+
+        if subject_records:
+            await self.subject_repo.create_batch(subject_records)
+
+        # Refresh to load subjects relationship
+        await self.session.refresh(snapshot)
+        return snapshot
+
+
+def create_portal_sync_service(session: AsyncSession) -> PortalSyncService:
+    """Factory function to create a portal sync service."""
+    return PortalSyncService(session)

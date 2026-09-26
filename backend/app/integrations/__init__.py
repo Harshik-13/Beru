@@ -17,6 +17,12 @@ from app.integrations.portal.dto import (
     SemesterOption,
 )
 from app.integrations.portal.parser import DoctusParser, DoctusParserError
+from app.integrations.portal.sync_service import (
+    PortalSyncError,
+    PortalSyncResult,
+    PortalSyncService,
+    create_portal_sync_service,
+)
 
 __all__ = [
     "DoctusAdapter",
@@ -32,5 +38,9 @@ __all__ = [
     "PortalCredentialStore",
     "PortalStudentContext",
     "PortalSubjectAttendance",
+    "PortalSyncError",
+    "PortalSyncResult",
+    "PortalSyncService",
     "SemesterOption",
+    "create_portal_sync_service",
 ]

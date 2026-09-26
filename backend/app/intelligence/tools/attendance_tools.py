@@ -337,6 +337,28 @@ async def simulate_absence_with_timetable(
         }
 
 
+async def sync_attendance(service, student_id: str, semester_id: str | None = None):
+    """Sync attendance from the portal and store as verified snapshot."""
+    try:
+        result = await service.sync_attendance(
+            student_id=student_id,
+            semester_id=semester_id,
+        )
+        return {
+            "success": result.success,
+            "snapshot_id": result.snapshot_id,
+            "captured_at": result.captured_at,
+            "overall_percentage": result.overall_percentage,
+            "subject_count": result.subject_count,
+            "message": result.message,
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+        }
+
+
 async def calculate_classes_needed(
     service, student_id: str, subject_code: str, target_percentage: float
 ):
@@ -638,6 +660,40 @@ ATTENDANCE_TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "name": "sync_attendance",
+        "description": (
+            "Sync attendance data from the Doctus portal. "
+            "This fetches the latest attendance from the college portal and "
+            "stores it as a verified snapshot."
+        ),
+        "arguments_schema": {
+            "type": "object",
+            "properties": {
+                "student_id": {"type": "string", "format": "uuid"},
+                "semester_id": {
+                    "type": "string",
+                    "description": (
+                        "Optional: specific semester to sync. "
+                        "If not provided, uses the most recent semester."
+                    ),
+                },
+            },
+            "required": ["student_id"],
+        },
+        "result_schema": {
+            "type": "object",
+            "properties": {
+                "success": {"type": "boolean"},
+                "snapshot_id": {"type": ["string", "null"]},
+                "captured_at": {"type": ["string", "null"]},
+                "overall_percentage": {"type": ["number", "null"]},
+                "subject_count": {"type": ["integer", "null"]},
+                "message": {"type": ["string", "null"]},
+                "error": {"type": ["string", "null"]},
+            },
+        },
+    },
 ]
 
 
@@ -689,5 +745,9 @@ async def execute_attendance_tool(
         return await get_attendance_snapshot_info(attendance_service, student_id)
     elif tool_name == "get_subject_codes":
         return await get_subject_codes(attendance_service, student_id)
+    elif tool_name == "sync_attendance":
+        return await sync_attendance(
+            attendance_service, student_id, kwargs.get("semester_id")
+        )
     else:
         raise ValueError(f"Unknown attendance tool: {tool_name}")
