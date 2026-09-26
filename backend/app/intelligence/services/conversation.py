@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     )
     from app.intelligence.models.identity import BERU_IDENTITY, BeruIdentity
     from app.intelligence.providers.base import LLMProvider, LLMResponse
+    from app.intelligence.services.attendance_service import AttendanceService
     from app.intelligence.services.context_builder import (
         ContextBuilder,
         create_student_context,
@@ -32,6 +33,7 @@ else:
     )
     from app.intelligence.models.identity import BERU_IDENTITY, BeruIdentity
     from app.intelligence.providers.base import LLMProvider, LLMResponse
+    from app.intelligence.services.attendance_service import AttendanceService
     from app.intelligence.services.context_builder import (
         ContextBuilder,
         create_student_context,
@@ -72,12 +74,14 @@ class ConversationService:
         llm_provider: LLMProvider | None = None,
         beru_identity: BeruIdentity | None = None,
         timetable_service: TimetableService | None = None,
+        attendance_service: AttendanceService | None = None,
     ):
         self.tool_registry = tool_registry_instance or tool_registry
         self.context_builder = context_builder or ContextBuilder()
         self.llm_provider = llm_provider
         self.beru_identity = beru_identity or BERU_IDENTITY
         self.timetable_service = timetable_service
+        self.attendance_service = attendance_service
 
     def create_student_context(
         self,
@@ -440,12 +444,29 @@ class ConversationService:
                 "set_lab_batch",
             }
 
+            # Attendance tools that may need TimetableService
+            attendance_tools = {
+                "simulate_absence",
+            }
+
             if tool_req["name"] in timetable_tools and self.timetable_service:
                 from app.intelligence.tools.timetable_tools import (
                     execute_timetable_tool,
                 )
 
                 result = await execute_timetable_tool(
+                    self.timetable_service,
+                    tool_req["name"],
+                    str(student_context.student_id),
+                    **tool_req["arguments"],
+                )
+            elif tool_req["name"] in attendance_tools:
+                from app.intelligence.tools.attendance_tools import (
+                    execute_attendance_tool,
+                )
+
+                result = await execute_attendance_tool(
+                    self.attendance_service,
                     self.timetable_service,
                     tool_req["name"],
                     str(student_context.student_id),
