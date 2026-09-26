@@ -41,5 +41,9 @@ class Settings(BaseSettings):
     llm_rate_limit_max_requests: int = 30
     llm_rate_limit_window_seconds: int = 60
 
+    # Portal Integration
+    portal_base_url: str = "https://automation.vnrvjiet.ac.in"
+    portal_credential_encryption_key: str = ""
+
 
 settings = Settings()
