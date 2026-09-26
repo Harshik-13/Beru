@@ -382,7 +382,8 @@ class ConversationService:
                         student_context.student_id, batch
                     )
                     response = (
-                        f"Lab batch set to {matched}. I'll now confirm your timetable."
+                        f"Lab batch set to {matched}. Slash-separated labs resolved. "
+                        "Please review your timetable and confirm when ready."
                     )
                     new_conv = new_conv.add_message("assistant", response)
                     return response, StudentContext(

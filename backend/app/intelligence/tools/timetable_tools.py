@@ -258,7 +258,11 @@ async def set_lab_batch(
     student_id: str,
     batch: str,  # "batch_1" or "batch_2"
 ) -> dict:
-    """Set the student's lab batch."""
+    """Set the student's lab batch and resolve slash labs.
+
+    Does NOT auto-confirm - timetable remains in REVIEW_REQUIRED
+    for student confirmation.
+    """
     from uuid import UUID
 
     from app.models.timetable import LabBatch
@@ -268,11 +272,11 @@ async def set_lab_batch(
 
     await service.set_lab_batch(student_uuid, lab_batch)
 
-    # If there's a pending timetable with slash labs, try to confirm it
+    # If there's a pending timetable with slash labs, resolve them
     pending = await service.get_pending_timetable(student_uuid)
     if pending:
-        # Re-extract entries with new lab batch
         entries = await service.entry_repo.get_for_timetable(pending.id)
+        resolved_count = 0
         for entry in entries:
             if entry.lab_batch == LabBatch.UNKNOWN and "/" in entry.activity_name:
                 parts = [p.strip() for p in entry.activity_name.split("/")]
@@ -286,14 +290,18 @@ async def set_lab_batch(
 
                         entry.activity_type = ActivityType.LAB
                     entry.lab_batch = lab_batch
+                    resolved_count += 1
 
-        # Auto-confirm if all slash labs resolved
-        await service.confirm_timetable(pending.id)
+        await service.session.flush()
 
     return {
         "success": True,
         "lab_batch": lab_batch.value,
-        "message": f"Lab batch set to {lab_batch.value.replace('_', ' ').title()}.",
+        "message": (
+            f"Lab batch set to {lab_batch.value.replace('_', ' ').title()}. "
+            f"Resolved {resolved_count} lab entries. "
+            "Please review and confirm your timetable."
+        ),
     }
 
 
