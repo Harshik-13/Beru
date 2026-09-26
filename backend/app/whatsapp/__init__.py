@@ -3,6 +3,7 @@ from app.whatsapp.auth import (
     WhatsAppIdentityResolver,
     WhatsAppIncomingIdentity,
 )
+from app.whatsapp.baileys_adapter import register_baileys_provider
 from app.whatsapp.models import (
     IncomingWhatsAppMessage,
     OutgoingWhatsAppMessage,
@@ -20,6 +21,9 @@ from app.whatsapp.provider import (
     provider_registry,
 )
 
+# Register the Baileys provider on module import
+register_baileys_provider()
+
 __all__ = [
     "IncomingWhatsAppMessage",
     "OutgoingWhatsAppMessage",
@@ -36,4 +40,5 @@ __all__ = [
     "WhatsAppProvider",
     "WhatsAppProviderConfig",
     "provider_registry",
+    "BaileysAdapter",
 ]
