@@ -8,6 +8,7 @@ from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.timetable import LabBatch
 
 if TYPE_CHECKING:
+    from app.models.attendance import AttendanceSnapshot
     from app.models.timetable import Timetable
 
 
@@ -33,6 +34,10 @@ class Student(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     timetables: Mapped[list["Timetable"]] = relationship(
         "Timetable", back_populates="student", cascade="all, delete-orphan"
+    )
+
+    attendance_snapshots: Mapped[list["AttendanceSnapshot"]] = relationship(
+        "AttendanceSnapshot", back_populates="student", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:
