@@ -7,13 +7,16 @@ and attendance data retrieval.
 """
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import httpx
 
+if TYPE_CHECKING:
+    pass
+else:
+    pass
+
 from app.core.config import settings
-from app.integrations.portal.dto import (
-    PortalAttendance,
-)
 from app.integrations.portal.parser import DoctusParser, DoctusParserError
 
 
@@ -70,7 +73,7 @@ class DoctusAdapter:
 
     def __init__(self):
         self._client: httpx.AsyncClient | None = None
-        self._session: DoctusSession | None = None
+        self._session = None
 
     async def __aenter__(self) -> "DoctusAdapter":
         self._client = httpx.AsyncClient(
@@ -145,18 +148,35 @@ class DoctusAdapter:
         if not relic_cookie:
             raise DoctusLoginError("Session cookie not set after login")
 
-        # Extract protected student ID from response or subsequent page
-        # The protected student ID is typically embedded in the dashboard HTML
-        # For now, we'll extract it when needed for attendance requests
+        # Extract protected student ID from the login response if available
+        # The protected student ID is often embedded in the login response
+        protected_student_id = self._extract_protected_student_id_from_response(data)
+
         session = DoctusSession(
             cookies=cookies,
-            protected_student_id="",  # Will be populated on first attendance request
+            protected_student_id=protected_student_id,
         )
 
         self._session = session
         return session
 
-    async def get_semesters(self) -> list:
+    def _extract_protected_student_id_from_response(self, data: dict) -> str:
+        """
+        Extract protected student ID from login response.
+
+        The protected student ID may be embedded in the login response
+        under various keys depending on the portal version.
+        """
+        # Check common locations in the login response
+        data_obj = data.get("Data", {})
+        if isinstance(data_obj, dict):
+            # Check common field names for the protected student ID
+            for key in ["StudentId", "ProtectedStudentId", "UserId", "ProtectedId"]:
+                if data_obj.get(key):
+                    return str(data_obj[key])
+        return ""
+
+    async def get_semesters(self):
         """
         Retrieve available semester options.
 
@@ -189,6 +209,15 @@ class DoctusAdapter:
                 f"Semester request failed with status {response.status_code}"
             )
 
+        # Extract protected student ID from the attendance page HTML
+        if not self._session.protected_student_id:
+            extracted_id = self._extract_protected_student_id_from_html(response.text)
+            if extracted_id:
+                self._session = DoctusSession(
+                    cookies=self._session.cookies,
+                    protected_student_id=extracted_id,
+                )
+
         # Parse semester options from the page
         try:
             semesters = DoctusParser.parse_semester_options(response.text)
@@ -197,7 +226,7 @@ class DoctusAdapter:
 
         return semesters
 
-    async def get_attendance(self, semester_id: str) -> tuple[PortalAttendance, str]:
+    async def get_attendance(self, semester_id: str):
         """
         Retrieve attendance data for a specific semester.
 
@@ -205,7 +234,7 @@ class DoctusAdapter:
             semester_id: The semester identifier from get_semesters()
 
         Returns:
-            Tuple of (PortalAttendance, protected_student_id)
+            PortalAttendance object
         """
         if not self._session:
             raise DoctusSessionError("Not authenticated. Call login() first.")
@@ -213,8 +242,22 @@ class DoctusAdapter:
         if not self._client:
             raise RuntimeError("Client not initialized")
 
-        # Build attendance request URL
-        url = f"{self.ATTENDANCE_ENDPOINT}?semId={semester_id}"
+        # Build attendance request URL with protected student ID
+        protected_student_id = self._extract_protected_student_id()
+        if not protected_student_id:
+            # Try to extract from the last fetched page (semester page)
+            if not self._session.protected_student_id:
+                # We need to fetch a page to extract it
+                raise DoctusSessionError(
+                    "Protected student ID not available. Call get_semesters() first."
+                )
+            protected_student_id = self._session.protected_student_id
+
+        # Build attendance request URL with protected student ID
+        url = (
+            f"{self.ATTENDANCE_ENDPOINT}?"
+            f"studentId={protected_student_id}&semId={semester_id}"
+        )
 
         try:
             response = await self._client.get(
@@ -249,9 +292,6 @@ class DoctusAdapter:
         if not html:
             raise DoctusAdapterError("Empty attendance data")
 
-        # Extract protected student ID from cookies if not already set
-        protected_student_id = self._extract_protected_student_id()
-
         # Parse attendance HTML
         try:
             attendance = DoctusParser.parse_attendance(html, semester_id)
@@ -259,25 +299,15 @@ class DoctusAdapter:
         except DoctusParserError as e:
             raise DoctusParseError("Failed to parse attendance", e) from e
 
-        return attendance, protected_student_id
+        return attendance
 
     def _extract_protected_student_id(self) -> str:
         """
         Extract the protected student ID from the session.
 
-        The protected ID is typically embedded in the page HTML or
-        available via an API endpoint. For now, we extract from cookies
-        or return a placeholder.
+        Returns the already-extracted ID.
         """
         if not self._session:
             return ""
 
-        # The protected student ID might be in a cookie or need to be
-        # fetched from a profile endpoint. For now, return empty string
-        # and let the parser handle the data without it.
         return self._session.protected_student_id
-
-    @property
-    def is_authenticated(self) -> bool:
-        """Check if currently authenticated."""
-        return self._session is not None
