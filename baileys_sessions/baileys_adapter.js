@@ -56,6 +56,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const qrcode = require('qrcode-terminal');
 
 const {
     default: makeWASocket,
@@ -95,6 +96,12 @@ async function main() {
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
         if (qr) {
+            // Render QR code in terminal for user to scan
+            qrcode.generate(qr, { small: true }, (qrCode) => {
+                console.log('\n=== Scan this QR code with WhatsApp ===');
+                console.log(qrCode);
+                console.log('========================================\n');
+            });
             sendToPython({ event: 'qr_code', data: { qr_code: qr } });
         }
         if (connection === 'open') {

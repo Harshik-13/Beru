@@ -4,14 +4,19 @@
   "description": "Baileys WhatsApp adapter for Beru",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
+    "start": "node baileys_adapter.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["baileys", "whatsapp", "beru"],
+  "keywords": [
+    "baileys",
+    "whatsapp",
+    "beru"
+  ],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@whiskeysockets/baileys": "^7.0.0-rc14"
+    "@whiskeysockets/baileys": "^7.0.0-rc14",
+    "qrcode-terminal": "^0.12.0"
   }
 }
