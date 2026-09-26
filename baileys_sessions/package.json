@@ -1,0 +1,17 @@
+{
+  "name": "baileys_sessions",
+  "version": "1.0.0",
+  "description": "Baileys WhatsApp adapter for Beru",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["baileys", "whatsapp", "beru"],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@whiskeysockets/baileys": "^7.0.0-rc14"
+  }
+}
