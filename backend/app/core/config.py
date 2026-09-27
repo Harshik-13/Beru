@@ -45,5 +45,11 @@ class Settings(BaseSettings):
     portal_base_url: str = "https://automation.vnrvjiet.ac.in"
     portal_credential_encryption_key: str = ""
 
+    # Telegram Bot
+    telegram_enabled: bool = False
+    telegram_bot_token: str = ""  # Required if telegram_enabled=True, no default
+    telegram_poll_timeout_seconds: int = 30
+    telegram_drop_pending_updates: bool = True
+
 
 settings = Settings()

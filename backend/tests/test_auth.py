@@ -4,8 +4,9 @@ from uuid import uuid4
 import pytest
 
 from app.models.audit_event import AuditEventType
-from app.models.whatsapp_identity import WhatsAppIdentityStatus
+from app.models.whatsapp_identity import WhatsAppIdentity, WhatsAppIdentityStatus
 from app.repositories.audit_event import AuditEventRepository
+from app.repositories.telegram_identity import TelegramIdentityRepository
 from app.repositories.whatsapp_identity import WhatsAppIdentityRepository
 from app.security.audit import AuditService
 from app.security.authorization import (
@@ -158,18 +159,23 @@ class TestAuthorizationService:
 
 class TestDatabaseStudentResolver:
     @pytest.fixture
-    def mock_identity_repo(self) -> MagicMock:
+    def mock_whatsapp_repo(self) -> MagicMock:
         return MagicMock(spec=WhatsAppIdentityRepository)
 
     @pytest.fixture
-    def resolver(self, mock_identity_repo: MagicMock) -> DatabaseStudentResolver:
-        return DatabaseStudentResolver(mock_identity_repo)
+    def mock_telegram_repo(self) -> MagicMock:
+        return MagicMock(spec=TelegramIdentityRepository)
+
+    @pytest.fixture
+    def resolver(
+        self, mock_whatsapp_repo: MagicMock, mock_telegram_repo: MagicMock
+    ) -> DatabaseStudentResolver:
+        return DatabaseStudentResolver(mock_whatsapp_repo, mock_telegram_repo)
 
     @pytest.mark.asyncio
     async def test_active_identity_resolves_to_student(
-        self, resolver: DatabaseStudentResolver, mock_identity_repo: MagicMock
+        self, resolver: DatabaseStudentResolver, mock_whatsapp_repo: MagicMock
     ) -> None:
-        from app.models.whatsapp_identity import WhatsAppIdentity
 
         student_id = uuid4()
         mock_identity = WhatsAppIdentity(
@@ -178,7 +184,7 @@ class TestDatabaseStudentResolver:
             provider_user_id="919876543210@c.us",
             status=WhatsAppIdentityStatus.ACTIVE,
         )
-        mock_identity_repo.get_by_provider_identity = AsyncMock(
+        mock_whatsapp_repo.get_by_provider_identity = AsyncMock(
             return_value=mock_identity
         )
 
@@ -193,9 +199,9 @@ class TestDatabaseStudentResolver:
 
     @pytest.mark.asyncio
     async def test_unknown_identity_returns_none(
-        self, resolver: DatabaseStudentResolver, mock_identity_repo: MagicMock
+        self, resolver: DatabaseStudentResolver, mock_whatsapp_repo: MagicMock
     ) -> None:
-        mock_identity_repo.get_by_provider_identity = AsyncMock(return_value=None)
+        mock_whatsapp_repo.get_by_provider_identity = AsyncMock(return_value=None)
 
         result = await resolver.get_student_for_identity(
             "whatsapp_web_js", "unknown@c.us"
@@ -205,9 +211,8 @@ class TestDatabaseStudentResolver:
 
     @pytest.mark.asyncio
     async def test_disabled_identity_returns_none(
-        self, resolver: DatabaseStudentResolver, mock_identity_repo: MagicMock
+        self, resolver: DatabaseStudentResolver, mock_whatsapp_repo: MagicMock
     ) -> None:
-        from app.models.whatsapp_identity import WhatsAppIdentity
 
         student_id = uuid4()
         mock_identity = WhatsAppIdentity(
@@ -216,7 +221,7 @@ class TestDatabaseStudentResolver:
             provider_user_id="919876543210@c.us",
             status=WhatsAppIdentityStatus.DISABLED,
         )
-        mock_identity_repo.get_by_provider_identity = AsyncMock(
+        mock_whatsapp_repo.get_by_provider_identity = AsyncMock(
             return_value=mock_identity
         )
 
@@ -228,9 +233,8 @@ class TestDatabaseStudentResolver:
 
     @pytest.mark.asyncio
     async def test_revoked_identity_returns_none(
-        self, resolver: DatabaseStudentResolver, mock_identity_repo: MagicMock
+        self, resolver: DatabaseStudentResolver, mock_whatsapp_repo: MagicMock
     ) -> None:
-        from app.models.whatsapp_identity import WhatsAppIdentity
 
         student_id = uuid4()
         mock_identity = WhatsAppIdentity(
@@ -239,7 +243,7 @@ class TestDatabaseStudentResolver:
             provider_user_id="919876543210@c.us",
             status=WhatsAppIdentityStatus.REVOKED,
         )
-        mock_identity_repo.get_by_provider_identity = AsyncMock(
+        mock_whatsapp_repo.get_by_provider_identity = AsyncMock(
             return_value=mock_identity
         )
 
@@ -251,9 +255,8 @@ class TestDatabaseStudentResolver:
 
     @pytest.mark.asyncio
     async def test_get_identity_status(
-        self, resolver: DatabaseStudentResolver, mock_identity_repo: MagicMock
+        self, resolver: DatabaseStudentResolver, mock_whatsapp_repo: MagicMock
     ) -> None:
-        from app.models.whatsapp_identity import WhatsAppIdentity
 
         mock_identity = WhatsAppIdentity(
             student_id=uuid4(),
@@ -261,7 +264,7 @@ class TestDatabaseStudentResolver:
             provider_user_id="919876543210@c.us",
             status=WhatsAppIdentityStatus.ACTIVE,
         )
-        mock_identity_repo.get_by_provider_identity = AsyncMock(
+        mock_whatsapp_repo.get_by_provider_identity = AsyncMock(
             return_value=mock_identity
         )
 
@@ -272,9 +275,9 @@ class TestDatabaseStudentResolver:
 
     @pytest.mark.asyncio
     async def test_get_identity_status_unknown(
-        self, resolver: DatabaseStudentResolver, mock_identity_repo: MagicMock
+        self, resolver: DatabaseStudentResolver, mock_whatsapp_repo: MagicMock
     ) -> None:
-        mock_identity_repo.get_by_provider_identity = AsyncMock(return_value=None)
+        mock_whatsapp_repo.get_by_provider_identity = AsyncMock(return_value=None)
 
         status = await resolver.get_identity_status("whatsapp_web_js", "unknown@c.us")
         assert status == "unknown"
