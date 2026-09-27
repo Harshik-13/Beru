@@ -120,23 +120,53 @@ class TelegramBotAdapter(TelegramProvider):
         await self._get_me()
 
     async def _get_me(self) -> None:
-        """Get bot information from Telegram API."""
+        """Get bot information from Telegram API.
+
+        Raises:
+            RuntimeError: If token is invalid, API is unreachable,
+            or response is invalid.
+        """
         if not self._session or not self._config:
-            return
+            raise RuntimeError("Adapter not initialized: session or config missing")
+
+        if not self._config.bot_token:
+            raise RuntimeError("Telegram bot token is required")
+
         url = f"https://api.telegram.org/bot{self._config.bot_token}/getMe"
-        async with self._session.get(url) as resp:
-            data = await resp.json()
-            if data.get("ok"):
-                bot_info = data["result"]
-                self._our_identity = TelegramContactIdentity(
-                    provider=self.provider_name,
-                    provider_user_id=str(bot_info["id"]),
-                    normalized_identifier=f"@{bot_info.get('username', '')}"
-                    if bot_info.get("username")
-                    else None,
-                    display_name=bot_info.get("first_name"),
-                    is_bot=bot_info.get("is_bot", True),
-                )
+
+        try:
+            async with self._session.get(url) as resp:
+                data = await resp.json()
+        except aiohttp.ClientError as e:
+            raise RuntimeError(f"Telegram API unreachable: {e}") from e
+        except TimeoutError as e:
+            raise RuntimeError("Telegram API request timed out") from e
+
+        if not data.get("ok"):
+            error_code = data.get("error_code")
+            description = data.get("description", "Unknown error")
+
+            # Handle specific error codes
+            if error_code == 401:
+                raise RuntimeError("Invalid Telegram bot token (401 Unauthorized)")
+            elif error_code == 404:
+                raise RuntimeError("Telegram API endpoint not found")
+            else:
+                raise RuntimeError(f"Telegram API error ({error_code}): {description}")
+
+        bot_info = data.get("result")
+        if not bot_info:
+            raise RuntimeError("Telegram API returned success but no bot info")
+
+        self._our_identity = TelegramContactIdentity(
+            provider=self.provider_name,
+            provider_user_id=str(bot_info["id"]),
+            normalized_identifier=f"@{bot_info.get('username', '')}"
+            if bot_info.get("username")
+            else None,
+            display_name=bot_info.get("first_name"),
+            is_bot=bot_info.get("is_bot", True),
+        )
 
     async def start(self) -> None:
         """Start the provider (begin long polling)."""
@@ -563,3 +593,4 @@ class TelegramBotAdapter(TelegramProvider):
 def register_telegram_provider():
     """Register the Telegram Bot provider with the global registry."""
     telegram_provider_registry.register(TelegramBotAdapter)
+
