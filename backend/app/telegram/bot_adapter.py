@@ -9,9 +9,10 @@ import asyncio
 import contextlib
 import json
 import logging
+import secrets
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import aiohttp
@@ -28,6 +29,9 @@ if TYPE_CHECKING:
         TelegramMessageType,
     )
     from app.telegram.provider import TelegramProvider, TelegramProviderConfig
+    from app.repositories.telegram_linking_challenge import (
+        TelegramLinkingChallengeRepository,
+    )
 else:
     from app.telegram.models import (
         IncomingTelegramMessage,
@@ -79,6 +83,7 @@ class TelegramBotAdapter(TelegramProvider):
         self._poll_task: asyncio.Task | None = None
         self._last_update_id: int = 0
         self._processed_updates: set[int] = set()
+        self._challenge_repo: "TelegramLinkingChallengeRepository | None" = None
 
     @property
     def provider_name(self) -> str:
@@ -118,6 +123,10 @@ class TelegramBotAdapter(TelegramProvider):
 
         # Get bot info
         await self._get_me()
+
+    def set_challenge_repository(self, repo: "TelegramLinkingChallengeRepository") -> None:
+        """Set the challenge repository for handling /start linking flow."""
+        self._challenge_repo = repo
 
     async def _get_me(self) -> None:
         """Get bot information from Telegram API.
@@ -293,6 +302,10 @@ class TelegramBotAdapter(TelegramProvider):
                 yield receipt
             except TimeoutError:
                 continue
+
+    def set_challenge_repository(self, repo: "TelegramLinkingChallengeRepository") -> None:
+        """Set the challenge repository for handling /start linking flow."""
+        self._challenge_repo = repo
 
     async def _poll_loop(self) -> None:
         """Main long polling loop."""
@@ -504,6 +517,12 @@ class TelegramBotAdapter(TelegramProvider):
                 caption=message.get("caption"),
             )
 
+        # Handle /start command for Telegram identity linking
+        if text and text.strip() == "/start":
+            await self._handle_start_command(chat_id, from_contact)
+            # Still queue the message for any other handlers
+            # but don't process further for /start
+
         # Build normalized message
         normalized = IncomingTelegramMessage(
             event_id=f"{update_id}:{message_id}",
@@ -522,6 +541,63 @@ class TelegramBotAdapter(TelegramProvider):
         )
 
         await self._message_queue.put(normalized)
+
+    async def _handle_start_command(self, chat_id: str, from_contact: TelegramContactIdentity) -> None:
+        """Handle /start command - generate linking challenge and send onboarding message."""
+        if not self._challenge_repo:
+            # Challenge repo not configured, send basic welcome
+            await self._send_onboarding_message(
+                chat_id,
+                "Welcome to Beru! To link your Telegram account to your student profile, "
+                "please visit the Beru app and use the Telegram linking feature."
+            )
+            return
+
+        telegram_user_id = from_contact.provider_user_id
+
+        # Check for existing pending challenge
+        existing = await self._challenge_repo.get_pending_by_telegram_user_id(telegram_user_id)
+        if existing:
+            challenge_token = existing.challenge_token
+        else:
+            # Generate new challenge
+            challenge_token = secrets.token_urlsafe(32)
+            expires_at = datetime.now(UTC) + timedelta(minutes=10)
+            await self._challenge_repo.create(
+                telegram_user_id=telegram_user_id,
+                challenge_token=challenge_token,
+                expires_at=expires_at.isoformat(),
+            )
+
+        # Send onboarding message with challenge token
+        onboarding_text = (
+            f"Welcome to Beru! 🎓\n\n"
+            f"To link your Telegram account to your student profile:\n\n"
+            f"1. Open the Beru app and log in\n"
+            f"2. Go to Settings → Telegram Linking\n"
+            f"3. Enter this challenge code: <code>{challenge_token}</code>\n\n"
+            f"This code expires in 10 minutes and can only be used once.\n\n"
+            f"Once linked, you'll receive timetable updates, attendance alerts, "
+            f"and more directly here."
+        )
+        await self._send_onboarding_message(chat_id, onboarding_text)
+
+    async def _send_onboarding_message(self, chat_id: str, text: str) -> None:
+        """Send an onboarding message with HTML formatting."""
+        if not self._session or not self._config:
+            return
+        url = f"https://api.telegram.org/bot{self._config.bot_token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+        }
+        try:
+            async with self._session.post(url, json=payload) as resp:
+                await resp.json()
+        except Exception:
+            # Log error but don't fail the message processing
+            pass
 
     async def _handle_callback_query(self, callback: dict) -> None:
         """Handle callback query (inline button press)."""
@@ -593,4 +669,3 @@ class TelegramBotAdapter(TelegramProvider):
 def register_telegram_provider():
     """Register the Telegram Bot provider with the global registry."""
     telegram_provider_registry.register(TelegramBotAdapter)
-

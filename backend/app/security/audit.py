@@ -119,3 +119,36 @@ class AuditService:
             success=True,
             metadata=event_metadata,
         )
+
+    async def log_telegram_identity_linked(
+        self,
+        *,
+        student_id: UUID,
+        telegram_user_id: str,
+        event_metadata: dict[str, str] | None = None,
+    ) -> AuditEvent:
+        return await self._repo.create(
+            event_type=AuditEventType.TELEGRAM_IDENTITY_LINKED,
+            student_id=student_id,
+            provider="telegram_bot",
+            external_identity_id=telegram_user_id,
+            success=True,
+            metadata=event_metadata,
+        )
+
+    async def log_telegram_identity_link_failed(
+        self,
+        *,
+        telegram_user_id: str,
+        reason: str,
+        event_metadata: dict[str, str] | None = None,
+    ) -> AuditEvent:
+        return await self._repo.create(
+            event_type=AuditEventType.TELEGRAM_IDENTITY_LINK_FAILED,
+            student_id=None,
+            provider="telegram_bot",
+            external_identity_id=telegram_user_id,
+            success=False,
+            error_message=reason,
+            metadata=event_metadata,
+        )

@@ -23,6 +23,8 @@ class AuditEventType(str, enum.Enum):  # noqa: UP042
     STUDENT_CREATED = "student_created"
     WHATSAPP_IDENTITY_CREATED = "whatsapp_identity_created"
     WHATSAPP_IDENTITY_UPDATED = "whatsapp_identity_updated"
+    TELEGRAM_IDENTITY_LINKED = "telegram_identity_linked"
+    TELEGRAM_IDENTITY_LINK_FAILED = "telegram_identity_link_failed"
 
 
 class AuditEvent(Base, UUIDPrimaryKeyMixin, TimestampMixin):
