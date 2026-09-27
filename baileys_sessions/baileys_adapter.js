@@ -26,34 +26,6 @@
  *   {"response": {"id": "req-1", "result": {...}}}
  */
 
-/**
- * Baileys WhatsApp Provider Adapter — Node.js Entrypoint
- *
- * This is the standalone Node.js process that runs Baileys and communicates
- * with the Python backend via stdio JSON-RPC.
- *
- * Communication Protocol (JSON lines over stdio):
- *
- * Python -> Node.js (stdin):
- *   {"id": "req-1", "method": "login", "params": {"roll_number": "...", "password": "..."}}
- *   {"id": "req-2", "method": "send_message", "params": {"to": "...", "text": "..."}}
- *   {"id": "req-3", "method": "get_semesters", "params": {}}
- *   {"id": "req-4", "method": "get_attendance", "params": {"semester_id": "..."}}
- *   {"id": "req-5", "method": "logout", "params": {}}
- *   {"id": "req-6", "method": "request_qr", "params": {}}
- *   {"id": "req-7", "method": "request_pairing_code", "params": {"phone_number": "..."}}
- *
- * Node.js -> Python (stdout, JSON lines):
- *   {"event": "ready"}
- *   {"event": "connection_state", "data": {"state": "connected"}}
- *   {"event": "qr_code", "data": {"qr_code": "..."}}
- *   {"event": "pairing_code", "data": {"code": "..."}}
- *   {"event": "message", "data": {...}}
- *   {"event": "delivery_receipt", "data": {...}}
- *   {"event": "error", "data": {"message": "..."}}
- *   {"response": {"id": "req-1", "result": {...}}}
- */
-
 const fs = require('fs');
 const path = require('path');
 const qrcode = require('qrcode-terminal');
@@ -64,82 +36,165 @@ const {
     DisconnectReason,
 } = require('@whiskeysockets/baileys');
 
-async function main() {
-    // Send ready signal
-    function sendToPython(obj) {
-        process.stdout.write(JSON.stringify(obj) + '\n');
-    }
+function sendToPython(obj) {
+    process.stdout.write(JSON.stringify(obj) + '\n');
+}
 
+async function main() {
     sendToPython({ event: 'ready' });
 
-    const SESSION_DIR = process.argv[2] || './baileys_sessions';
+    const SESSION_DIR = process.argv[2] || path.resolve(__dirname);
     const AUTH_DIR = path.join(SESSION_DIR, 'auth');
 
     if (!fs.existsSync(AUTH_DIR)) {
         fs.mkdirSync(AUTH_DIR, { recursive: true });
     }
 
-    const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+    let isShuttingDown = false;
+    let reconnectTimer = null;
+    let currentSock = null;
 
-    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-
-    const sock = makeWASocket({
-        auth: state,
-        printQRInTerminal: true,
-        markOnlineOnConnect: true,
-        syncFullHistory: false,
-        markOnlineOnConnect: true,
-    });
-
-    let isReady = false;
-
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect, qr } = update;
-        if (qr) {
-            // Render QR code in terminal for user to scan
-            qrcode.generate(qr, { small: true }, (qrCode) => {
-                console.log('\n=== Scan this QR code with WhatsApp ===');
-                console.log(qrCode);
-                console.log('========================================\n');
-            });
-            sendToPython({ event: 'qr_code', data: { qr_code: qr } });
-        }
-        if (connection === 'open') {
-            sendToPython({ event: 'connection_state', data: { state: 'connected' } });
-        } else if (connection === 'close') {
-            const reason = lastDisconnect?.error;
-            const statusCode = reason?.output?.statusCode;
-            if (statusCode === 401) { // DisconnectReason.loggedOut
-                sendToPython({ event: 'connection_state', data: { state: 'logged_out' } });
-            } else {
-                sendToPython({ event: 'connection_state', data: { state: 'reconnecting' } });
+    function scheduleReconnect(reasonCode, reasonMessage, delay = 3000) {
+        if (isShuttingDown || reconnectTimer) return;
+        console.error(`[baileys] scheduling reconnect in ${delay}ms (code=${reasonCode}, reason=${reasonMessage})`);
+        reconnectTimer = setTimeout(() => {
+            reconnectTimer = null;
+            if (!isShuttingDown) {
+                startSocket();
             }
+        }, delay);
+    }
+
+    function clearReconnect() {
+        if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
         }
-    });
+    }
 
-    sock.ev.on('creds.update', saveCreds);
-
-    sock.ev.on('messages.upsert', async ({ messages, type }) => {
-        for (const msg of messages) {
-            if (msg.key.fromMe) continue;
-            const normalized = normalizeMessage(msg);
-            sendToPython({ event: 'message', data: normalized });
+    function clearAuthAndRestart() {
+        console.error('[baileys] clearing auth directory:', AUTH_DIR);
+        try {
+            const files = fs.readdirSync(AUTH_DIR);
+            for (const file of files) {
+                fs.unlinkSync(path.join(AUTH_DIR, file));
+            }
+        } catch (e) {
+            console.error('[baileys] error clearing auth:', e.message);
         }
-    });
+        console.error('[baileys] auth cleared, creating fresh socket for QR generation');
+        setTimeout(() => {
+            if (!isShuttingDown) {
+                startSocket();
+            }
+        }, 1000);
+    }
 
-    sock.ev.on('messages.update', async (updates) => {
-        for (const update of updates) {
-            // Handle message updates (edits, deletes, reactions)
+    async function startSocket() {
+        if (currentSock) {
+            try {
+                currentSock.ws.close();
+            } catch (e) {
+                // ignore
+            }
+            currentSock = null;
         }
-    });
 
-    sock.ev.on('messages.receipt', async (receipts) => {
-        for (const receipt of receipts) {
-            sendToPython({ event: 'delivery_receipt', data: normalizeReceipt(receipt) });
-        }
-    });
+        const logger = {
+            level: 'info',
+            trace: (...args) => console.error('[baileys:trace]', ...args),
+            debug: (...args) => console.error('[baileys:debug]', ...args),
+            info: (...args) => console.error('[baileys:info]', ...args),
+            warn: (...args) => console.error('[baileys:warn]', ...args),
+            error: (...args) => console.error('[baileys:error]', ...args),
+            fatal: (...args) => console.error('[baileys:fatal]', ...args),
+            child: () => logger,
+        };
 
-    function normalizeMessage(msg) {
+        const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+
+        const sock = makeWASocket({
+            auth: state,
+            markOnlineOnConnect: true,
+            syncFullHistory: false,
+            logger,
+        });
+
+        currentSock = sock;
+
+        sock.ev.on('connection.update', (update) => {
+            const { connection, lastDisconnect, qr } = update;
+            if (qr) {
+                qrcode.generate(qr, { small: true }, (qrCode) => {
+                    console.error('\n=== Scan this QR code with WhatsApp ===');
+                    console.error(qrCode);
+                    console.error('========================================\n');
+                });
+                sendToPython({ event: 'qr_code', data: { qr_code: qr } });
+            }
+            if (connection === 'open') {
+                clearReconnect();
+                sendToPython({ event: 'connection_state', data: { state: 'connected' } });
+            } else if (connection === 'close') {
+                const err = lastDisconnect?.error;
+                const statusCode = err?.output?.statusCode;
+                const message = err?.message;
+                const data = err?.data;
+
+                console.error('[baileys] disconnected:', { statusCode, message, data });
+
+                const isLoggedOut = statusCode === DisconnectReason.loggedOut ||
+                                    statusCode === DisconnectReason.badSession ||
+                                    statusCode === DisconnectReason.forbidden ||
+                                    statusCode === DisconnectReason.multideviceMismatch;
+
+                const isRecoverable = statusCode === DisconnectReason.restartRequired ||
+                                      statusCode === DisconnectReason.connectionClosed ||
+                                      statusCode === DisconnectReason.connectionLost ||
+                                      statusCode === DisconnectReason.timedOut ||
+                                      statusCode === DisconnectReason.unavailableService ||
+                                      statusCode === DisconnectReason.connectionReplaced;
+
+                if (isLoggedOut) {
+                    console.error('[baileys] session logged out (code=' + statusCode + '), clearing auth and generating fresh QR');
+                    sendToPython({ event: 'connection_state', data: { state: 'logged_out', reason_code: statusCode, reason_message: message } });
+                    clearAuthAndRestart();
+                } else if (isRecoverable) {
+                    console.error('[baileys] recoverable disconnect (code=' + statusCode + '), will reconnect');
+                    sendToPython({ event: 'connection_state', data: { state: 'reconnecting', reason_code: statusCode, reason_message: message } });
+                    scheduleReconnect(statusCode, message);
+                } else {
+                    console.error('[baileys] unknown disconnect (code=' + statusCode + '), will reconnect');
+                    sendToPython({ event: 'connection_state', data: { state: 'reconnecting', reason_code: statusCode, reason_message: message } });
+                    scheduleReconnect(statusCode, message);
+                }
+            }
+        });
+
+        sock.ev.on('creds.update', saveCreds);
+
+        sock.ev.on('messages.upsert', async ({ messages, type }) => {
+            for (const msg of messages) {
+                if (msg.key.fromMe) continue;
+                const normalized = normalizeMessage(msg, sock);
+                sendToPython({ event: 'message', data: normalized });
+            }
+        });
+
+        sock.ev.on('messages.update', async (updates) => {
+            for (const update of updates) {
+                // Handle message updates (edits, deletes, reactions)
+            }
+        });
+
+        sock.ev.on('messages.receipt', async (receipts) => {
+            for (const receipt of receipts) {
+                sendToPython({ event: 'delivery_receipt', data: normalizeReceipt(receipt) });
+            }
+        });
+    }
+
+    function normalizeMessage(msg, sock) {
         const key = msg.key;
         const fromMe = msg.key.fromMe;
         const remoteJid = msg.key.remoteJid;
@@ -248,15 +303,19 @@ async function main() {
         return null;
     }
 
-    function sendToPython(obj) {
-        process.stdout.write(JSON.stringify(obj) + '\n');
-    }
+    process.on('SIGINT', () => {
+        isShuttingDown = true;
+        clearReconnect();
+        process.exit(0);
+    });
+    process.on('SIGTERM', () => {
+        isShuttingDown = true;
+        clearReconnect();
+        process.exit(0);
+    });
 
-    // Signal handling
-    process.on('SIGINT', () => process.exit(0));
-    process.on('SIGTERM', () => process.exit(0));
-
-    console.log('Baileys adapter ready');
+    console.error('Baileys adapter ready');
+    await startSocket();
 }
 
 main().catch((err) => {
