@@ -8,25 +8,21 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from app.models.telegram_identity import TelegramIdentity, TelegramIdentityStatus
+from app.models.telegram_identity import TelegramIdentityStatus
 from app.models.telegram_linking_challenge import (
     TelegramLinkingChallenge,
     TelegramLinkingChallengeStatus,
 )
-from app.models.telegram_identity import TelegramIdentity
+from app.repositories.student import StudentRepository
 from app.repositories.telegram_identity import TelegramIdentityRepository
 from app.repositories.telegram_linking_challenge import (
     TelegramLinkingChallengeRepository,
 )
-from app.repositories.student import StudentRepository
 from app.security.audit import AuditService
 from app.security.context import AuthenticatedIdentity, UnauthenticatedIdentity
 from app.telegram.auth import (
-    TelegramAuthenticatedIdentity,
     TelegramIncomingIdentity,
-    create_telegram_incoming_identity,
 )
-from app.telegram.models import TelegramContactIdentity
 
 
 class TelegramLinkingError(Exception):

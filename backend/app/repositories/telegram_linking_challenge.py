@@ -20,7 +20,8 @@ class TelegramLinkingChallengeRepository:
         challenge_token: str,
         expires_at: str,  # ISO format datetime string
     ) -> "TelegramLinkingChallenge":
-        from datetime import datetime, UTC
+        from datetime import datetime
+
         from app.models.telegram_linking_challenge import TelegramLinkingChallenge
 
         challenge = TelegramLinkingChallenge(
@@ -59,11 +60,11 @@ class TelegramLinkingChallengeRepository:
     async def get_pending_by_telegram_user_id(
         self, telegram_user_id: str
     ) -> "TelegramLinkingChallenge | None":
+        from datetime import UTC, datetime
+
         from app.models.telegram_linking_challenge import (
             TelegramLinkingChallenge,
-            TelegramLinkingChallengeStatus,
         )
-        from datetime import datetime, UTC
 
         result = await self._session.execute(
             select(TelegramLinkingChallenge).where(
@@ -80,9 +81,6 @@ class TelegramLinkingChallengeRepository:
         student_id: UUID,
         telegram_identity_id: UUID,
     ) -> None:
-        from app.models.telegram_linking_challenge import (
-            TelegramLinkingChallengeStatus,
-        )
 
         challenge.status = TelegramLinkingChallengeStatus.USED
         challenge.student_id = student_id
@@ -90,9 +88,6 @@ class TelegramLinkingChallengeRepository:
         await self._session.flush()
 
     async def mark_expired(self, challenge: "TelegramLinkingChallenge") -> None:
-        from app.models.telegram_linking_challenge import (
-            TelegramLinkingChallengeStatus,
-        )
 
         challenge.status = TelegramLinkingChallengeStatus.EXPIRED
         await self._session.flush()
