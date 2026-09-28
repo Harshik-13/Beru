@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -19,6 +20,8 @@ from app.telegram.message_handler import (
 )
 from app.workers.briefing_scheduler import create_briefing_scheduler
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -32,103 +35,133 @@ async def lifespan(app: FastAPI):
 
     # Initialize Telegram adapter if enabled
     telegram_message_handler = None
-    if settings.telegram_enabled:
-        if not settings.telegram_bot_token:
-            raise RuntimeError(
-                "TELEGRAM_BOT_TOKEN is required when TELEGRAM_ENABLED=true"
+    telegram_adapter = None
+    briefing_scheduler = None
+    try:
+        if settings.telegram_enabled:
+            if not settings.telegram_bot_token:
+                raise RuntimeError(
+                    "TELEGRAM_BOT_TOKEN is required when TELEGRAM_ENABLED=true"
+                )
+
+            logger.info("Initializing Telegram adapter...")
+            provider_class = telegram_provider_registry.get("telegram_bot")
+            telegram_adapter = provider_class()
+
+            from app.telegram.provider import TelegramProviderConfig
+
+            await telegram_adapter.initialize(
+                TelegramProviderConfig(
+                    provider_name="telegram_bot",
+                    config={
+                        "bot_token": settings.telegram_bot_token,
+                        "poll_timeout": settings.telegram_poll_timeout_seconds,
+                        "drop_pending_updates": settings.telegram_drop_pending_updates,
+                    },
+                )
             )
+            logger.info("Telegram adapter initialized successfully")
 
-        provider_class = telegram_provider_registry.get("telegram_bot")
-        telegram_adapter = provider_class()
+            # Create challenge repository and set on adapter for /start linking flow
+            async with async_session_factory() as session:
+                challenge_repo = TelegramLinkingChallengeRepository(session)
+                telegram_adapter.set_challenge_repository(challenge_repo)
 
-        from app.telegram.provider import TelegramProviderConfig
+            # Initialize and start message handler
+            async with async_session_factory() as session:
+                from app.intelligence.services.attendance_service import (
+                    AttendanceService,
+                )
+                from app.intelligence.services.context_builder import ContextBuilder
+                from app.intelligence.services.conversation import ConversationService
+                from app.intelligence.services.timetable_service import TimetableService
+                from app.repositories.student import StudentRepository
+                from app.repositories.telegram_identity import (
+                    TelegramIdentityRepository,
+                )
+                from app.repositories.whatsapp_identity import (
+                    WhatsAppIdentityRepository,
+                )
+                from app.security.student_resolver import DatabaseStudentResolver
+                from app.telegram.auth import TelegramIdentityResolver
 
-        await telegram_adapter.initialize(
-            TelegramProviderConfig(
-                provider_name="telegram_bot",
-                config={
-                    "bot_token": settings.telegram_bot_token,
-                    "poll_timeout": settings.telegram_poll_timeout_seconds,
-                    "drop_pending_updates": settings.telegram_drop_pending_updates,
-                },
-            )
-        )
+                # Create repositories
+                whatsapp_identity_repo = WhatsAppIdentityRepository(session)
+                telegram_identity_repo = TelegramIdentityRepository(session)
+                student_repo = StudentRepository(session)
+                _ = TelegramLinkingChallengeRepository(session)
 
-        # Create challenge repository and set on adapter for /start linking flow
-        async with async_session_factory() as session:
-            challenge_repo = TelegramLinkingChallengeRepository(session)
-            telegram_adapter.set_challenge_repository(challenge_repo)
+                # Create services
+                student_resolver = DatabaseStudentResolver(
+                    whatsapp_identity_repo=whatsapp_identity_repo,
+                    telegram_identity_repo=telegram_identity_repo,
+                )
+                identity_resolver = TelegramIdentityResolver(student_resolver)
 
-        # Initialize and start message handler
-        async with async_session_factory() as session:
-            from app.intelligence.services.attendance_service import AttendanceService
-            from app.intelligence.services.context_builder import ContextBuilder
-            from app.intelligence.services.conversation import ConversationService
-            from app.intelligence.services.timetable_service import TimetableService
-            from app.repositories.student import StudentRepository
-            from app.repositories.telegram_identity import TelegramIdentityRepository
-            from app.repositories.telegram_linking_challenge import (
-                TelegramLinkingChallengeRepository,
-            )
-            from app.repositories.whatsapp_identity import WhatsAppIdentityRepository
-            from app.security.student_resolver import DatabaseStudentResolver
-            from app.telegram.auth import TelegramIdentityResolver
+                # Create conversation service dependencies
+                timetable_service = TimetableService(session)
+                attendance_service = AttendanceService(session)
+                context_builder = ContextBuilder()
+                conversation_service = ConversationService(
+                    tool_registry_instance=None,  # Use default
+                    context_builder=context_builder,
+                    llm_provider=None,  # Use mock
+                    timetable_service=timetable_service,
+                    attendance_service=attendance_service,
+                )
 
-            # Create repositories
-            whatsapp_identity_repo = WhatsAppIdentityRepository(session)
-            telegram_identity_repo = TelegramIdentityRepository(session)
-            student_repo = StudentRepository(session)
-            _ = TelegramLinkingChallengeRepository(session)
+                # Create message handler
+                message_handler_config = TelegramMessageHandlerConfig()
+                telegram_message_handler = TelegramMessageHandler(
+                    adapter=telegram_adapter,
+                    identity_resolver=identity_resolver,
+                    conversation_service=conversation_service,
+                    student_repo=student_repo,
+                    session_factory=async_session_factory,
+                    config=message_handler_config,
+                )
 
-            # Create services
-            student_resolver = DatabaseStudentResolver(
-                whatsapp_identity_repo=whatsapp_identity_repo,
-                telegram_identity_repo=telegram_identity_repo,
-            )
-            identity_resolver = TelegramIdentityResolver(student_resolver)
+            # Start the adapter and message handler
+            logger.info("Starting Telegram adapter (long polling)...")
+            await telegram_adapter.start()
+            logger.info("Telegram adapter started (polling loop running)")
 
-            # Create conversation service dependencies
-            timetable_service = TimetableService(session)
-            attendance_service = AttendanceService(session)
-            context_builder = ContextBuilder()
-            conversation_service = ConversationService(
-                tool_registry_instance=None,  # Use default
-                context_builder=context_builder,
-                llm_provider=None,  # Use mock
-                timetable_service=timetable_service,
-                attendance_service=attendance_service,
-            )
+            logger.info("Starting Telegram message handler...")
+            await telegram_message_handler.start()
+            logger.info("Telegram message handler started")
 
-            # Create message handler
-            message_handler_config = TelegramMessageHandlerConfig()
-            telegram_message_handler = TelegramMessageHandler(
-                adapter=telegram_adapter,
-                identity_resolver=identity_resolver,
-                conversation_service=conversation_service,
-                student_repo=student_repo,
+            # Initialize and start briefing scheduler
+            logger.info("Starting briefing scheduler...")
+            briefing_scheduler = create_briefing_scheduler(
                 session_factory=async_session_factory,
-                config=message_handler_config,
+                telegram_adapter=telegram_adapter,
+                interval_seconds=settings.briefing_scheduler_interval_seconds,
             )
+            await briefing_scheduler.start()
+            logger.info("Briefing scheduler started")
 
-        # Start the adapter and message handler
-        await telegram_adapter.start()
-        await telegram_message_handler.start()
+            app.state.telegram_adapter = telegram_adapter
+            app.state.telegram_message_handler = telegram_message_handler
+            app.state.briefing_scheduler = briefing_scheduler
 
-        # Initialize and start briefing scheduler
-        briefing_scheduler = create_briefing_scheduler(
-            session_factory=async_session_factory,
-            telegram_adapter=telegram_adapter,
-            interval_seconds=settings.briefing_scheduler_interval_seconds,
-        )
-        await briefing_scheduler.start()
-
-        app.state.telegram_adapter = telegram_adapter
-        app.state.telegram_message_handler = telegram_message_handler
-        app.state.briefing_scheduler = briefing_scheduler
+            logger.info("Application startup complete")
+        else:
+            logger.info("Telegram is disabled (TELEGRAM_ENABLED=false)")
+    except Exception as e:
+        logger.exception(f"Failed to start application: {e}")
+        # Cleanup on startup failure
+        if briefing_scheduler:
+            await briefing_scheduler.stop()
+        if telegram_message_handler:
+            await telegram_message_handler.stop()
+        if telegram_adapter:
+            await telegram_adapter.stop()
+        raise
 
     yield
 
     # Shutdown
+    logger.info("Shutting down...")
     if hasattr(app.state, "briefing_scheduler") and app.state.briefing_scheduler:
         await app.state.briefing_scheduler.stop()
     if hasattr(app.state, "telegram_message_handler") and (
@@ -137,6 +170,7 @@ async def lifespan(app: FastAPI):
         await app.state.telegram_message_handler.stop()
     if hasattr(app.state, "telegram_adapter") and app.state.telegram_adapter:
         await app.state.telegram_adapter.stop()
+    logger.info("Shutdown complete")
 
 
 app = FastAPI(

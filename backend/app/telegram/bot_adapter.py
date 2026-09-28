@@ -49,6 +49,8 @@ else:
         telegram_provider_registry,
     )
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True, slots=True)
 class TelegramBotConfig:
@@ -182,10 +184,13 @@ class TelegramBotAdapter(TelegramProvider):
     async def start(self) -> None:
         """Start the provider (begin long polling)."""
         if self._running:
+            logger.debug("Telegram adapter already running")
             return
 
         if not self._config or not self._session:
             raise RuntimeError("Adapter not initialized")
+
+        logger.info("Starting Telegram long polling...")
 
         # Drop pending updates if configured
         if self._config.drop_pending_updates:
@@ -197,6 +202,7 @@ class TelegramBotAdapter(TelegramProvider):
 
         # Start polling task
         self._poll_task = asyncio.create_task(self._poll_loop())
+        logger.info("Telegram long polling task started")
 
     async def _drop_pending_updates(self) -> None:
         """Drop pending updates on start."""
@@ -208,6 +214,7 @@ class TelegramBotAdapter(TelegramProvider):
 
     async def stop(self) -> None:
         """Stop the provider gracefully."""
+        logger.info("Stopping Telegram adapter...")
         self._running = False
         self._state = "disconnected"
 
@@ -221,6 +228,7 @@ class TelegramBotAdapter(TelegramProvider):
             self._session = None
 
         await self._emit_connection_event("disconnected")
+        logger.info("Telegram adapter stopped")
 
     async def _emit_connection_event(
         self, state: str, error: str | None = None
@@ -543,13 +551,14 @@ class TelegramBotAdapter(TelegramProvider):
     async def _handle_start_command(
         self, chat_id: str, from_contact: TelegramContactIdentity
     ) -> None:
-        """Handle /start command - generate linking challenge and send onboarding message."""
+        """Handle /start: generate linking challenge and send onboarding message."""
         if not self._challenge_repo:
             # Challenge repo not configured, send basic welcome
             await self._send_onboarding_message(
                 chat_id,
-                "Welcome to Beru! To link your Telegram account to your student profile, "
-                "please visit the Beru app and use the Telegram linking feature.",
+                "Welcome to Beru! To link your Telegram account to your "
+                "student profile, please visit the Beru app and use the "
+                "Telegram linking feature.",
             )
             return
 

@@ -15,9 +15,9 @@ if TYPE_CHECKING:
 
 
 class TelegramLinkingChallengeStatus(str, enum.Enum):  # noqa: UP042
-    PENDING = "pending"
-    USED = "used"
-    EXPIRED = "expired"
+    PENDING = "PENDING"
+    USED = "USED"
+    EXPIRED = "EXPIRED"
 
 
 class TelegramLinkingChallenge(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -29,7 +29,9 @@ class TelegramLinkingChallenge(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     challenge_token: Mapped[str] = mapped_column(String(64), nullable=False)
 
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
     status: Mapped["TelegramLinkingChallengeStatus"] = mapped_column(
         SQLEnum(
