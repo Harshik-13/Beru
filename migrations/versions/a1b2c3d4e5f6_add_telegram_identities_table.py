@@ -41,10 +41,10 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("student_id", postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column("provider", telegram_provider, nullable=False),
+        sa.Column("provider", postgresql.ENUM("telegram_bot", name="telegram_provider", create_type=False), nullable=False),
         sa.Column("provider_user_id", sa.String(255), nullable=False),
         sa.Column("normalized_identifier", sa.String(255), nullable=True),
-        sa.Column("status", telegram_identity_status, nullable=False),
+        sa.Column("status", postgresql.ENUM("active", "disabled", "revoked", name="telegram_identity_status", create_type=False), nullable=False),
         sa.ForeignKeyConstraint(
             ["student_id"],
             ["students.id"],

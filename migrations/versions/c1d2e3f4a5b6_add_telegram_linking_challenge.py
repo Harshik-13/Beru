@@ -36,7 +36,7 @@ def upgrade() -> None:
         sa.Column("telegram_user_id", sa.String(255), nullable=False),
         sa.Column("challenge_token", sa.String(64), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("status", telegram_linking_challenge_status, nullable=False),
+        sa.Column("status", postgresql.ENUM("pending", "used", "expired", name="telegram_linking_challenge_status", create_type=False), nullable=False),
         sa.Column("student_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("telegram_identity_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.ForeignKeyConstraint(

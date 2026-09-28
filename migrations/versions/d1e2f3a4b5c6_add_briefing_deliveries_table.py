@@ -36,7 +36,7 @@ def upgrade() -> None:
         sa.Column("student_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("telegram_identity_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("delivery_date", sa.Date(), nullable=False),
-        sa.Column("status", briefing_delivery_status, nullable=False),
+        sa.Column("status", postgresql.ENUM("pending", "sent", "failed", name="briefing_delivery_status", create_type=False), nullable=False),
         sa.Column("scheduled_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("sent_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("error_message", sa.Text(), nullable=True),
