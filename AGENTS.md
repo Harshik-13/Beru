@@ -54,6 +54,7 @@ Do not hard-code the core around any single provider.
 8. Do not introduce new dependencies without justification.
 9. Do not introduce microservices without a documented reason.
 10. Keep integrations replaceable — never couple core logic to a specific provider.
+11. **Before implementation, read BERU_STATE.md. After implementation/testing, update BERU_STATE.md with verified state, blocker, last change, and exactly one next action.**
 
 ## Project Structure
 
