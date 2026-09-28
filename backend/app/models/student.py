@@ -2,6 +2,7 @@ import enum
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Enum as SQLEnum
+from sqlalchemy import String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -30,6 +31,13 @@ class Student(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         SQLEnum(LabBatch, name="lab_batch", native_enum=False),
         default=LabBatch.UNKNOWN,
         nullable=False,
+    )
+
+    briefing_time: Mapped[str | None] = mapped_column(
+        String(5), nullable=True
+    )
+    timezone: Mapped[str] = mapped_column(
+        String(50), default="Asia/Kolkata", nullable=False
     )
 
     timetables: Mapped[list["Timetable"]] = relationship(

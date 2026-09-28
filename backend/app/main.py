@@ -17,6 +17,7 @@ from app.telegram.message_handler import (
     TelegramMessageHandler,
     TelegramMessageHandlerConfig,
 )
+from app.workers.briefing_scheduler import create_briefing_scheduler
 
 
 @asynccontextmanager
@@ -72,10 +73,6 @@ async def lifespan(app: FastAPI):
             from app.repositories.whatsapp_identity import WhatsAppIdentityRepository
             from app.security.student_resolver import DatabaseStudentResolver
             from app.telegram.auth import TelegramIdentityResolver
-            from app.intelligence.services.context_builder import ContextBuilder
-            from app.intelligence.services.timetable_service import TimetableService
-            from app.intelligence.services.attendance_service import AttendanceService
-            from app.repositories.telegram_identity import TelegramIdentityRepository
 
             # Create repositories
             whatsapp_identity_repo = WhatsAppIdentityRepository(session)
@@ -117,12 +114,23 @@ async def lifespan(app: FastAPI):
         await telegram_adapter.start()
         await telegram_message_handler.start()
 
+        # Initialize and start briefing scheduler
+        briefing_scheduler = create_briefing_scheduler(
+            session_factory=async_session_factory,
+            telegram_adapter=telegram_adapter,
+            interval_seconds=settings.briefing_scheduler_interval_seconds,
+        )
+        await briefing_scheduler.start()
+
         app.state.telegram_adapter = telegram_adapter
         app.state.telegram_message_handler = telegram_message_handler
+        app.state.briefing_scheduler = briefing_scheduler
 
     yield
 
     # Shutdown
+    if hasattr(app.state, "briefing_scheduler") and app.state.briefing_scheduler:
+        await app.state.briefing_scheduler.stop()
     if hasattr(app.state, "telegram_message_handler") and (
         app.state.telegram_message_handler
     ):

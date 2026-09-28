@@ -51,5 +51,10 @@ class Settings(BaseSettings):
     telegram_poll_timeout_seconds: int = 30
     telegram_drop_pending_updates: bool = True
 
+    # Briefing Scheduler
+    briefing_scheduler_interval_seconds: int = 60
+    briefing_default_time: str = "08:30"
+    briefing_default_timezone: str = "Asia/Kolkata"
+
 
 settings = Settings()

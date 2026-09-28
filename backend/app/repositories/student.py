@@ -3,7 +3,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.student import Student
+from app.models.student import Student, StudentStatus
 
 
 class StudentRepository:
@@ -29,3 +29,10 @@ class StudentRepository:
             self._session.add(student)
             await self._session.flush()
         return student
+
+    async def get_active_students(self) -> list[Student]:
+        """Get all active students."""
+        result = await self._session.execute(
+            select(Student).where(Student.status == StudentStatus.ACTIVE)
+        )
+        return list(result.scalars().all())
