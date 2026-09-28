@@ -36,3 +36,25 @@ class StudentRepository:
             select(Student).where(Student.status == StudentStatus.ACTIVE)
         )
         return list(result.scalars().all())
+
+    async def update_profile(
+        self,
+        student_id: UUID,
+        *,
+        name: str | None = None,
+        attendance_target: float | None = None,
+    ) -> Student | None:
+        """Update student profile fields. Only updates provided fields."""
+        student = await self.get_by_id(student_id)
+        if student is None:
+            return None
+
+        if name is not None:
+            student.name = name
+        if attendance_target is not None:
+            if not 0.0 <= attendance_target <= 100.0:
+                raise ValueError("attendance_target must be between 0 and 100")
+            student.attendance_target = attendance_target
+
+        await self._session.flush()
+        return student

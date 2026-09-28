@@ -176,13 +176,13 @@ class BriefingScheduler:
                 return
 
             try:
-                # Build StudentProfile from Student model
+                # Build StudentProfile from persisted Student model fields
                 profile = StudentProfile(
                     student_id=student.id,
-                    name=None,  # Not stored in Student model currently
+                    name=student.name,
                     briefing_time=student.briefing_time,
                     timezone=student.timezone,
-                    attendance_target=None,  # Not stored in Student model currently
+                    attendance_target=student.attendance_target,
                 )
                 context = create_student_context(student.id, profile=profile)
 
