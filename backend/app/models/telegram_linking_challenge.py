@@ -15,9 +15,9 @@ if TYPE_CHECKING:
 
 
 class TelegramLinkingChallengeStatus(str, enum.Enum):  # noqa: UP042
-    PENDING = "PENDING"
-    USED = "USED"
-    EXPIRED = "EXPIRED"
+    PENDING = "pending"
+    USED = "used"
+    EXPIRED = "expired"
 
 
 class TelegramLinkingChallenge(Base, UUIDPrimaryKeyMixin, TimestampMixin):

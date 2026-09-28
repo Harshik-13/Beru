@@ -590,7 +590,7 @@ class TelegramBotAdapter(TelegramProvider):
             f"This code expires in 10 minutes and can only be used once.\n\n"
             f"Once linked, you'll receive timetable updates, attendance alerts, "
             f"and more directly here."
-        )
+)
         await self._send_onboarding_message(chat_id, onboarding_text)
 
     async def _send_onboarding_message(self, chat_id: str, text: str) -> None:
