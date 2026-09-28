@@ -1,4 +1,5 @@
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -6,6 +7,7 @@ from fastapi import FastAPI
 from app.api.health import router as health_router
 from app.core.config import settings
 from app.core.database import async_session_factory
+from app.intelligence.providers import create_llm_provider
 from app.intelligence.services.rate_limiter import (
     RateLimitConfig,
     create_rate_limiter,
@@ -24,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Startup
     create_rate_limiter(
         RateLimitConfig(
@@ -37,6 +39,7 @@ async def lifespan(app: FastAPI):
     telegram_message_handler = None
     telegram_adapter = None
     briefing_scheduler = None
+    llm_provider = None
     try:
         if settings.telegram_enabled:
             if not settings.telegram_bot_token:
@@ -66,6 +69,13 @@ async def lifespan(app: FastAPI):
             async with async_session_factory() as session:
                 challenge_repo = TelegramLinkingChallengeRepository(session)
                 telegram_adapter.set_challenge_repository(challenge_repo)
+
+            # Initialize LLM provider
+            llm_provider = await create_llm_provider()
+            if llm_provider:
+                logger.info(f"LLM provider initialized: {llm_provider.provider_name}")
+            else:
+                logger.warning("No LLM provider configured, using mock")
 
             # Initialize and start message handler
             async with async_session_factory() as session:
@@ -98,27 +108,32 @@ async def lifespan(app: FastAPI):
                 )
                 identity_resolver = TelegramIdentityResolver(student_resolver)
 
-                # Create conversation service dependencies
-                timetable_service = TimetableService(session)
-                attendance_service = AttendanceService(session)
-                context_builder = ContextBuilder()
+                # Initialize LLM provider
+                llm_provider = await create_llm_provider()
+                if llm_provider:
+                    logger.info(
+                        f"LLM provider initialized: {llm_provider.provider_name}"
+                    )
+                else:
+                    logger.warning("No LLM provider configured, using mock")
+
+                # Create conversation service
                 conversation_service = ConversationService(
                     tool_registry_instance=None,  # Use default
-                    context_builder=context_builder,
-                    llm_provider=None,  # Use mock
-                    timetable_service=timetable_service,
-                    attendance_service=attendance_service,
+                    context_builder=ContextBuilder(),
+                    llm_provider=llm_provider,
+                    timetable_service=TimetableService(session),
+                    attendance_service=AttendanceService(session),
                 )
 
                 # Create message handler
-                message_handler_config = TelegramMessageHandlerConfig()
                 telegram_message_handler = TelegramMessageHandler(
                     adapter=telegram_adapter,
                     identity_resolver=identity_resolver,
                     conversation_service=conversation_service,
                     student_repo=student_repo,
                     session_factory=async_session_factory,
-                    config=message_handler_config,
+                    config=TelegramMessageHandlerConfig(),
                 )
 
             # Start the adapter and message handler
@@ -143,6 +158,7 @@ async def lifespan(app: FastAPI):
             app.state.telegram_adapter = telegram_adapter
             app.state.telegram_message_handler = telegram_message_handler
             app.state.briefing_scheduler = briefing_scheduler
+            app.state.llm_provider = llm_provider
 
             logger.info("Application startup complete")
         else:
@@ -156,12 +172,17 @@ async def lifespan(app: FastAPI):
             await telegram_message_handler.stop()
         if telegram_adapter:
             await telegram_adapter.stop()
+        if llm_provider:
+            await llm_provider.close()
         raise
 
     yield
 
     # Shutdown
     logger.info("Shutting down...")
+    if hasattr(app.state, "llm_provider") and app.state.llm_provider:
+        await app.state.llm_provider.close()
+        logger.info("LLM provider closed")
     if hasattr(app.state, "briefing_scheduler") and app.state.briefing_scheduler:
         await app.state.briefing_scheduler.stop()
     if hasattr(app.state, "telegram_message_handler") and (
