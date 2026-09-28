@@ -1,12 +1,12 @@
+from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import cast, select
+from sqlalchemy.dialects.postgresql import ENUM
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.telegram_linking_challenge import (
-    TelegramLinkingChallenge,
-    TelegramLinkingChallengeStatus,
-)
+if TYPE_CHECKING:
+    from app.models.telegram_linking_challenge import TelegramLinkingChallenge
 
 
 class TelegramLinkingChallengeRepository:
@@ -66,10 +66,17 @@ class TelegramLinkingChallengeRepository:
             TelegramLinkingChallenge,
         )
 
+
+        # Cast string to the PostgreSQL enum type
+        pending_status = cast(
+            "pending",
+            ENUM(name="telegram_linking_challenge_status", create_type=False),
+        )
+
         result = await self._session.execute(
             select(TelegramLinkingChallenge).where(
                 TelegramLinkingChallenge.telegram_user_id == telegram_user_id,
-                TelegramLinkingChallenge.status == TelegramLinkingChallengeStatus.PENDING,
+                TelegramLinkingChallenge.status == pending_status,
                 TelegramLinkingChallenge.expires_at > datetime.now(UTC),
             )
         )
@@ -82,12 +89,12 @@ class TelegramLinkingChallengeRepository:
         telegram_identity_id: UUID,
     ) -> None:
 
-        challenge.status = TelegramLinkingChallengeStatus.USED
+        challenge.status = "used"
         challenge.student_id = student_id
         challenge.telegram_identity_id = telegram_identity_id
         await self._session.flush()
 
     async def mark_expired(self, challenge: "TelegramLinkingChallenge") -> None:
 
-        challenge.status = TelegramLinkingChallengeStatus.EXPIRED
+        challenge.status = "expired"
         await self._session.flush()
