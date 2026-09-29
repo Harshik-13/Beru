@@ -1,6 +1,6 @@
 # Beru — College Copilot
 
-A personal AI-powered college assistant. WhatsApp-first.
+A personal AI-powered college assistant. Telegram-first (Personal Alpha); WhatsApp-ready (future).
 
 ## Quick Start
 
@@ -39,11 +39,20 @@ mypy backend/
 
 ## Project Status
 
-**Phase: Foundation scaffolding.** No business features implemented yet.
+**Phase: Personal Alpha.** Telegram bot is live and functional. Core intelligence pipeline (LLM → tool dispatch → deterministic backend) is wired. Briefing scheduler is operational.
 
-## Architecture
+## Documentation
 
-See `docs/ARCHITECTURE.md` for full architecture documentation.
+| Document | Purpose |
+|----------|---------|
+| `AGENTS.md` | Agent rules and conventions |
+| `docs/PROJECT.md` | Project identity and scope |
+| `docs/ARCHITECTURE.md` | Current system architecture |
+| `docs/REQUIREMENTS.md` | Locked requirements |
+| `docs/STATE.md` | Current live state |
+| `docs/CHANGELOG.md` | Engineering history |
+| `docs/COMMITS.md` | Git commit index |
+| `docs/DOCUMENTATION_INDEX.md` | Documentation map |
 
 ## Development Rules
 

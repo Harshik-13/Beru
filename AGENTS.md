@@ -4,6 +4,32 @@
 
 The current repository is the source of truth. Historical chat context is supplementary. If documentation and implementation disagree: inspect the implementation and update documentation accordingly.
 
+## DOCUMENTATION HIERARCHY
+
+**Canonical current guidance (in order):**
+1. `AGENTS.md` — Agent rules and conventions
+2. `docs/PROJECT.md` — Project identity and scope
+3. `docs/ARCHITECTURE.md` — Current system architecture
+4. `docs/REQUIREMENTS.md` — Locked requirements
+5. `docs/STATE.md` — Current live state
+6. `docs/CHANGELOG.md` — Engineering history
+7. `docs/COMMITS.md` — Git commit index
+8. `docs/DOCUMENTATION_INDEX.md` — Documentation map
+
+**Historical only:**
+- `docs/ADR/*` — Architecture Decision Records
+- `docs/archive/*` — Archived documents
+
+**Reference (non-authoritative):**
+- `docs/CONNECTION_LIFECYCLE.md`
+- `docs/DATA_MODEL.md`
+- `docs/IDEMPOTENCY.md`
+- `docs/INTEGRATIONS.md`
+- `docs/TESTING.md`
+- `docs/THREAT_MODEL.md`
+
+If another Markdown file conflicts with canonical documentation or current code, current code wins and the conflict must be resolved.
+
 ## BEFORE EVERY TASK
 
 Read:
