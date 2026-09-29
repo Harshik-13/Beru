@@ -56,6 +56,7 @@
 
 | Commit | Date | Purpose | Subsystem | Verification |
 |--------|------|---------|-----------|--------------| 
+| `2c585b3` | 2026-09-29 | Deterministic structured renderers, RendererRegistry, and style contract | Intelligence, Rendering, Telegram | 341 tests pass, 10 golden tests |
 | `f765640` | 2026-09-29 | Fix Groq 400: strip student_id from LLM tool schemas, add error fallback | Intelligence, Telegram | 310 tests pass |
 | `008d890` | 2026-09-29 | Fix real LLM message conversion, auto-register tools, add aliases, enrich persona | LLM, Intelligence | 303 tests pass |
 | `f256662` | 2026-09-29 | Accept pre-formatted OpenAI tool schemas in _convert_tools | LLM, Intelligence | RUNTIME VERIFIED |

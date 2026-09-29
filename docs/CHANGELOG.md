@@ -2,7 +2,7 @@
 
 ## 2026-09-29 — Deterministic Structured Renderers, Decoupled RendererRegistry, and Style Contract
 
-**Commit:** Pending
+**Commit:** `2c585b3`
 
 ### Why
 Beru's conversational responses for schedules and attendance previously relied on unstructured LLM paraphrasing of raw tool dictionaries. This produced several user-facing flaws: repetitive greetings ("Hey Harsh!"), inconsistent layout hierarchy, hardcoded batch assumptions, failure to collapse contiguous periods (`11:00–12:00` and `12:00–13:00 CM LAB`), and unstructured emoji noise. The user directed that LLMs should decide intent, while deterministic renderers format verified data according to a strict Style Contract with 'Sir' honorific and zero presentation switches inside `ConversationService`.
