@@ -37,7 +37,7 @@ class TimetableRepository:
         query = select(Timetable).where(Timetable.student_id == student_id)
         if status:
             query = query.where(Timetable.status == status)
-        query = query.order_by(Timetable.version.desc())
+        query = query.order_by(Timetable.version.desc()).limit(1)
         result = await self.session.execute(query)
         return result.scalar_one_or_none()
 
@@ -60,6 +60,7 @@ class TimetableRepository:
                 ),
             )
             .order_by(Timetable.version.desc())
+            .limit(1)
         )
         result = await self.session.execute(query)
         return result.scalar_one_or_none()
