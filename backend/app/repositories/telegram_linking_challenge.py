@@ -1,3 +1,5 @@
+from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -7,11 +9,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 if TYPE_CHECKING:
     from app.models.telegram_linking_challenge import TelegramLinkingChallenge
+else:
+    from app.models.telegram_linking_challenge import TelegramLinkingChallenge
 
 
 class TelegramLinkingChallengeRepository:
-    def __init__(self, session: AsyncSession):
-        self._session = session
+    def __init__(self, session_factory: Callable[[], AsyncSession]):
+        self._session_factory = session_factory
+
+    async def _get_session(self) -> AsyncSession:
+        return self._session_factory()
 
     async def create(
         self,
@@ -24,59 +31,57 @@ class TelegramLinkingChallengeRepository:
 
         from app.models.telegram_linking_challenge import TelegramLinkingChallenge
 
-        challenge = TelegramLinkingChallenge(
-            telegram_user_id=telegram_user_id,
-            challenge_token=challenge_token,
-            expires_at=datetime.fromisoformat(expires_at.replace("Z", "+00:00")),
-        )
-        self._session.add(challenge)
-        await self._session.flush()
-        return challenge
+        async with await self._get_session() as session:
+            challenge = TelegramLinkingChallenge(
+                telegram_user_id=telegram_user_id,
+                challenge_token=challenge_token,
+                expires_at=datetime.fromisoformat(expires_at.replace("Z", "+00:00")),
+            )
+            session.add(challenge)
+            await session.flush()
+            # Refresh to get the generated ID and other defaults
+            await session.refresh(challenge)
+            # Expunge the object from the session so it can be used outside
+            session.expunge(challenge)
+            return challenge
 
     async def get_by_token(
         self, challenge_token: str
     ) -> "TelegramLinkingChallenge | None":
-        from app.models.telegram_linking_challenge import TelegramLinkingChallenge
-
-        result = await self._session.execute(
-            select(TelegramLinkingChallenge).where(
-                TelegramLinkingChallenge.challenge_token == challenge_token
+        async with await self._get_session() as session:
+            result = await session.execute(
+                select(TelegramLinkingChallenge).where(
+                    TelegramLinkingChallenge.challenge_token == challenge_token
+                )
             )
-        )
-        return result.scalar_one_or_none()
+            return result.scalar_one_or_none()
 
     async def get_by_telegram_user_id(
         self, telegram_user_id: str
     ) -> list["TelegramLinkingChallenge"]:
-        from app.models.telegram_linking_challenge import TelegramLinkingChallenge
-
-        result = await self._session.execute(
-            select(TelegramLinkingChallenge).where(
-                TelegramLinkingChallenge.telegram_user_id == telegram_user_id
+        async with await self._get_session() as session:
+            result = await session.execute(
+                select(TelegramLinkingChallenge).where(
+                    TelegramLinkingChallenge.telegram_user_id == telegram_user_id
+                )
             )
-        )
-        return list(result.scalars().all())
+            return list(result.scalars().all())
 
     async def get_pending_by_telegram_user_id(
         self, telegram_user_id: str
     ) -> "TelegramLinkingChallenge | None":
-        from datetime import UTC, datetime
-
-        from app.models.telegram_linking_challenge import (
-            TelegramLinkingChallenge,
-        )
-
-
-        # Cast string to the PostgreSQL enum type
-        pending_status = cast(
-            "pending",
-            ENUM(name="telegram_linking_challenge_status", create_type=False),
-        )
-
-        result = await self._session.execute(
-            select(TelegramLinkingChallenge).where(
-                TelegramLinkingChallenge.telegram_user_id == telegram_user_id,
-                TelegramLinkingChallenge.status == pending_status,
+        async with await self._get_session() as session:
+            result = await session.execute(
+                select(TelegramLinkingChallenge).where(
+                    TelegramLinkingChallenge.telegram_user_id == telegram_user_id,
+                    TelegramLinkingChallenge.status
+                    == cast(
+                        "pending",
+                        ENUM(
+                            name="telegram_linking_challenge_status",
+                            create_type=False,
+                        ),
+                    ),
                 TelegramLinkingChallenge.expires_at > datetime.now(UTC),
             )
         )
@@ -89,12 +94,14 @@ class TelegramLinkingChallengeRepository:
         telegram_identity_id: UUID,
     ) -> None:
 
-        challenge.status = "used"
-        challenge.student_id = student_id
-        challenge.telegram_identity_id = telegram_identity_id
-        await self._session.flush()
+        async with await self._get_session() as session:
+            challenge.status = "used"
+            challenge.student_id = student_id
+            challenge.telegram_identity_id = telegram_identity_id
+            await session.flush()
 
     async def mark_expired(self, challenge: "TelegramLinkingChallenge") -> None:
 
-        challenge.status = "expired"
-        await self._session.flush()
+        async with await self._get_session() as session:
+            challenge.status = "expired"
+            await session.flush()

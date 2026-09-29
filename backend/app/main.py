@@ -66,9 +66,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.info("Telegram adapter initialized successfully")
 
             # Create challenge repository and set on adapter for /start linking flow
-            async with async_session_factory() as session:
-                challenge_repo = TelegramLinkingChallengeRepository(session)
-                telegram_adapter.set_challenge_repository(challenge_repo)
+            challenge_repo = TelegramLinkingChallengeRepository(async_session_factory)
+            telegram_adapter.set_challenge_repository(challenge_repo)
 
             # Initialize LLM provider
             llm_provider = await create_llm_provider()
