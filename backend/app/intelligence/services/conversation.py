@@ -169,7 +169,7 @@ class ConversationService:
         if self.tool_registry.list_tools():
             tool_descriptions = "\n".join(
                 [
-                    f"- {t.name}: {t.description} (args: {t.arguments_schema})"
+                    f"- {t.name}: {t.description}"
                     for t in available_tools
                 ]
             )
@@ -197,12 +197,25 @@ class ConversationService:
         }
 
     def _tool_def_to_openai(self, tool: "ToolDefinition") -> dict:
+        import copy
+
+        schema = copy.deepcopy(tool.arguments_schema)
+        if isinstance(schema, dict):
+            props = schema.get("properties")
+            if isinstance(props, dict) and "student_id" in props:
+                del props["student_id"]
+            req = schema.get("required")
+            if isinstance(req, list) and "student_id" in req:
+                req.remove("student_id")
+            if isinstance(req, list) and not req:
+                del schema["required"]
+
         return {
             "type": "function",
             "function": {
                 "name": tool.name,
                 "description": tool.description,
-                "parameters": tool.arguments_schema,
+                "parameters": schema,
             },
         }
 
@@ -552,10 +565,17 @@ class ConversationService:
         system = (
             f"You are {self.beru_identity.name}, a helpful and friendly "
             f"AI college copilot talking directly to {student_name}.\n"
-            "You just retrieved verified information from the college system.\n"
-            "Present the information naturally, warmly, and concisely.\n"
-            "Be conversational and direct. Never read out raw JSON or technical keys. "
-            "If there is actionable advice, mention it smoothly."
+            "You just executed an action or retrieved data using the system tool: "
+            f"{tool_name}.\n"
+            "Present the outcome and information naturally, warmly, and concisely.\n"
+            "Be conversational and direct. Never read out raw JSON or technical keys.\n"
+            "Never ask the student for their student ID "
+            "or internal database identifiers; "
+            "you are already talking directly to the "
+            "authenticated student.\n"
+            "If an action succeeded (such as setting their lab batch or "
+            "confirming their timetable), clearly acknowledge it and guide "
+            "them on what to do next if needed."
         )
         user_prompt = (
             f"Student asked: {user_message}\n\n"

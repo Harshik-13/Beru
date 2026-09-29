@@ -187,7 +187,9 @@ class TimetableService:
             raise ValueError("Student not found")
 
         for entry in timetable.entries:
-            if entry.lab_batch == LabBatch.UNKNOWN and "/" in entry.activity_name:
+            if (
+                entry.lab_batch is None or entry.lab_batch == LabBatch.UNKNOWN
+            ) and "/" in entry.activity_name:
                 parts = [p.strip() for p in entry.activity_name.split("/")]
                 if len(parts) == 2:
                     if student.lab_batch == LabBatch.BATCH_1:

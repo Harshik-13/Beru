@@ -240,17 +240,31 @@ class TelegramMessageHandler:
                 student_id,
                 message.text,
             )
-            response, updated_context = await conversation_service.process_message(
-                student_context, message.text or ""
-            )
-            if updated_context is not None and hasattr(updated_context, "conversation"):
-                self._conversation_contexts[student_id] = updated_context.conversation
-            logger.info(
-                "Generated response for student_id=%s: %r...",
-                student_id,
-                response[:60],
-            )
-            await self._send_response(message.chat_id, response)
+            try:
+                response, updated_context = await conversation_service.process_message(
+                    student_context, message.text or ""
+                )
+                if (
+                    updated_context is not None
+                    and hasattr(updated_context, "conversation")
+                ):
+                    self._conversation_contexts[
+                        student_id
+                    ] = updated_context.conversation
+                await session.commit()
+                logger.info(
+                    "Generated response for student_id=%s: %r...",
+                    student_id,
+                    response[:60],
+                )
+                await self._send_response(message.chat_id, response)
+            except Exception as e:
+                logger.exception("Error processing conversation message: %s", e)
+                fallback_msg = (
+                    "Sorry, I ran into a momentary issue processing that. "
+                    "Could you please send it again?"
+                )
+                await self._send_response(message.chat_id, fallback_msg)
 
         # 9. Mark as processed (idempotency)
         await self._mark_processed(idempotency_key)

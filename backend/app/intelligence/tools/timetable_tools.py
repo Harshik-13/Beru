@@ -278,7 +278,9 @@ async def set_lab_batch(
         entries = await service.entry_repo.get_for_timetable(pending.id)
         resolved_count = 0
         for entry in entries:
-            if entry.lab_batch == LabBatch.UNKNOWN and "/" in entry.activity_name:
+            if (
+                entry.lab_batch is None or entry.lab_batch == LabBatch.UNKNOWN
+            ) and "/" in entry.activity_name:
                 parts = [p.strip() for p in entry.activity_name.split("/")]
                 if len(parts) == 2:
                     if lab_batch == LabBatch.BATCH_1:
