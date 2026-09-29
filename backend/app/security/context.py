@@ -8,6 +8,7 @@ class AuthenticationMethod(str, Enum):  # noqa: UP042
     BAILEYS = "baileys"
     META_CLOUD_API = "meta_cloud_api"
     INTERNAL_ADMIN = "internal_admin"
+    TELEGRAM_BOT = "telegram_bot"
 
 
 @dataclass(frozen=True, slots=True)

@@ -4,6 +4,7 @@
 
 | Commit | Date | Purpose | Subsystem | Verification |
 |--------|------|---------|-----------|--------------|
+| `b13836f` | 2026-09-29 | Add permanent documentation synchronization rule | Docs | 292 tests pass |
 | `3806fd4` | 2026-09-29 | Reconcile project documentation | Docs | 292 tests pass |
 
 ## Foundation
@@ -73,6 +74,7 @@
 
 | Commit | Date | Purpose | Subsystem | Verification |
 |--------|------|---------|-----------|--------------|
+| `pending` | 2026-09-29 | Decouple TelegramBotAdapter, scope DB session per message, fix logging | Telegram | 298 tests pass |
 | `c32e1ee` | 2026-09-29 | Telegram Bot API adapter foundation | Telegram | Tests pass |
 | `7fb5675` | 2026-09-29 | Telegram Bot API startup verification | Telegram | Tests pass |
 | `13eed5b` | 2026-09-29 | Telegram identity linking | Telegram | Tests pass |

@@ -12,9 +12,6 @@ from app.intelligence.services.rate_limiter import (
     RateLimitConfig,
     create_rate_limiter,
 )
-from app.repositories.telegram_linking_challenge import (
-    TelegramLinkingChallengeRepository,
-)
 from app.telegram import telegram_provider_registry
 from app.telegram.message_handler import (
     TelegramMessageHandler,
@@ -22,6 +19,10 @@ from app.telegram.message_handler import (
 )
 from app.workers.briefing_scheduler import create_briefing_scheduler
 
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 
@@ -65,10 +66,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
             logger.info("Telegram adapter initialized successfully")
 
-            # Create challenge repository and set on adapter for /start linking flow
-            challenge_repo = TelegramLinkingChallengeRepository(async_session_factory)
-            telegram_adapter.set_challenge_repository(challenge_repo)
-
             # Initialize LLM provider
             llm_provider = await create_llm_provider()
             if llm_provider:
@@ -76,64 +73,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             else:
                 logger.warning("No LLM provider configured, using mock")
 
-            # Initialize and start message handler
-            async with async_session_factory() as session:
-                from app.intelligence.services.attendance_service import (
-                    AttendanceService,
-                )
-                from app.intelligence.services.context_builder import ContextBuilder
-                from app.intelligence.services.conversation import ConversationService
-                from app.intelligence.services.timetable_service import TimetableService
-                from app.repositories.student import StudentRepository
-                from app.repositories.telegram_identity import (
-                    TelegramIdentityRepository,
-                )
-                from app.repositories.whatsapp_identity import (
-                    WhatsAppIdentityRepository,
-                )
-                from app.security.student_resolver import DatabaseStudentResolver
-                from app.telegram.auth import TelegramIdentityResolver
-
-                # Create repositories
-                whatsapp_identity_repo = WhatsAppIdentityRepository(session)
-                telegram_identity_repo = TelegramIdentityRepository(session)
-                student_repo = StudentRepository(session)
-                _ = TelegramLinkingChallengeRepository(session)
-
-                # Create services
-                student_resolver = DatabaseStudentResolver(
-                    whatsapp_identity_repo=whatsapp_identity_repo,
-                    telegram_identity_repo=telegram_identity_repo,
-                )
-                identity_resolver = TelegramIdentityResolver(student_resolver)
-
-                # Initialize LLM provider
-                llm_provider = await create_llm_provider()
-                if llm_provider:
-                    logger.info(
-                        f"LLM provider initialized: {llm_provider.provider_name}"
-                    )
-                else:
-                    logger.warning("No LLM provider configured, using mock")
-
-                # Create conversation service
-                conversation_service = ConversationService(
-                    tool_registry_instance=None,  # Use default
-                    context_builder=ContextBuilder(),
-                    llm_provider=llm_provider,
-                    timetable_service=TimetableService(session),
-                    attendance_service=AttendanceService(session),
-                )
-
-                # Create message handler
-                telegram_message_handler = TelegramMessageHandler(
-                    adapter=telegram_adapter,
-                    identity_resolver=identity_resolver,
-                    conversation_service=conversation_service,
-                    student_repo=student_repo,
-                    session_factory=async_session_factory,
-                    config=TelegramMessageHandlerConfig(),
-                )
+            # Initialize message handler with live session factory
+            telegram_message_handler = TelegramMessageHandler(
+                adapter=telegram_adapter,
+                session_factory=async_session_factory,
+                llm_provider=llm_provider,
+                config=TelegramMessageHandlerConfig(),
+            )
 
             # Start the adapter and message handler
             logger.info("Starting Telegram adapter (long polling)...")

@@ -16,9 +16,9 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 - PostgreSQL database with SQLAlchemy 2.x async ORM
 - Alembic migrations (10 migrations, chain verified)
 - Student model with profile fields (name, attendance_target, briefing_time, timezone, lab_batch)
-- Telegram Bot API adapter (long polling, message normalization, /start linking)
-- Telegram identity linking (challenge/verify flow with audit)
-- Telegram message handler (idempotency, identity resolution, conversation pipeline)
+- Telegram Bot API adapter (long polling, message normalization, pure transport bridge, drop pending updates)
+- Telegram identity linking (challenge/verify flow with audit, HTML formatted token)
+- Telegram message handler (idempotency, request-scoped DB sessions, identity resolution, request-scoped domain services, conversation pipeline)
 - LLM provider abstraction (OpenAI-compatible + Mock; registry pattern)
 - Real LLM provider integration (wired in lifespan, configurable via .env)
 - Conversation service (intent interpretation → tool dispatch → response generation)
@@ -37,8 +37,8 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 
 ## TESTED
 
-- 292 tests pass (1 pre-existing flaky: `test_get_next_class`, time-dependent)
-- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence, models, portal, student profile, telegram isolation, telegram startup, timetable, whatsapp isolation
+- 298 tests pass (1 pre-existing flaky: `test_get_next_class`, time-dependent)
+- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence, models, portal, student profile, telegram isolation, telegram message handler, telegram startup, timetable, whatsapp isolation
 - Ruff: clean on all source files
 - Mypy: clean on all source files
 
@@ -47,7 +47,8 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 - Telegram bot initializes and connects (getMe succeeds)
 - Telegram long polling is active (getUpdates loop running)
 - Telegram /start flow creates challenge and sends onboarding message
-- Telegram message handler processes messages through conversation pipeline
+- Telegram message handler processes messages through conversation pipeline with request-scoped database sessions
+- Standard output logging configured via basicConfig with log_level from settings
 - LLM provider factory returns None for mock mode (default)
 - Briefing scheduler queries active students and checks briefing time
 - Database queries execute successfully (PostgreSQL)
@@ -103,6 +104,7 @@ None.
 
 | Commit | Description |
 |--------|-------------|
+| `pending` | Decouple TelegramBotAdapter, scope session per message in TelegramMessageHandler, fix startup logging |
 | `055bb09` | Fix TelegramLinkingChallengeRepository session lifetime and enum casting |
 | `635e5ff` | Integrate real LLM provider into Telegram conversation flow |
 | `2570ae7` | Add BERU_STATE.md and update AGENTS.md with state-file workflow |

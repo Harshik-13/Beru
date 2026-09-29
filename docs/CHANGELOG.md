@@ -1,8 +1,60 @@
 # CHANGELOG.md — Beru
 
-## 2026-09-29 — Add permanent documentation synchronization rule
+## 2026-09-29 — Decouple TelegramBotAdapter, scope DB session per message, and fix startup logging
 
 **Commit:** pending
+
+### Why
+1. TelegramBotAdapter was coupled to database repositories (`TelegramLinkingChallengeRepository`), intercepting `/start` and violating provider abstraction.
+2. In `main.py`, services and resolvers were instantiated at startup with a single database session that closed immediately, resulting in `InterfaceError: session is closed` on any incoming message.
+3. Python `logging.basicConfig` was never configured, silencing all INFO and DEBUG logs from Telegram and service layers.
+4. `_drop_pending_updates` in the adapter failed to acknowledge dropped updates, causing stale updates to re-deliver on restart.
+5. Telegram user identity resolution hardcoded the `BAILEYS` WhatsApp authentication method instead of `TELEGRAM_BOT`.
+
+### What changed
+- Configured root logger via `logging.basicConfig` in `main.py` using `settings.log_level` ("INFO") and standard formatting.
+- Decoupled `TelegramBotAdapter`: removed all DB dependencies, removed `/start` interception, added `parse_mode` support to `send_message`, improved update acknowledgment in `_drop_pending_updates`, and added informative logging with traceback on poll errors.
+- Updated `TelegramMessageHandler`: receives `async_session_factory`, handles `/start` onboarding command with HTML token formatting via `TelegramLinkingService` and `AuditService`, and creates fresh request-scoped `DatabaseStudentResolver`, `TimetableService`, `AttendanceService`, and `ConversationService` per incoming message.
+- Added `AuthenticationMethod.TELEGRAM_BOT = "telegram_bot"` to `security/context.py` and updated `DatabaseStudentResolver` to return it for Telegram identity lookups.
+- Added `aiohttp>=3.9.0,<4.0` to `pyproject.toml`.
+- Added comprehensive unit and integration tests in `backend/tests/test_telegram_message_handler.py`.
+
+### Why this approach
+Adheres strictly to the Beru architecture: provider adapters are pure transport bridges without domain/database logic. Request-scoped sessions guarantee clean transaction boundaries and prevent session exhaustion or closed-session errors during background polling.
+
+### Why these files
+- `backend/app/main.py`: configure logging, remove adapter DB injection, wire session factory to handler.
+- `backend/app/telegram/bot_adapter.py`: restore transport-only adapter boundary, add parse_mode, fix update dropping.
+- `backend/app/telegram/message_handler.py`: handle `/start`, request-scope DB sessions for identity and domain services.
+- `backend/app/telegram/models.py`: add parse_mode to `OutgoingTelegramMessage`.
+- `backend/app/security/context.py` & `backend/app/security/student_resolver.py`: support `TELEGRAM_BOT` authentication method.
+- `backend/app/repositories/telegram_linking_challenge.py`: support both session and session factory scopes.
+- `pyproject.toml`: add missing direct dependency `aiohttp`.
+- `backend/tests/test_telegram_message_handler.py`: test `/start` linking, unlinked polite rejection, authenticated conversation routing, update deduplication.
+
+### Why other obvious areas were not changed
+- `ConversationService`, `ToolRegistry`, and domain services already worked correctly once provided with live sessions.
+- Did not change conversation context persistence as that is a separate task tracked in `docs/STATE.md`.
+
+### Verification
+- 298 tests pass (`pytest backend/tests`)
+- `ruff check` clean on all touched files
+- `mypy` clean on `bot_adapter.py` and `message_handler.py`
+
+### Security considerations
+- Identity resolution strictly validates Telegram provider and user ID against database.
+- Unlinked users are safely rejected without leaking internal student data.
+- Audit event logged on challenge generation.
+- No client-supplied owner IDs trusted.
+
+### Remaining limitations/blockers
+- Multi-turn conversation context is not yet persisted across Telegram messages (fresh `ConversationContext` per message).
+
+---
+
+## 2026-09-29 — Add permanent documentation synchronization rule
+
+**Commit:** `b13836f`
 
 ### Why
 Documentation synchronization must happen automatically after every task. User should never need to explicitly request documentation updates.

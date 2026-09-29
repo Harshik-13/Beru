@@ -1,6 +1,7 @@
-from collections.abc import Callable
+import contextlib
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import cast, select
@@ -14,11 +15,23 @@ else:
 
 
 class TelegramLinkingChallengeRepository:
-    def __init__(self, session_factory: Callable[[], AsyncSession]):
-        self._session_factory = session_factory
+    def __init__(self, session_or_factory: AsyncSession | Callable[[], Any]):
+        if isinstance(session_or_factory, AsyncSession):
+            self._session: AsyncSession | None = session_or_factory
+            self._session_factory: Callable[[], Any] | None = None
+        else:
+            self._session = None
+            self._session_factory = session_or_factory
 
-    async def _get_session(self) -> AsyncSession:
-        return self._session_factory()
+    @contextlib.asynccontextmanager
+    async def _get_session_cm(self) -> AsyncIterator[AsyncSession]:
+        if self._session is not None:
+            yield self._session
+        elif self._session_factory is not None:
+            async with self._session_factory() as session:
+                yield session
+        else:
+            raise RuntimeError("No session or session_factory configured")
 
     async def create(
         self,
@@ -31,7 +44,7 @@ class TelegramLinkingChallengeRepository:
 
         from app.models.telegram_linking_challenge import TelegramLinkingChallenge
 
-        async with await self._get_session() as session:
+        async with self._get_session_cm() as session:
             challenge = TelegramLinkingChallenge(
                 telegram_user_id=telegram_user_id,
                 challenge_token=challenge_token,
@@ -48,7 +61,7 @@ class TelegramLinkingChallengeRepository:
     async def get_by_token(
         self, challenge_token: str
     ) -> "TelegramLinkingChallenge | None":
-        async with await self._get_session() as session:
+        async with self._get_session_cm() as session:
             result = await session.execute(
                 select(TelegramLinkingChallenge).where(
                     TelegramLinkingChallenge.challenge_token == challenge_token
@@ -59,7 +72,7 @@ class TelegramLinkingChallengeRepository:
     async def get_by_telegram_user_id(
         self, telegram_user_id: str
     ) -> list["TelegramLinkingChallenge"]:
-        async with await self._get_session() as session:
+        async with self._get_session_cm() as session:
             result = await session.execute(
                 select(TelegramLinkingChallenge).where(
                     TelegramLinkingChallenge.telegram_user_id == telegram_user_id
@@ -70,7 +83,7 @@ class TelegramLinkingChallengeRepository:
     async def get_pending_by_telegram_user_id(
         self, telegram_user_id: str
     ) -> "TelegramLinkingChallenge | None":
-        async with await self._get_session() as session:
+        async with self._get_session_cm() as session:
             result = await session.execute(
                 select(TelegramLinkingChallenge).where(
                     TelegramLinkingChallenge.telegram_user_id == telegram_user_id,
@@ -82,9 +95,9 @@ class TelegramLinkingChallengeRepository:
                             create_type=False,
                         ),
                     ),
-                TelegramLinkingChallenge.expires_at > datetime.now(UTC),
+                    TelegramLinkingChallenge.expires_at > datetime.now(UTC),
+                )
             )
-        )
         return result.scalar_one_or_none()
 
     async def mark_used(
@@ -94,7 +107,7 @@ class TelegramLinkingChallengeRepository:
         telegram_identity_id: UUID,
     ) -> None:
 
-        async with await self._get_session() as session:
+        async with self._get_session_cm() as session:
             challenge.status = "used"
             challenge.student_id = student_id
             challenge.telegram_identity_id = telegram_identity_id
@@ -102,6 +115,6 @@ class TelegramLinkingChallengeRepository:
 
     async def mark_expired(self, challenge: "TelegramLinkingChallenge") -> None:
 
-        async with await self._get_session() as session:
+        async with self._get_session_cm() as session:
             challenge.status = "expired"
             await session.flush()

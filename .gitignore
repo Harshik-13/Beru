@@ -56,3 +56,4 @@ migrations/versions/*.pyc
 logs/
 # Baileys session/runtime data
 baileys_sessions/
+uv.lock

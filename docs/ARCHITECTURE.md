@@ -43,22 +43,23 @@ Telegram Bot API ←→ TelegramBotAdapter ←→ TelegramMessageHandler ←→ 
 
 - `TelegramBotAdapter` — Long polling via Bot API (`getUpdates`/`sendMessage`)
 - Normalizes updates to `IncomingTelegramMessage` / `OutgoingTelegramMessage`
-- Handles `/start` command for identity linking (challenge creation)
-- Challenge repository injected at startup (session-factory pattern)
+- Pure transport bridge: captures incoming updates, translates to domain models, queues to `_message_queue`
+- Decoupled from database, persistence, and domain linking logic
+- Supports `parse_mode` (HTML/Markdown) on outgoing messages
+- On startup, drops/acknowledges pending updates so stale bot messages do not cause unexpected processing
 - Idempotency: in-memory `_processed_updates` set (last 10K IDs)
 
 ### Identity/Authentication Flow
 
 ```
 Telegram user sends message
-  → TelegramBotAdapter._process_update → _handle_message
-  → If /start: _handle_start_command (creates challenge, sends onboarding)
-  → Else: queued to _message_queue
+  → TelegramBotAdapter._process_update queues to _message_queue
   → TelegramMessageHandler._process_messages consumes queue
-  → TelegramIdentityResolver.resolve(incoming_identity)
-  → DatabaseStudentResolver looks up TelegramIdentity by (provider, provider_user_id)
-  → If ACTIVE → AuthenticatedIdentity(student_id)
-  → If not found/inactive → UnauthenticatedIdentity
+  → If /start: TelegramLinkingService creates challenge, sends onboarding message with formatted HTML token
+  → Else:
+      → DatabaseStudentResolver (request-scoped session) looks up TelegramIdentity by (provider, provider_user_id)
+      → If ACTIVE → AuthenticatedIdentity(student_id)
+      → If not found/inactive → UnauthenticatedIdentity (polite rejection sent)
 ```
 
 ### Authorization/Ownership Boundary
@@ -73,20 +74,22 @@ Telegram user sends message
 
 ```
 TelegramMessageHandler._handle_message(message)
-  → Identity resolution (TelegramIdentityResolver)
-  → StudentRepository.get_or_create(student_id)
-  → StudentProfile built from persisted Student fields
-  → StudentContext created
-  → ConversationService.process_message(context, text)
-    → _interpret_intent (LLM or mock)
-    → If tool_request: _execute_tool
-      → ToolRegistry.get(tool_name)
-      → execute_timetable_tool / execute_attendance_tool
-      → Deterministic backend execution
-      → LLM generates natural response from tool result
-    → If clarification: _handle_clarification
-    → Else: direct LLM response
-  → Response sent via TelegramBotAdapter.send_message
+  → Identity resolution (DatabaseStudentResolver in request-scoped session)
+  → If authenticated:
+      → StudentRepository.get_or_create(student_id)
+      → StudentProfile built from persisted Student fields
+      → StudentContext created
+      → Fresh request-scoped TimetableService, AttendanceService, ConversationService instantiated
+      → ConversationService.process_message(context, text)
+        → _interpret_intent (LLM or mock)
+        → If tool_request: _execute_tool
+          → ToolRegistry.get(tool_name)
+          → execute_timetable_tool / execute_attendance_tool
+          → Deterministic backend execution
+          → LLM generates natural response from tool result
+        → If clarification: _handle_clarification
+        → Else: direct LLM response
+      → Response sent via TelegramBotAdapter.send_message
 ```
 
 ### LLM Provider Abstraction

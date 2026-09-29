@@ -9,18 +9,14 @@ import asyncio
 import contextlib
 import json
 import logging
-import secrets
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
 if TYPE_CHECKING:
-    from app.repositories.telegram_linking_challenge import (
-        TelegramLinkingChallengeRepository,
-    )
     from app.telegram.models import (
         IncomingTelegramMessage,
         OutgoingTelegramMessage,
@@ -31,7 +27,11 @@ if TYPE_CHECKING:
         TelegramMessageDeliveryReceipt,
         TelegramMessageType,
     )
-    from app.telegram.provider import TelegramProvider, TelegramProviderConfig
+    from app.telegram.provider import (
+        TelegramProvider,
+        TelegramProviderConfig,
+        telegram_provider_registry,
+    )
 else:
     from app.telegram.models import (
         IncomingTelegramMessage,
@@ -70,7 +70,7 @@ class TelegramBotAdapter(TelegramProvider):
     Normalizes Telegram updates into the existing application boundary.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._config: TelegramBotConfig | None = None
         self._config_obj: TelegramProviderConfig | None = None
         self._session: aiohttp.ClientSession | None = None
@@ -80,12 +80,11 @@ class TelegramBotAdapter(TelegramProvider):
         self._connection_event_queue: asyncio.Queue[TelegramConnectionEvent] = (
             asyncio.Queue()
         )
-        self._delivery_queue: asyncio.Queue = asyncio.Queue()
+        self._delivery_queue: asyncio.Queue[Any] = asyncio.Queue()
         self._running = False
-        self._poll_task: asyncio.Task | None = None
+        self._poll_task: asyncio.Task[None] | None = None
         self._last_update_id: int = 0
         self._processed_updates: set[int] = set()
-        self._challenge_repo: TelegramLinkingChallengeRepository | None = None
 
     @property
     def provider_name(self) -> str:
@@ -125,12 +124,6 @@ class TelegramBotAdapter(TelegramProvider):
 
         # Get bot info
         await self._get_me()
-
-    def set_challenge_repository(
-        self, repo: "TelegramLinkingChallengeRepository"
-    ) -> None:
-        """Set the challenge repository for handling /start linking flow."""
-        self._challenge_repo = repo
 
     async def _get_me(self) -> None:
         """Get bot information from Telegram API.
@@ -209,8 +202,22 @@ class TelegramBotAdapter(TelegramProvider):
         if not self._session or not self._config:
             return
         url = f"https://api.telegram.org/bot{self._config.bot_token}/getUpdates"
-        params = {"offset": -1}
-        await self._session.post(url, json=params)
+        try:
+            async with self._session.get(url, params={"offset": -1}) as resp:
+                data = await resp.json()
+                if data.get("ok") and data.get("result"):
+                    latest_update_id = data["result"][-1]["update_id"]
+                    # Confirm and drop pending updates up to latest_update_id
+                    async with self._session.get(
+                        url, params={"offset": latest_update_id + 1}
+                    ):
+                        pass
+                    self._last_update_id = latest_update_id
+                    logger.info(
+                        f"Dropped pending updates up to update_id={latest_update_id}"
+                    )
+        except Exception as e:
+            logger.warning(f"Failed to drop pending updates: {e}")
 
     async def stop(self) -> None:
         """Stop the provider gracefully."""
@@ -277,12 +284,22 @@ class TelegramBotAdapter(TelegramProvider):
             )
 
         url = f"https://api.telegram.org/bot{self._config.bot_token}/sendMessage"
-        payload = {
+        payload: dict[str, str | int] = {
             "chat_id": message.chat_id,
-            "text": message.text,
+            "text": message.text or "",
         }
+        if message.parse_mode:
+            payload["parse_mode"] = message.parse_mode
         if message.reply_to_message_id:
             payload["reply_to_message_id"] = int(message.reply_to_message_id)
+
+        short_text = (message.text or "")[:50]
+        logger.info(
+            "Sending Telegram message to chat_id=%s (parse_mode=%s): %r...",
+            message.chat_id,
+            message.parse_mode,
+            short_text,
+        )
 
         async with self._session.post(url, json=payload) as resp:
             data = await resp.json()
@@ -320,8 +337,8 @@ class TelegramBotAdapter(TelegramProvider):
                 await self._poll_once()
             except asyncio.CancelledError:
                 break
-            except Exception as e:
-                logging.error(f"Telegram poll error: {e}")
+            except Exception:
+                logger.exception("Telegram poll loop error")
                 await asyncio.sleep(5)
 
     async def _poll_once(self) -> None:
@@ -330,7 +347,7 @@ class TelegramBotAdapter(TelegramProvider):
             return
 
         url = f"https://api.telegram.org/bot{self._config.bot_token}/getUpdates"
-        params = {
+        params: dict[str, Any] = {
             "timeout": self._config.poll_timeout,
             "offset": self._last_update_id + 1,
         }
@@ -341,17 +358,17 @@ class TelegramBotAdapter(TelegramProvider):
             async with self._session.get(url, params=params) as resp:
                 data = await resp.json()
         except Exception as e:
-            logging.error(f"Telegram API request failed: {e}")
+            logger.error(f"Telegram API request failed: {e}")
             return
 
         if not data.get("ok"):
-            logging.error(f"Telegram API error: {data}")
+            logger.error(f"Telegram API error: {data}")
             return
 
         for update in data.get("result", []):
             await self._process_update(update)
 
-    async def _process_update(self, update: dict) -> None:
+    async def _process_update(self, update: dict[str, Any]) -> None:
         """Process a single Telegram update."""
         update_id = update.get("update_id", 0)
 
@@ -377,7 +394,9 @@ class TelegramBotAdapter(TelegramProvider):
             await self._handle_callback_query(update["callback_query"])
         # Other update types (edited_message, channel_post, etc.) ignored for now
 
-    async def _handle_message(self, message: dict, update_id: int) -> None:
+    async def _handle_message(
+        self, message: dict[str, Any], update_id: int
+    ) -> None:
         """Handle an incoming message."""
         message_id = str(message.get("message_id", 0))
         chat = message.get("chat", {})
@@ -523,11 +542,19 @@ class TelegramBotAdapter(TelegramProvider):
                 caption=message.get("caption"),
             )
 
-        # Handle /start command for Telegram identity linking
-        if text and text.strip() == "/start":
-            await self._handle_start_command(chat_id, from_contact)
-            # Still queue the message for any other handlers
-            # but don't process further for /start
+        sender_repr = (
+            from_contact.normalized_identifier or from_contact.provider_user_id
+        )
+        logger.info(
+            "Telegram message received [update_id=%s, id=%s, chat_id=%s, "
+            "from=%s, type=%s]: %r",
+            update_id,
+            message_id,
+            chat_id,
+            sender_repr,
+            message_type,
+            text,
+        )
 
         # Build normalized message
         normalized = IncomingTelegramMessage(
@@ -548,69 +575,7 @@ class TelegramBotAdapter(TelegramProvider):
 
         await self._message_queue.put(normalized)
 
-    async def _handle_start_command(
-        self, chat_id: str, from_contact: TelegramContactIdentity
-    ) -> None:
-        """Handle /start: generate linking challenge and send onboarding message."""
-        if not self._challenge_repo:
-            # Challenge repo not configured, send basic welcome
-            await self._send_onboarding_message(
-                chat_id,
-                "Welcome to Beru! To link your Telegram account to your "
-                "student profile, please visit the Beru app and use the "
-                "Telegram linking feature.",
-            )
-            return
-
-        telegram_user_id = from_contact.provider_user_id
-
-        # Check for existing pending challenge
-        existing = await self._challenge_repo.get_pending_by_telegram_user_id(
-            telegram_user_id
-        )
-        if existing:
-            challenge_token = existing.challenge_token
-        else:
-            # Generate new challenge
-            challenge_token = secrets.token_urlsafe(32)
-            expires_at = datetime.now(UTC) + timedelta(minutes=10)
-            await self._challenge_repo.create(
-                telegram_user_id=telegram_user_id,
-                challenge_token=challenge_token,
-                expires_at=expires_at.isoformat(),
-            )
-
-        # Send onboarding message with challenge token
-        onboarding_text = (
-            f"Welcome to Beru! 🎓\n\n"
-            f"To link your Telegram account to your student profile:\n\n"
-            f"1. Open the Beru app and log in\n"
-            f"2. Go to Settings → Telegram Linking\n"
-            f"3. Enter this challenge code: <code>{challenge_token}</code>\n\n"
-            f"This code expires in 10 minutes and can only be used once.\n\n"
-            f"Once linked, you'll receive timetable updates, attendance alerts, "
-            f"and more directly here."
-)
-        await self._send_onboarding_message(chat_id, onboarding_text)
-
-    async def _send_onboarding_message(self, chat_id: str, text: str) -> None:
-        """Send an onboarding message with HTML formatting."""
-        if not self._session or not self._config:
-            return
-        url = f"https://api.telegram.org/bot{self._config.bot_token}/sendMessage"
-        payload = {
-            "chat_id": chat_id,
-            "text": text,
-            "parse_mode": "HTML",
-        }
-        try:
-            async with self._session.post(url, json=payload) as resp:
-                await resp.json()
-        except Exception:
-            # Log error but don't fail the message processing
-            logging.exception("Failed to send onboarding message")
-
-    async def _handle_callback_query(self, callback: dict) -> None:
+    async def _handle_callback_query(self, callback: dict[str, Any]) -> None:
         """Handle callback query (inline button press)."""
         query_id = callback.get("id")
         from_user = callback.get("from", {})
@@ -667,16 +632,19 @@ class TelegramBotAdapter(TelegramProvider):
         await self._message_queue.put(normalized)
 
         # Answer callback query to remove loading state
-        await self._answer_callback_query(query_id)
+        if query_id:
+            await self._answer_callback_query(str(query_id))
 
     async def _answer_callback_query(self, query_id: str) -> None:
         """Answer callback query to remove loading state."""
         if not self._session or not self._config:
             return
-        url = f"https://api.telegram.org/bot{self._config.bot_token}/answerCallbackQuery"
+        url = (
+            f"https://api.telegram.org/bot{self._config.bot_token}/answerCallbackQuery"
+        )
         await self._session.post(url, json={"callback_query_id": query_id})
 
 
-def register_telegram_provider():
+def register_telegram_provider() -> None:
     """Register the Telegram Bot provider with the global registry."""
     telegram_provider_registry.register(TelegramBotAdapter)

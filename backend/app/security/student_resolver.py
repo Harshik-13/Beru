@@ -1,4 +1,3 @@
-
 from app.models.telegram_identity import TelegramIdentityStatus
 from app.models.whatsapp_identity import WhatsAppIdentityStatus
 from app.repositories.telegram_identity import TelegramIdentityRepository
@@ -44,7 +43,7 @@ class DatabaseStudentResolver(StudentResolver):
             provider=identity.provider.value,
             external_identity_id=identity.provider_user_id,
             student_id=identity.student_id,
-            authentication_method=AuthenticationMethod.BAILEYS,
+            authentication_method=AuthenticationMethod.TELEGRAM_BOT,
         )
 
     async def _get_student_from_whatsapp(

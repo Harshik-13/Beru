@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
+from typing import Any
 
 
 class TelegramMessageType(str, Enum):  # noqa: UP042
@@ -97,7 +98,7 @@ class IncomingTelegramMessage:
     reply_to_message_id: str | None = None
     is_forwarded: bool = False
     is_from_me: bool = False  # Should always be False for inbound
-    raw_provider_data: dict | None = None  # Preserved for debugging
+    raw_provider_data: dict[str, Any] | None = None  # Preserved for debugging
     received_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def get_idempotency_key(self) -> str:
@@ -126,6 +127,7 @@ class OutgoingTelegramMessage:
 
     # Context (optional, with defaults)
     reply_to_message_id: str | None = None
+    parse_mode: str | None = None
 
     # Metadata (optional, with defaults)
     provider: str | None = None  # If None, use default provider
