@@ -2,7 +2,7 @@
 
 ## 2026-09-29 — Fix OpenAI-compatible tool converter to support pre-formatted OpenAI tool schemas
 
-**Commit:** Pending
+**Commit:** `f256662`
 
 ### Why
 When `ConversationService` formatted tool definitions via `_tool_def_to_openai()` into OpenAI `{"type": "function", "function": {...}}` schema, `OpenAICompatibleLLMProvider._convert_tools()` expected flat dictionaries with `tool["name"]`, raising `KeyError: 'name'` and dropping incoming conversational messages.
