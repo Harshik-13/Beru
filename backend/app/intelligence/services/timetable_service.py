@@ -178,6 +178,13 @@ class TimetableService:
         for cell in result.cells:
             entry = cell_to_entry(cell)
             entry.timetable_id = timetable_id
+            # Map course_metadata onto entry if available
+            content_key = cell.content.strip().split()[0] if cell.content.strip() else ""
+            if content_key in meta.course_metadata:
+                course_info = meta.course_metadata[content_key]
+                entry.course_code = content_key
+                if course_info.get("faculty"):
+                    entry.faculty = course_info["faculty"]
             entries.append(entry)
 
         # Handle slash labs - store as ambiguous for now, will resolve on confirmation

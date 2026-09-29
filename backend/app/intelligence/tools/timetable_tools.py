@@ -495,6 +495,135 @@ async def delete_timetable_entry(
     }
 
 
+async def set_briefing_time(
+    service: "TimetableService",
+    student_id: str,
+    briefing_time: str,
+) -> dict:
+    """Set the student's daily briefing time (HH:MM format)."""
+    import re
+    from uuid import UUID
+
+    if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", briefing_time):
+        return {
+            "success": False,
+            "message": "Invalid time format. Use HH:MM (24-hour).",
+        }
+
+    student_uuid = UUID(student_id)
+    student = await service.student_repo.get_by_id(student_uuid)
+    if not student:
+        return {"success": False, "message": "Student not found."}
+
+    student.briefing_time = briefing_time
+    await service.session.flush()
+
+    return {
+        "success": True,
+        "briefing_time": briefing_time,
+        "message": f"Briefing time set to {briefing_time}.",
+    }
+
+
+async def get_week_schedule(
+    service: "TimetableService",
+    student_id: str,
+) -> dict:
+    """Get the full week schedule (Mon-Sat) from confirmed timetable."""
+    from uuid import UUID
+
+    student_uuid = UUID(student_id)
+    timetable = await service.get_confirmed_timetable(student_uuid)
+    if not timetable:
+        return {"status": "none", "message": "No confirmed timetable found."}
+
+    entries = await service.entry_repo.get_for_timetable(timetable.id)
+
+    week: dict[str, list] = {}
+    for day_idx, day_name in enumerate(DAY_NAMES):
+        day_entries = [e for e in entries if e.day_of_week == day_idx]
+        week[day_name] = [
+            {
+                "start_time": e.start_time.strftime("%H:%M"),
+                "end_time": e.end_time.strftime("%H:%M"),
+                "activity_name": e.activity_name,
+                "activity_type": e.activity_type.value,
+                "room": e.room,
+                "faculty": e.faculty,
+            }
+            for e in sorted(day_entries, key=lambda x: x.start_time)
+        ]
+
+    return {
+        "status": "confirmed",
+        "week": week,
+    }
+
+
+async def get_schedule_for_weekday(
+    service: "TimetableService",
+    student_id: str,
+    day_of_week: int,
+) -> dict:
+    """Get schedule for a specific weekday (0=Mon, 5=Sat) from confirmed timetable."""
+    from uuid import UUID
+
+    if day_of_week < 0 or day_of_week > 5:
+        return {"success": False, "message": "day_of_week must be 0-5 (Mon-Sat)."}
+
+    student_uuid = UUID(student_id)
+    timetable = await service.get_confirmed_timetable(student_uuid)
+    if not timetable:
+        return {"status": "none", "message": "No confirmed timetable found."}
+
+    entries = await service.entry_repo.get_for_timetable(timetable.id)
+    day_entries = [e for e in entries if e.day_of_week == day_of_week]
+
+    return {
+        "status": "confirmed",
+        "day": DAY_NAMES[day_of_week],
+        "entries": [
+            {
+                "start_time": e.start_time.strftime("%H:%M"),
+                "end_time": e.end_time.strftime("%H:%M"),
+                "activity_name": e.activity_name,
+                "activity_type": e.activity_type.value,
+                "room": e.room,
+                "faculty": e.faculty,
+            }
+            for e in sorted(day_entries, key=lambda x: x.start_time)
+        ],
+    }
+
+
+async def get_timetable_metadata(
+    service: "TimetableService",
+    student_id: str,
+) -> dict:
+    """Get timetable metadata (section, branch, programme, etc.) from confirmed timetable."""
+    from uuid import UUID
+
+    student_uuid = UUID(student_id)
+    timetable = await service.get_confirmed_timetable(student_uuid)
+    if not timetable:
+        return {"status": "none", "message": "No confirmed timetable found."}
+
+    return {
+        "status": "confirmed",
+        "section": timetable.section,
+        "branch": timetable.branch,
+        "programme": timetable.programme,
+        "regulation": timetable.regulation,
+        "academic_year": timetable.academic_year,
+        "semester": timetable.semester,
+        "year": timetable.year,
+        "default_classroom": timetable.default_classroom,
+        "effective_from": (
+            timetable.effective_from.isoformat() if timetable.effective_from else None
+        ),
+    }
+
+
 # Tool definitions for registry
 TIMETABLE_TOOL_DEFINITIONS = [
     {
@@ -886,6 +1015,122 @@ TIMETABLE_TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "name": "set_briefing_time",
+        "description": (
+            "Set the student's daily briefing time (HH:MM, 24-hour format). "
+            "Used after timetable confirmation to configure morning briefings."
+        ),
+        "arguments_schema": {
+            "type": "object",
+            "properties": {
+                "student_id": {"type": "string", "format": "uuid"},
+                "briefing_time": {
+                    "type": "string",
+                    "description": "Time in HH:MM format (e.g., 08:00)",
+                },
+            },
+            "required": ["student_id", "briefing_time"],
+        },
+        "result_schema": {
+            "type": "object",
+            "properties": {
+                "success": {"type": "boolean"},
+                "briefing_time": {"type": "string"},
+                "message": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "get_week_schedule",
+        "description": (
+            "Get the full week schedule (Mon-Sat) from the confirmed timetable."
+        ),
+        "arguments_schema": {
+            "type": "object",
+            "properties": {
+                "student_id": {"type": "string", "format": "uuid"},
+            },
+            "required": ["student_id"],
+        },
+        "result_schema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string"},
+                "week": {"type": "object"},
+                "message": {"type": ["string", "null"]},
+            },
+        },
+    },
+    {
+        "name": "get_schedule_for_weekday",
+        "description": (
+            "Get schedule for a specific weekday from the confirmed timetable. "
+            "day_of_week: 0=Monday, 1=Tuesday, ..., 5=Saturday."
+        ),
+        "arguments_schema": {
+            "type": "object",
+            "properties": {
+                "student_id": {"type": "string", "format": "uuid"},
+                "day_of_week": {
+                    "type": "integer",
+                    "description": "0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat",
+                },
+            },
+            "required": ["student_id", "day_of_week"],
+        },
+        "result_schema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string"},
+                "day": {"type": "string"},
+                "entries": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "start_time": {"type": "string"},
+                            "end_time": {"type": "string"},
+                            "activity_name": {"type": "string"},
+                            "activity_type": {"type": "string"},
+                            "room": {"type": ["string", "null"]},
+                            "faculty": {"type": ["string", "null"]},
+                        },
+                    },
+                },
+            },
+        },
+    },
+    {
+        "name": "get_timetable_metadata",
+        "description": (
+            "Get timetable metadata (section, branch, programme, regulation, "
+            "academic_year, semester, year, default_classroom) from the "
+            "confirmed timetable."
+        ),
+        "arguments_schema": {
+            "type": "object",
+            "properties": {
+                "student_id": {"type": "string", "format": "uuid"},
+            },
+            "required": ["student_id"],
+        },
+        "result_schema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string"},
+                "section": {"type": ["string", "null"]},
+                "branch": {"type": ["string", "null"]},
+                "programme": {"type": ["string", "null"]},
+                "regulation": {"type": ["string", "null"]},
+                "academic_year": {"type": ["string", "null"]},
+                "semester": {"type": ["integer", "null"]},
+                "year": {"type": ["integer", "null"]},
+                "default_classroom": {"type": ["string", "null"]},
+                "effective_from": {"type": ["string", "null"]},
+            },
+        },
+    },
 ]
 
 
@@ -923,4 +1168,12 @@ async def execute_timetable_tool(
         return await add_timetable_entry(service, student_id, **kwargs)
     if tool_name == "delete_timetable_entry":
         return await delete_timetable_entry(service, student_id, **kwargs)
+    if tool_name == "set_briefing_time":
+        return await set_briefing_time(service, student_id, kwargs["briefing_time"])
+    if tool_name == "get_week_schedule":
+        return await get_week_schedule(service, student_id)
+    if tool_name == "get_schedule_for_weekday":
+        return await get_schedule_for_weekday(service, student_id, kwargs["day_of_week"])
+    if tool_name == "get_timetable_metadata":
+        return await get_timetable_metadata(service, student_id)
     raise ValueError(f"Unknown timetable tool: {tool_name}")

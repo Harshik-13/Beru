@@ -1,5 +1,32 @@
 # CHANGELOG.md — Beru
 
+## 2026-09-29 — Phase 3: Briefing time + richer Q&A — set_briefing_time, week/weekday/metadata tools, course_metadata mapping
+
+**Commit:** pending
+
+### Why
+After confirmation, the student had no way to set their briefing time through conversation. The LLM had no tools to answer week-wide or weekday-specific questions, or to retrieve timetable metadata (section, branch, programme). Course metadata (course_code, faculty) was extracted but not stored on entries.
+
+### What changed
+- `backend/app/intelligence/tools/timetable_tools.py`:
+  - Added `set_briefing_time` tool — writes students.briefing_time (HH:MM)
+  - Added `get_week_schedule` tool — full Mon-Sat from confirmed timetable
+  - Added `get_schedule_for_weekday` tool — by day 0-5 from confirmed timetable
+  - Added `get_timetable_metadata` tool — section, branch, programme, regulation, etc.
+- `backend/app/intelligence/services/timetable_service.py`:
+  - `extract_timetable()`: Maps course_metadata onto entries (course_code, faculty)
+- `backend/app/intelligence/services/conversation.py`:
+  - Added 4 new tools to timetable tool routing
+
+### Verification
+- Code changes complete; tests pending Phase 4 E2E
+
+### Security
+- set_briefing_time validates HH:MM format; no injection risk
+- Metadata tool returns extracted fields only; never invents college/section
+
+---
+
 ## 2026-09-29 — Phase 2: Corrections and confirm — review tools, explicit confirm, context builder review mode
 
 **Commit:** `c448e4e`

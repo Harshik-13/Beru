@@ -110,6 +110,7 @@ TelegramMessageHandler._handle_message(message)
 - Tools: `confirm_timetable`, `get_today_schedule`, `get_tomorrow_schedule`, `get_next_class`, `get_first_class_tomorrow`, `get_timetable_status`, `needs_lab_batch`, `set_lab_batch`, `get_extracted_timetable`, `update_timetable_entry`, `add_timetable_entry`, `delete_timetable_entry`, `get_overall_attendance`, `get_subject_attendance`, `get_attendance_summary`, `get_subjects_below_target`, `simulate_absence`, `calculate_classes_needed`, `get_attendance_snapshot_info`, `get_subject_codes`, `sync_attendance`
 - Phase 1: Photo uploads routed through existing `HybridTimetableExtractor` (no new OCR/vision provider)
 - Phase 2: Review tools (`get_extracted_timetable`, `update/add/delete_timetable_entry`) for corrections during REVIEW_REQUIRED; context builder blocks schedule queries from pending timetables
+- Phase 3: `set_briefing_time`, `get_week_schedule`, `get_schedule_for_weekday`, `get_timetable_metadata` tools; course_metadata mapped onto entries during extraction
 - LLM selects tool via standard OpenAI function calling schemas; backend validates and executes deterministically
 - Tool results are strictly deterministic; LLM receives backend output to synthesize a friendly, senior-copilot response in Beru's persona
 

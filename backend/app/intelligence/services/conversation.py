@@ -466,6 +466,10 @@ class ConversationService:
                 "update_timetable_entry",
                 "add_timetable_entry",
                 "delete_timetable_entry",
+                "set_briefing_time",
+                "get_week_schedule",
+                "get_schedule_for_weekday",
+                "get_timetable_metadata",
             }
 
             # Attendance tools that may need TimetableService or AttendanceService
