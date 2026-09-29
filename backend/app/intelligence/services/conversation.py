@@ -462,6 +462,10 @@ class ConversationService:
                 "get_timetable_status",
                 "needs_lab_batch",
                 "set_lab_batch",
+                "get_extracted_timetable",
+                "update_timetable_entry",
+                "add_timetable_entry",
+                "delete_timetable_entry",
             }
 
             # Attendance tools that may need TimetableService or AttendanceService

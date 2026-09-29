@@ -5,7 +5,7 @@ These tools provide deterministic access to confirmed timetable data.
 """
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -334,6 +334,167 @@ async def confirm_timetable(
     }
 
 
+async def get_extracted_timetable(
+    service: "TimetableService",
+    student_id: str,
+) -> dict:
+    """Get the pending extracted timetable for review (not a confirmed schedule query)."""
+    from uuid import UUID
+
+    from app.intelligence.services.timetable_service import format_week_schedule
+
+    student_uuid = UUID(student_id)
+    pending, entries = await service.get_pending_timetable_with_entries(student_uuid)
+
+    if not pending:
+        return {
+            "status": "none",
+            "message": "No pending timetable found for review.",
+        }
+
+    week_grid = format_week_schedule(entries, pending)
+
+    return {
+        "status": pending.status.value,
+        "timetable_id": str(pending.id),
+        "version": pending.version,
+        "section": pending.section,
+        "branch": pending.branch,
+        "programme": pending.programme,
+        "semester": pending.semester,
+        "year": pending.year,
+        "academic_year": pending.academic_year,
+        "default_classroom": pending.default_classroom,
+        "entry_count": len(entries),
+        "week_schedule": week_grid,
+        "entries": [
+            {
+                "entry_id": str(e.id),
+                "day": DAY_NAMES[e.day_of_week] if e.day_of_week < 7 else "Unknown",
+                "day_of_week": e.day_of_week,
+                "start_time": e.start_time.strftime("%H:%M"),
+                "end_time": e.end_time.strftime("%H:%M"),
+                "activity_name": e.activity_name,
+                "activity_type": e.activity_type.value,
+                "room": e.room,
+                "faculty": e.faculty,
+                "course_code": e.course_code,
+            }
+            for e in entries
+        ],
+    }
+
+
+async def update_timetable_entry(
+    service: "TimetableService",
+    student_id: str,
+    entry_id: str,
+    **kwargs,
+) -> dict:
+    """Update a timetable entry during review (REVIEW_REQUIRED only)."""
+    from uuid import UUID
+
+    student_uuid = UUID(student_id)
+    pending = await service.get_pending_timetable(student_uuid)
+    if not pending:
+        return {"success": False, "message": "No pending timetable found for review."}
+
+    entry_uuid = UUID(entry_id)
+    updates = {}
+    if "activity_name" in kwargs:
+        updates["activity_name"] = kwargs["activity_name"]
+    if "start_time" in kwargs:
+        updates["start_time"] = kwargs["start_time"]
+    if "end_time" in kwargs:
+        updates["end_time"] = kwargs["end_time"]
+    if "activity_type" in kwargs:
+        updates["activity_type"] = kwargs["activity_type"]
+    if "room" in kwargs:
+        updates["room"] = kwargs["room"]
+    if "day_of_week" in kwargs:
+        updates["day_of_week"] = int(kwargs["day_of_week"])
+
+    updated = await service.update_entry(pending.id, entry_uuid, **updates)
+    if not updated:
+        return {"success": False, "message": "Entry not found or not in pending timetable."}
+
+    return {
+        "success": True,
+        "entry_id": str(updated.id),
+        "message": f"Updated entry: {updated.activity_name}",
+    }
+
+
+async def add_timetable_entry(
+    service: "TimetableService",
+    student_id: str,
+    **kwargs,
+) -> dict:
+    """Add a new timetable entry during review (REVIEW_REQUIRED only)."""
+    from uuid import UUID
+
+    from app.models.timetable import ActivityType, TimetableEntry
+
+    student_uuid = UUID(student_id)
+    pending = await service.get_pending_timetable(student_uuid)
+    if not pending:
+        return {"success": False, "message": "No pending timetable found for review."}
+
+    day_of_week = int(kwargs.get("day_of_week", 0))
+    if day_of_week < 0 or day_of_week > 5:
+        return {"success": False, "message": "day_of_week must be 0-5 (Mon-Sat)."}
+
+    start_time = kwargs.get("start_time", "10:00")
+    end_time = kwargs.get("end_time", "11:00")
+
+    entry = TimetableEntry(
+        timetable_id=pending.id,
+        day_of_week=day_of_week,
+        start_time=datetime.strptime(start_time, "%H:%M").time(),
+        end_time=datetime.strptime(end_time, "%H:%M").time(),
+        activity_name=kwargs.get("activity_name", "New Entry"),
+        activity_type=ActivityType(kwargs.get("activity_type", "academic")),
+        room=kwargs.get("room"),
+        course_code=kwargs.get("course_code"),
+        faculty=kwargs.get("faculty"),
+    )
+    await service.entry_repo.create(entry)
+
+    return {
+        "success": True,
+        "entry_id": str(entry.id),
+        "message": f"Added entry: {entry.activity_name}",
+    }
+
+
+async def delete_timetable_entry(
+    service: "TimetableService",
+    student_id: str,
+    entry_id: str,
+) -> dict:
+    """Delete a timetable entry during review (REVIEW_REQUIRED only)."""
+    from uuid import UUID
+
+    student_uuid = UUID(student_id)
+    pending = await service.get_pending_timetable(student_uuid)
+    if not pending:
+        return {"success": False, "message": "No pending timetable found for review."}
+
+    entry_uuid = UUID(entry_id)
+    entries = await service.entry_repo.get_for_timetable(pending.id)
+    target = next((e for e in entries if e.id == entry_uuid), None)
+    if not target:
+        return {"success": False, "message": "Entry not found in pending timetable."}
+
+    await service.session.delete(target)
+    await service.session.flush()
+
+    return {
+        "success": True,
+        "message": f"Deleted entry: {target.activity_name}",
+    }
+
+
 # Tool definitions for registry
 TIMETABLE_TOOL_DEFINITIONS = [
     {
@@ -596,6 +757,135 @@ TIMETABLE_TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "name": "get_extracted_timetable",
+        "description": (
+            "Get the pending extracted timetable for review. "
+            "Returns the weekday grid and all entries with IDs. "
+            "This is a review tool, not a confirmed schedule query."
+        ),
+        "arguments_schema": {
+            "type": "object",
+            "properties": {
+                "student_id": {"type": "string", "format": "uuid"},
+            },
+            "required": ["student_id"],
+        },
+        "result_schema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string"},
+                "timetable_id": {"type": ["string", "null"]},
+                "version": {"type": ["integer", "null"]},
+                "section": {"type": ["string", "null"]},
+                "branch": {"type": ["string", "null"]},
+                "programme": {"type": ["string", "null"]},
+                "semester": {"type": ["integer", "null"]},
+                "year": {"type": ["integer", "null"]},
+                "academic_year": {"type": ["string", "null"]},
+                "default_classroom": {"type": ["string", "null"]},
+                "entry_count": {"type": "integer"},
+                "week_schedule": {"type": "string"},
+                "entries": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "entry_id": {"type": "string"},
+                            "day": {"type": "string"},
+                            "day_of_week": {"type": "integer"},
+                            "start_time": {"type": "string"},
+                            "end_time": {"type": "string"},
+                            "activity_name": {"type": "string"},
+                            "activity_type": {"type": "string"},
+                            "room": {"type": ["string", "null"]},
+                            "faculty": {"type": ["string", "null"]},
+                            "course_code": {"type": ["string", "null"]},
+                        },
+                    },
+                },
+            },
+        },
+    },
+    {
+        "name": "update_timetable_entry",
+        "description": (
+            "Update a timetable entry during review (REVIEW_REQUIRED only). "
+            "Change name, times, type, room, or day for one entry by its ID."
+        ),
+        "arguments_schema": {
+            "type": "object",
+            "properties": {
+                "student_id": {"type": "string", "format": "uuid"},
+                "entry_id": {"type": "string", "format": "uuid"},
+                "activity_name": {"type": "string"},
+                "start_time": {"type": "string", "description": "HH:MM format"},
+                "end_time": {"type": "string", "description": "HH:MM format"},
+                "activity_type": {"type": "string", "enum": ["academic", "lab", "break", "activity"]},
+                "room": {"type": "string"},
+                "day_of_week": {"type": "integer", "description": "0=Mon, 5=Sat"},
+            },
+            "required": ["student_id", "entry_id"],
+        },
+        "result_schema": {
+            "type": "object",
+            "properties": {
+                "success": {"type": "boolean"},
+                "entry_id": {"type": "string"},
+                "message": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "add_timetable_entry",
+        "description": (
+            "Add a new timetable entry during review (REVIEW_REQUIRED only)."
+        ),
+        "arguments_schema": {
+            "type": "object",
+            "properties": {
+                "student_id": {"type": "string", "format": "uuid"},
+                "activity_name": {"type": "string"},
+                "day_of_week": {"type": "integer", "description": "0=Mon, 5=Sat"},
+                "start_time": {"type": "string", "description": "HH:MM format"},
+                "end_time": {"type": "string", "description": "HH:MM format"},
+                "activity_type": {"type": "string", "enum": ["academic", "lab", "break", "activity"]},
+                "room": {"type": "string"},
+                "course_code": {"type": "string"},
+                "faculty": {"type": "string"},
+            },
+            "required": ["student_id", "activity_name"],
+        },
+        "result_schema": {
+            "type": "object",
+            "properties": {
+                "success": {"type": "boolean"},
+                "entry_id": {"type": "string"},
+                "message": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "delete_timetable_entry",
+        "description": (
+            "Delete a timetable entry during review (REVIEW_REQUIRED only)."
+        ),
+        "arguments_schema": {
+            "type": "object",
+            "properties": {
+                "student_id": {"type": "string", "format": "uuid"},
+                "entry_id": {"type": "string", "format": "uuid"},
+            },
+            "required": ["student_id", "entry_id"],
+        },
+        "result_schema": {
+            "type": "object",
+            "properties": {
+                "success": {"type": "boolean"},
+                "message": {"type": "string"},
+            },
+        },
+    },
 ]
 
 
@@ -625,4 +915,12 @@ async def execute_timetable_tool(
         return await needs_lab_batch(service, student_id)
     if tool_name == "set_lab_batch":
         return await set_lab_batch(service, student_id, kwargs["batch"])
+    if tool_name == "get_extracted_timetable":
+        return await get_extracted_timetable(service, student_id)
+    if tool_name == "update_timetable_entry":
+        return await update_timetable_entry(service, student_id, **kwargs)
+    if tool_name == "add_timetable_entry":
+        return await add_timetable_entry(service, student_id, **kwargs)
+    if tool_name == "delete_timetable_entry":
+        return await delete_timetable_entry(service, student_id, **kwargs)
     raise ValueError(f"Unknown timetable tool: {tool_name}")

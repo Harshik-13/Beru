@@ -1,5 +1,35 @@
 # CHANGELOG.md — Beru
 
+## 2026-09-29 — Phase 2: Corrections and confirm — review tools, explicit confirm, context builder review mode
+
+**Commit:** pending
+
+### Why
+After extraction, the student had no way to correct parsed entries through the conversation. The LLM had no tools to show the pending grid, update/add/delete entries, or handle the review flow naturally. The context builder did not distinguish review mode from confirmed mode.
+
+### What changed
+- `backend/app/intelligence/tools/timetable_tools.py`:
+  - Added `get_extracted_timetable` tool — returns pending grid + all entries with IDs for review
+  - Added `update_timetable_entry` tool — change name/times/type/room/day by entry ID (REVIEW_REQUIRED only)
+  - Added `add_timetable_entry` tool — add new entry during review
+  - Added `delete_timetable_entry` tool — remove entry during review
+  - All correction tools enforce REVIEW_REQUIRED state and ownership in the service layer
+- `backend/app/intelligence/services/context_builder.py`:
+  - Review mode: instructs LLM to use `get_extracted_timetable`, guide student through review/batch/corrections/confirm
+  - Explicitly blocks schedule queries from pending timetables
+- `backend/app/intelligence/services/conversation.py`:
+  - Added 4 new tools to timetable tool routing
+
+### Verification
+- Code changes complete; tests pending Phase 4 E2E
+
+### Security
+- Correction tools gated to REVIEW_REQUIRED state in service layer
+- Ownership enforced via pending timetable lookup
+- LLM cannot write to CONFIRMED timetables
+
+---
+
 ## 2026-09-29 — Phase 1: Timetable review surface — disable auto-confirm, show weekday grid, photo upload
 
 **Commit:** `e7622bb`

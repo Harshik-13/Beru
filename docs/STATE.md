@@ -26,6 +26,7 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 - Timetable service (state machine, extraction, confirmation, queries; no auto-confirm — explicit student confirmation required)
 - Hybrid timetable extractor (PDF vector table extraction + RapidOCR fallback for scanned/image PDFs and photos)
 - Timetable review surface (weekday grid formatter, photo upload through hybrid extractor, pending timetable with entries fetch)
+- Timetable correction tools (get_extracted_timetable, update/add/delete entry — REVIEW_REQUIRED only)
 - Attendance service (deterministic calculations, simulations, recovery)
 - Briefing service (deterministic facts + natural language rendering)
 - Briefing scheduler (per-student timezone/time, idempotent delivery)

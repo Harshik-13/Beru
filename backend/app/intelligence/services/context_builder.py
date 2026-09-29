@@ -126,18 +126,20 @@ class ContextBuilder:
         if profile.has_timetable:
             lines.append("  Timetable Status: ACTIVE CONFIRMED TIMETABLE")
         elif profile.timetable_status == "review_required":
+            lines.append(
+                "  Timetable Status: PENDING REVIEW. "
+                "An extracted timetable is awaiting student review and confirmation. "
+                "Use get_extracted_timetable to show the parsed entries. "
+                "Do NOT answer schedule questions (tomorrow, next class, etc.) "
+                "from a pending timetable — only CONFIRMED timetables are queryable. "
+                "Guide the student to: review entries, set lab batch if needed, "
+                "make corrections, then confirm."
+            )
             if profile.needs_lab_batch:
                 lines.append(
-                    "  Timetable Status: PENDING REVIEW (requires lab batch). "
-                    "The timetable has slash-separated lab entries. "
+                    "  The timetable has slash-separated lab entries. "
                     "Ask the student which lab batch (Batch 1 or Batch 2) "
                     "they belong to."
-                )
-            else:
-                lines.append(
-                    "  Timetable Status: PENDING REVIEW. "
-                    "An extracted timetable is awaiting student confirmation. "
-                    "Ask the student to review and confirm their timetable."
                 )
         else:
             lines.append(
