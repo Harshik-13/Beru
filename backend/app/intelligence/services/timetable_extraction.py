@@ -6,15 +6,19 @@ This module provides the extraction interface and a practical implementation
 using pdfplumber for PDF extraction with layout preservation.
 """
 
+import logging
+import re
 from abc import ABC, abstractmethod
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import time
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from app.models.timetable import TimetableEntry
+
+logger = logging.getLogger(__name__)
 
 
 class ExtractionConfidence(StrEnum):
@@ -448,6 +452,544 @@ class PdfTimetableExtractor(TimetableExtractor):
         return cells, slash_labs
 
 
+class OcrTimetableExtractor(TimetableExtractor):
+    """
+    OCR-based timetable extractor using RapidOCR and pypdfium2.
+
+    Handles scanned PDFs, camera photos, and screenshot images of timetables
+    when direct vector PDF table extraction is unavailable or produces no cells.
+    """
+
+    def __init__(self):
+        self._ocr = None
+
+    def _get_ocr(self):
+        if self._ocr is None:
+            from rapidocr_onnxruntime import RapidOCR
+
+            self._ocr = RapidOCR()
+        return self._ocr
+
+    def _load_images(self, file_path: str) -> list[Any]:
+        from PIL import Image
+
+        lower = file_path.lower()
+        if lower.endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp")):
+            return [Image.open(file_path)]
+
+        # Otherwise treat as PDF
+        import pypdfium2 as pdfium
+
+        pdf = pdfium.PdfDocument(file_path)
+        images = []
+        for page in pdf:
+            images.append(page.render(scale=2).to_pil())
+        return images
+
+    def _normalize_cell_text(self, text: str) -> str:
+        t = text.strip()
+        subs = {
+            "OOPILAB": "OOPJ LAB",
+            "OOPJLAB": "OOPJ LAB",
+            "CNLAB": "CN LAB",
+            "CFLAB": "CF LAB",
+            "OSLAB": "OS LAB",
+            "DVLAB": "DV LAB",
+            "CMLAB": "CM LAB",
+        }
+        for k, v in subs.items():
+            t = re.sub(rf"\b{k}\b", v, t, flags=re.IGNORECASE)
+        t = re.sub(r"\s*/\s*", " / ", t)
+        return t
+
+    async def extract(self, file_path: str) -> TimetableExtractionResult:
+        try:
+            images = self._load_images(file_path)
+            ocr = self._get_ocr()
+        except Exception as e:
+            return TimetableExtractionResult(
+                metadata=ExtractedMetadata(),
+                cells=(),
+                slash_labs=(),
+                errors=(f"OCR initialization failed: {e!s}",),
+            )
+
+        all_cells: list[ExtractedCell] = []
+        all_slash_labs: list[SlashLabCandidate] = []
+        meta_kwargs: dict[str, Any] = {"course_metadata": {}}
+        warnings: list[str] = []
+        errors: list[str] = []
+
+        day_keywords = {
+            "monday": 0,
+            "tuesday": 1,
+            "wednesday": 2,
+            "thursday": 3,
+            "friday": 4,
+            "saturday": 5,
+        }
+
+        for page_idx, img in enumerate(images):
+            _img_w, img_h = img.size
+            result, _ = ocr(img)
+            if not result:
+                continue
+
+            items = []
+            for bbox, text, score in result:
+                xs = [pt[0] for pt in bbox]
+                ys = [pt[1] for pt in bbox]
+                items.append(
+                    {
+                        "text": text.strip(),
+                        "score": score,
+                        "x0": min(xs),
+                        "x1": max(xs),
+                        "y0": min(ys),
+                        "y1": max(ys),
+                        "cx": (min(xs) + max(xs)) / 2,
+                        "cy": (min(ys) + max(ys)) / 2,
+                    }
+                )
+
+            # 1. Parse Metadata from Header items
+            for it in items:
+                t = it["text"]
+                if re.search(r"20\d\d[-\u2013]20\d\d", t):
+                    meta_kwargs["academic_year"] = re.search(
+                        r"20\d\d[-\u2013]20\d\d", t
+                    ).group(0)
+                elif re.search(r"\bR\d+\b", t, re.IGNORECASE):
+                    meta_kwargs["regulation"] = (
+                        re.search(r"\bR\d+\b", t, re.IGNORECASE).group(0).upper()
+                    )
+                elif re.search(r"\bCSE-[A-Z]+\b", t, re.IGNORECASE):
+                    meta_kwargs["branch"] = (
+                        re.search(r"\bCSE-[A-Z]+\b", t, re.IGNORECASE).group(0).upper()
+                    )
+                elif "b.tech" in t.lower() or "b. tech" in t.lower():
+                    meta_kwargs["programme"] = "B. Tech"
+                elif re.search(r"\b(I|II|III|IV)\s*Year\b", t, re.IGNORECASE):
+                    yr_str = (
+                        re.search(r"\b(I|II|III|IV)\s*Year\b", t, re.IGNORECASE)
+                        .group(1)
+                        .upper()
+                    )
+                    meta_kwargs["year"] = {"I": 1, "II": 2, "III": 3, "IV": 4}.get(
+                        yr_str
+                    )
+                elif re.search(
+                    r"\bsem(?:ester)?\b\s*[:\uff1a]?\s*([I|V|X]+|\d+)", t, re.IGNORECASE
+                ):
+                    sem_str = (
+                        re.search(
+                            r"\bsem(?:ester)?\b\s*[:\uff1a]?\s*([I|V|X]+|\d+)",
+                            t,
+                            re.IGNORECASE,
+                        )
+                        .group(1)
+                        .upper()
+                    )
+                    meta_kwargs["semester"] = {
+                        "I": 1,
+                        "II": 2,
+                        "III": 3,
+                        "IV": 4,
+                        "V": 5,
+                        "VI": 6,
+                        "VII": 7,
+                        "VIII": 8,
+                    }.get(sem_str, int(sem_str) if sem_str.isdigit() else None)
+                elif re.search(
+                    r"\bsec(?:tion)?\b\s*[:\uff1a]?\s*([A-Z])\b", t, re.IGNORECASE
+                ):
+                    meta_kwargs["section"] = (
+                        re.search(
+                            r"\bsec(?:tion)?\b\s*[:\uff1a]?\s*([A-Z])\b",
+                            t,
+                            re.IGNORECASE,
+                        )
+                        .group(1)
+                        .upper()
+                    )
+                elif re.search(
+                    r"\broom\s*no\.?\b\s*[:\uff1a]?\s*([A-Za-z0-9\-]+)",
+                    t,
+                    re.IGNORECASE,
+                ):
+                    meta_kwargs["default_classroom"] = (
+                        re.search(
+                            r"\broom\s*no\.?\b\s*[:\uff1a]?\s*([A-Za-z0-9\-]+)",
+                            t,
+                            re.IGNORECASE,
+                        )
+                        .group(1)
+                        .upper()
+                    )
+                elif re.search(
+                    r"\bw\.?e\.?f\.?\b\s*[:\uff1a]?\s*(\d{2}/\d{2}/\d{4})",
+                    t,
+                    re.IGNORECASE,
+                ):
+                    meta_kwargs["effective_from"] = re.search(
+                        r"\bw\.?e\.?f\.?\b\s*[:\uff1a]?\s*(\d{2}/\d{2}/\d{4})",
+                        t,
+                        re.IGNORECASE,
+                    ).group(1)
+
+            # Pair up adjacent labels/values if separate OCR items
+            for it in items:
+                t_lower = it["text"].lower()
+                same_line = [
+                    other
+                    for other in items
+                    if abs(other["cy"] - it["cy"]) < 12
+                    and other["cx"] > it["cx"]
+                    and (other["cx"] - it["cx"]) < 220
+                ]
+                if same_line:
+                    closest = min(same_line, key=lambda x: x["cx"])
+                    val = closest["text"].lstrip(":\uff1a ").strip()
+                    if (
+                        "section" in t_lower
+                        and not meta_kwargs.get("section")
+                        and len(val) == 1
+                        and val.isalpha()
+                    ):
+                        meta_kwargs["section"] = val.upper()
+                    elif (
+                        ("room" in t_lower or "classroom" in t_lower)
+                        and not meta_kwargs.get("default_classroom")
+                        and val
+                    ):
+                        meta_kwargs["default_classroom"] = val.upper()
+                    elif (
+                        "w.e.f" in t_lower
+                        and not meta_kwargs.get("effective_from")
+                        and re.search(r"\d{2}/\d{2}/\d{4}", val)
+                    ):
+                        meta_kwargs["effective_from"] = re.search(
+                            r"\d{2}/\d{2}/\d{4}", val
+                        ).group(0)
+                    elif (
+                        "academic" in t_lower
+                        and not meta_kwargs.get("academic_year")
+                        and re.search(r"20\d\d[-\u2013]20\d\d", val)
+                    ):
+                        meta_kwargs["academic_year"] = re.search(
+                            r"20\d\d[-\u2013]20\d\d", val
+                        ).group(0)
+                    elif "branch" in t_lower and not meta_kwargs.get("branch") and val:
+                        meta_kwargs["branch"] = val.upper()
+                    elif (
+                        "regulation" in t_lower
+                        and not meta_kwargs.get("regulation")
+                        and val
+                    ):
+                        meta_kwargs["regulation"] = val.upper()
+                    elif "class" in t_lower and not meta_kwargs.get("year"):
+                        if "ii" in val.lower() or "2" in val:
+                            meta_kwargs["year"] = 2
+                        elif "iii" in val.lower() or "3" in val:
+                            meta_kwargs["year"] = 3
+                        elif "iv" in val.lower() or "4" in val:
+                            meta_kwargs["year"] = 4
+                        elif "i" in val.lower() or "1" in val:
+                            meta_kwargs["year"] = 1
+                    elif "semester" in t_lower and not meta_kwargs.get("semester"):
+                        roman_map = {
+                            "I": 1,
+                            "II": 2,
+                            "III": 3,
+                            "IV": 4,
+                            "V": 5,
+                            "VI": 6,
+                            "VII": 7,
+                            "VIII": 8,
+                        }
+                        val_up = val.upper()
+                        if val_up in roman_map:
+                            meta_kwargs["semester"] = roman_map[val_up]
+
+            # Parse course code table below schedule
+            course_items = [it for it in items if it["cy"] > img_h * 0.45]
+            for it in course_items:
+                code_match = re.match(
+                    r"^(2[0-9][A-Z0-9]{6,8})$", it["text"].replace(" ", "")
+                )
+                if code_match:
+                    code = code_match.group(1)
+                    same_row = [
+                        o
+                        for o in course_items
+                        if abs(o["cy"] - it["cy"]) < 16 and o != it
+                    ]
+                    same_row_sorted = sorted(same_row, key=lambda x: x["cx"])
+                    name = same_row_sorted[0]["text"] if same_row_sorted else ""
+                    faculty = ""
+                    for o in same_row_sorted[1:]:
+                        if any(
+                            title in o["text"].lower()
+                            for title in ["dr.", "mr.", "mrs.", "ms."]
+                        ):
+                            faculty = o["text"]
+                    meta_kwargs["course_metadata"][code] = {
+                        "name": name,
+                        "faculty": faculty,
+                    }
+
+            # 2. Detect Days and establish Row Bands
+            detected_days = {}
+            for it in items:
+                clean = re.sub(r"[^a-zA-Z]", "", it["text"].lower())
+                for d_name, d_idx in day_keywords.items():
+                    if clean == d_name or (
+                        len(clean) >= 5 and d_name.startswith(clean)
+                    ):
+                        detected_days[d_idx] = it
+                        break
+
+            if not detected_days:
+                warnings.append(f"Page {page_idx}: No day rows detected.")
+                continue
+
+            sorted_d_indices = sorted(
+                detected_days.keys(), key=lambda d: detected_days[d]["cy"]
+            )
+            row_bands = {}
+            for i, d_idx in enumerate(sorted_d_indices):
+                curr_y = detected_days[d_idx]["cy"]
+                prev_y = (
+                    detected_days[sorted_d_indices[i - 1]]["cy"]
+                    if i > 0
+                    else curr_y - 25
+                )
+                next_y = (
+                    detected_days[sorted_d_indices[i + 1]]["cy"]
+                    if i < len(sorted_d_indices) - 1
+                    else curr_y + 25
+                )
+                row_bands[d_idx] = ((curr_y + prev_y) / 2, (curr_y + next_y) / 2)
+
+            # 3. Detect Period Columns (P1-P6 and Lunch)
+            first_day_y = min(it["y0"] for it in detected_days.values())
+            period_num_items = [
+                it
+                for it in items
+                if it["cy"] < first_day_y
+                and it["cy"] > first_day_y - 80
+                and it["text"] in {"1", "2", "3", "4", "5", "6"}
+            ]
+            period_centers: dict[int, float] = {}
+            for it in period_num_items:
+                with suppress(ValueError):
+                    period_centers[int(it["text"])] = it["cx"]
+
+            # Also check for time header items (10.00 AM -> P1, 11.00 AM -> P2, etc.)
+            for it in items:
+                if it["cy"] < first_day_y and it["cy"] > first_day_y - 80:
+                    t_up = it["text"].upper()
+                    if "10.00" in t_up and 1 not in period_centers:
+                        period_centers[1] = it["cx"]
+                    elif "11.00" in t_up and 2 not in period_centers:
+                        period_centers[2] = it["cx"]
+                    elif "12.00" in t_up and 3 not in period_centers:
+                        period_centers[3] = it["cx"]
+                    elif "01.40" in t_up and 4 not in period_centers:
+                        period_centers[4] = it["cx"]
+                    elif "02.40" in t_up and 5 not in period_centers:
+                        period_centers[5] = it["cx"]
+                    elif "03.40" in t_up and 6 not in period_centers:
+                        period_centers[6] = it["cx"]
+
+            # Derive slot width from adjacent period centers
+            slot_w = None
+            if 2 in period_centers and 3 in period_centers:
+                slot_w = period_centers[3] - period_centers[2]
+            elif 4 in period_centers and 5 in period_centers:
+                slot_w = period_centers[5] - period_centers[4]
+            elif 5 in period_centers and 6 in period_centers:
+                slot_w = period_centers[6] - period_centers[5]
+            else:
+                day_left_x = min(it["x1"] for it in detected_days.values())
+                table_right_x = max(
+                    it["x1"]
+                    for it in items
+                    if first_day_y <= it["cy"] <= max(b[1] for b in row_bands.values())
+                )
+                slot_w = (table_right_x - day_left_x) / 7.2
+
+            if 1 not in period_centers and 2 in period_centers:
+                period_centers[1] = period_centers[2] - slot_w
+            if 2 not in period_centers and 1 in period_centers:
+                period_centers[2] = period_centers[1] + slot_w
+            if 3 not in period_centers and 2 in period_centers:
+                period_centers[3] = period_centers[2] + slot_w
+            if 5 not in period_centers and 4 in period_centers:
+                period_centers[5] = period_centers[4] + slot_w
+            if 6 not in period_centers and 5 in period_centers:
+                period_centers[6] = period_centers[5] + slot_w
+            if 4 not in period_centers and 5 in period_centers:
+                period_centers[4] = period_centers[5] - slot_w
+
+            col_bounds: dict[int, tuple[float, float]] = {}
+            for p in range(1, 7):
+                if p in period_centers:
+                    cx = period_centers[p]
+                    col_bounds[p] = (cx - slot_w / 2, cx + slot_w / 2)
+
+            grid_top = min(b[0] for b in row_bands.values())
+            grid_bottom = max(b[1] for b in row_bands.values())
+            min_grid_x = min(b[0] for b in col_bounds.values())
+            max_grid_x = max(b[1] for b in col_bounds.values())
+
+            grid_items = [
+                it
+                for it in items
+                if grid_top <= it["cy"] <= grid_bottom
+                and min_grid_x - 10 <= it["cx"] <= max_grid_x + 10
+            ]
+
+            for it in grid_items:
+                day = None
+                for d_idx, (y_t, y_b) in row_bands.items():
+                    if y_t <= it["cy"] <= y_b:
+                        day = d_idx
+                        break
+                if day is None:
+                    continue
+
+                if it["text"].upper() in {"L", "U", "N", "C", "H", "LUNCH"}:
+                    continue
+
+                raw_text = self._normalize_cell_text(it["text"])
+                if not raw_text or len(raw_text) < 2:
+                    continue
+
+                overlapping = []
+                for p, (p_left, p_right) in col_bounds.items():
+                    overlap_l = max(it["x0"], p_left)
+                    overlap_r = min(it["x1"], p_right)
+                    if overlap_r > overlap_l:
+                        overlap_w = overlap_r - overlap_l
+                        if overlap_w > 12 or (
+                            it["x1"] - it["x0"] < 30 and p_left <= it["cx"] <= p_right
+                        ):
+                            overlapping.append(p)
+
+                if not overlapping:
+                    closest_p = min(
+                        col_bounds.keys(),
+                        key=lambda p: abs(
+                            (col_bounds[p][0] + col_bounds[p][1]) / 2 - it["cx"]
+                        ),
+                    )
+                    overlapping = [closest_p]
+
+                start_p = min(overlapping)
+                end_p = max(overlapping)
+
+                confidence = (
+                    ExtractionConfidence.HIGH
+                    if it["score"] >= 0.85
+                    else ExtractionConfidence.MEDIUM
+                )
+
+                if "/" in raw_text:
+                    parts = [p.strip() for p in raw_text.split("/")]
+                    if len(parts) == 2 and all(parts):
+                        all_slash_labs.append(
+                            SlashLabCandidate(
+                                raw_content=raw_text,
+                                alternatives=tuple(parts),
+                                day_of_week=day,
+                                start_period=start_p,
+                                end_period=end_p,
+                                confidence=ExtractionConfidence.MEDIUM,
+                            )
+                        )
+                        all_cells.append(
+                            ExtractedCell(
+                                day_of_week=day,
+                                start_period=start_p,
+                                end_period=end_p,
+                                content=raw_text,
+                                confidence=ExtractionConfidence.AMBIGUOUS,
+                                notes=f"Slash-separated lab: {raw_text}",
+                            )
+                        )
+                    else:
+                        all_cells.append(
+                            ExtractedCell(
+                                day_of_week=day,
+                                start_period=start_p,
+                                end_period=end_p,
+                                content=raw_text,
+                                confidence=confidence,
+                            )
+                        )
+                else:
+                    all_cells.append(
+                        ExtractedCell(
+                            day_of_week=day,
+                            start_period=start_p,
+                            end_period=end_p,
+                            content=raw_text,
+                            confidence=confidence,
+                        )
+                    )
+
+        metadata = ExtractedMetadata(**meta_kwargs)
+        return TimetableExtractionResult(
+            metadata=metadata,
+            cells=tuple(all_cells),
+            slash_labs=tuple(all_slash_labs),
+            warnings=tuple(warnings),
+            errors=tuple(errors),
+        )
+
+
+class HybridTimetableExtractor(TimetableExtractor):
+    """
+    Hybrid timetable extractor: tries vector PDF table extraction first,
+    and falls back to OCR extraction when 0 cells are found or on image files.
+    """
+
+    def __init__(self):
+        self._pdf_extractor = PdfTimetableExtractor()
+        self._ocr_extractor = OcrTimetableExtractor()
+
+    async def extract(self, file_path: str) -> TimetableExtractionResult:
+        lower = file_path.lower()
+        if lower.endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp")):
+            logger.info("Extracting timetable via OCR for image file: %s", file_path)
+            return await self._ocr_extractor.extract(file_path)
+
+        # First attempt: PDF text/table extraction
+        try:
+            result = await self._pdf_extractor.extract(file_path)
+            if result.cells and not result.errors:
+                logger.info(
+                    "Extracted %d cells via PDF vector extractor for %s",
+                    len(result.cells),
+                    file_path,
+                )
+                return result
+            logger.info(
+                "PDF vector extractor returned %d cells; "
+                "falling back to OCR extractor for %s",
+                len(result.cells),
+                file_path,
+            )
+        except Exception as e:
+            logger.warning(
+                "PDF vector extractor failed with %s; falling back to OCR", e
+            )
+
+        # Fallback: OCR extraction
+        return await self._ocr_extractor.extract(file_path)
+
+
 def create_timetable_extractor() -> TimetableExtractor:
     """Factory function to create a timetable extractor."""
-    return PdfTimetableExtractor()
+    return HybridTimetableExtractor()

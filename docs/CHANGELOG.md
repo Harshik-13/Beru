@@ -1,5 +1,31 @@
 # CHANGELOG.md — Beru
 
+## 2026-09-29 — Implement hybrid timetable extractor with RapidOCR fallback for scanned/image PDFs and photos
+
+**Commit:** `HEAD`
+
+### Why
+Students frequently upload scanned timetables, image-based PDFs, or camera photos. The existing `PdfTimetableExtractor` relied exclusively on `pdfplumber` vector line and char extraction, which yielded 0 tables and 0 classes on scanned/image-based documents.
+
+### What changed
+- `pyproject.toml`: Added `pypdfium2>=5.0.0` and `rapidocr_onnxruntime>=1.3.0` to project dependencies.
+- `backend/app/intelligence/services/timetable_extraction.py`:
+  - Implemented `OcrTimetableExtractor`:
+    - Renders PDF pages to high-resolution images via `pypdfium2` or opens uploaded photos directly via PIL.
+    - Executes RapidOCR to detect bounding boxes and recognized text items.
+    - Extracts header metadata (academic year, regulation, programme, branch, year, semester, section, classroom, effective date) with label-value spatial pairing.
+    - Detects day rows (Monday-Saturday) and period column bounds (P1-P6 and Lunch) dynamically from spatial deltas.
+    - Maps cells into periods and multi-period spans, handles slash-separated labs into `SlashLabCandidate`s, and normalizes OCR artifacts.
+    - Parses course code metadata table below the schedule grid.
+  - Implemented `HybridTimetableExtractor`: Tries vector PDF extraction first, automatically falling back to OCR when 0 cells are returned or when handling image formats.
+  - Updated `create_timetable_extractor()` factory to return `HybridTimetableExtractor`.
+- `backend/tests/test_timetable.py`: Added `TestHybridAndOcrTimetableExtractor` covering sample PDF OCR extraction, hybrid fallback delegation, and factory verification.
+
+### Verification
+- 312 automated tests pass (`pytest backend/tests`).
+- Verified extraction on real sample PDF `timetablepdf/5_6185777998969446650.pdf`: extracts all 28 classes, 4 slash labs, and 12 course metadata entries.
+- `ruff check` passes cleanly on all modified files.
+
 ## 2026-09-29 — Fix timetable extraction state machine transition and version increment
 
 **Commit:** `f9ed817`

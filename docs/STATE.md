@@ -24,6 +24,7 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 - Conversation service (intent interpretation → tool dispatch → personalized natural language response generation)
 - Tool registry (automatic registration of all timetable and attendance tools)
 - Timetable service (state machine, extraction, confirmation, queries)
+- Hybrid timetable extractor (PDF vector table extraction + RapidOCR fallback for scanned/image PDFs and photos)
 - Attendance service (deterministic calculations, simulations, recovery)
 - Briefing service (deterministic facts + natural language rendering)
 - Briefing scheduler (per-student timezone/time, idempotent delivery)
@@ -37,8 +38,8 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 
 ## TESTED
 
-- 309 tests pass (1 pre-existing flaky: `test_get_next_class`, time-dependent)
-- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence (real LLM provider, aliases, tool execution), models, portal, student profile, telegram isolation, telegram message handler (media download, multi-turn context), telegram startup, timetable (including confirm_timetable tool and extraction state machine transitions), whatsapp isolation
+- 312 tests pass (1 pre-existing flaky: `test_get_next_class`, time-dependent)
+- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence (real LLM provider, aliases, tool execution), models, portal, student profile, telegram isolation, telegram message handler (media download, multi-turn context), telegram startup, timetable (including confirm_timetable tool, extraction state machine transitions, and hybrid/OCR timetable extraction), whatsapp isolation
 - Ruff: clean on all source files
 - Mypy: clean on all source files
 
@@ -105,7 +106,8 @@ None.
 
 | Commit | Description |
 |--------|-------------|
-| `HEAD` | Fix timetable extraction state machine transition to REVIEW_REQUIRED before auto-confirmation and auto-increment version |
+| `HEAD` | Implement hybrid timetable extractor with RapidOCR fallback for scanned/image PDFs and photos |
+| `f9ed817` | Fix timetable extraction state machine transition to REVIEW_REQUIRED before auto-confirmation and auto-increment version |
 | `ec4fad8` | Fill real-usage gaps: Telegram PDF/media ingestion, timetable proactive prompt, confirm_timetable tool, multi-turn conversation context |
 | `f256662` | Fix LLM tool parameter schema conversion in OpenAI-compatible provider |
 | `3d11e42` | Fix PostgreSQL native enum casting for Telegram identity and challenge models |

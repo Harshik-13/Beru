@@ -57,4 +57,5 @@ logs/
 # Baileys session/runtime data
 baileys_sessions/
 storage/
+brain/
 uv.lock

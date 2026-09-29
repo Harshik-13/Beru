@@ -915,3 +915,90 @@ class TestConfirmTimetableTool:
 
         assert result["success"] is False
         assert "No pending timetable found" in result["message"]
+
+
+class TestHybridAndOcrTimetableExtractor:
+    """Test OCR and Hybrid timetable extraction."""
+
+    @pytest.mark.asyncio
+    async def test_create_timetable_extractor_returns_hybrid(self):
+        from app.intelligence.services.timetable_extraction import (
+            HybridTimetableExtractor,
+            create_timetable_extractor,
+        )
+
+        extractor = create_timetable_extractor()
+        assert isinstance(extractor, HybridTimetableExtractor)
+
+    @pytest.mark.asyncio
+    async def test_ocr_timetable_extractor_sample_pdf(self):
+        from pathlib import Path
+
+        from app.intelligence.services.timetable_extraction import (
+            OcrTimetableExtractor,
+        )
+
+        sample_pdf = Path("timetablepdf/5_6185777998969446650.pdf")
+        if not sample_pdf.exists():
+            pytest.skip("Sample timetable PDF not present in environment")
+
+        extractor = OcrTimetableExtractor()
+        result = await extractor.extract(str(sample_pdf))
+
+        assert len(result.cells) >= 20
+        assert len(result.slash_labs) >= 2
+        assert result.metadata.academic_year == "2026-2027"
+        assert result.metadata.branch == "CSE-CYS"
+        assert result.metadata.regulation == "R25"
+        assert result.metadata.section == "A"
+        assert len(result.metadata.course_metadata) >= 5
+
+    @pytest.mark.asyncio
+    async def test_hybrid_fallback_on_empty_pdf(self):
+        from unittest.mock import AsyncMock, patch
+
+        from app.intelligence.services.timetable_extraction import (
+            ExtractedCell,
+            ExtractedMetadata,
+            ExtractionConfidence,
+            HybridTimetableExtractor,
+            TimetableExtractionResult,
+        )
+
+        hybrid = HybridTimetableExtractor()
+
+        # Mock vector extractor to return empty result
+        mock_empty = TimetableExtractionResult(
+            metadata=ExtractedMetadata(),
+            cells=(),
+            slash_labs=(),
+            warnings=(),
+            errors=(),
+        )
+        mock_ocr_result = TimetableExtractionResult(
+            metadata=ExtractedMetadata(branch="CSE-CYS"),
+            cells=(
+                ExtractedCell(
+                    day_of_week=0,
+                    start_period=1,
+                    end_period=1,
+                    content="OOPJ",
+                    confidence=ExtractionConfidence.HIGH,
+                ),
+            ),
+            slash_labs=(),
+            warnings=(),
+            errors=(),
+        )
+
+        with patch.object(
+            hybrid._pdf_extractor, "extract", new=AsyncMock(return_value=mock_empty)
+        ), patch.object(
+            hybrid._ocr_extractor,
+            "extract",
+            new=AsyncMock(return_value=mock_ocr_result),
+        ):
+            res = await hybrid.extract("dummy.pdf")
+            assert len(res.cells) == 1
+            assert res.cells[0].content == "OOPJ"
+            assert res.metadata.branch == "CSE-CYS"
