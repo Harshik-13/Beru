@@ -836,3 +836,43 @@ class TestExtractionWithRealisticData:
         assert _confidence_to_float(ExtractionConfidence.MEDIUM) == 0.5
         assert _confidence_to_float(ExtractionConfidence.LOW) == 0.1
         assert _confidence_to_float(ExtractionConfidence.AMBIGUOUS) == 0.1
+
+
+class TestConfirmTimetableTool:
+    """Test confirm_timetable tool behavior."""
+
+    @pytest.mark.asyncio
+    async def test_confirm_timetable_success(
+        self, timetable_service, mock_timetable_repo
+    ):
+        from app.intelligence.tools.timetable_tools import confirm_timetable
+
+        student_id = uuid4()
+        pending = Timetable(
+            id=uuid4(),
+            student_id=student_id,
+            status=TimetableStatus.REVIEW_REQUIRED,
+            version=1,
+        )
+        mock_timetable_repo.get_pending_for_student.return_value = pending
+        mock_timetable_repo.get_by_id_with_entries.return_value = pending
+
+        result = await confirm_timetable(timetable_service, str(student_id))
+
+        assert result["success"] is True
+        assert result["status"] == "confirmed"
+        assert "Version 1 is now active" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_confirm_timetable_none_pending(
+        self, timetable_service, mock_timetable_repo
+    ):
+        from app.intelligence.tools.timetable_tools import confirm_timetable
+
+        student_id = uuid4()
+        mock_timetable_repo.get_pending_for_student.return_value = None
+
+        result = await confirm_timetable(timetable_service, str(student_id))
+
+        assert result["success"] is False
+        assert "No pending timetable found" in result["message"]

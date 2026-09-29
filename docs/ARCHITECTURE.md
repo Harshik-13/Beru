@@ -107,7 +107,7 @@ TelegramMessageHandler._handle_message(message)
 
 - `ToolRegistry` in `app/intelligence/tools/registry.py`
 - All confirmed timetable tools and verified attendance tools auto-registered at startup via `register_builtin_tools()`
-- Tools: `get_today_schedule`, `get_tomorrow_schedule`, `get_next_class`, `get_first_class_tomorrow`, `get_timetable_status`, `needs_lab_batch`, `set_lab_batch`, `get_overall_attendance`, `get_subject_attendance`, `get_attendance_summary`, `get_subjects_below_target`, `simulate_absence`, `calculate_classes_needed`, `get_attendance_snapshot_info`, `get_subject_codes`, `sync_attendance`
+- Tools: `confirm_timetable`, `get_today_schedule`, `get_tomorrow_schedule`, `get_next_class`, `get_first_class_tomorrow`, `get_timetable_status`, `needs_lab_batch`, `set_lab_batch`, `get_overall_attendance`, `get_subject_attendance`, `get_attendance_summary`, `get_subjects_below_target`, `simulate_absence`, `calculate_classes_needed`, `get_attendance_snapshot_info`, `get_subject_codes`, `sync_attendance`
 - LLM selects tool via standard OpenAI function calling schemas; backend validates and executes deterministically
 - Tool results are strictly deterministic; LLM receives backend output to synthesize a friendly, senior-copilot response in Beru's persona
 

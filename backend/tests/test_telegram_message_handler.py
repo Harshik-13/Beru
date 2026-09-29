@@ -288,3 +288,190 @@ class TestTelegramBotAdapterEnhancements:
         post_kwargs = mock_session.post.call_args[1]
         assert post_kwargs["json"]["parse_mode"] == "HTML"
         assert post_kwargs["json"]["text"] == "Hello <b>World</b>"
+
+    @pytest.mark.asyncio
+    async def test_download_file(self, tmp_path):
+        adapter = TelegramBotAdapter()
+        adapter._config = TelegramBotConfig(bot_token="test_token")  # noqa: S106
+
+        mock_session = MagicMock()
+        get_file_resp = MagicMock()
+        get_file_resp.json = AsyncMock(
+            return_value={
+                "ok": True,
+                "result": {
+                    "file_id": "file_123",
+                    "file_path": "documents/timetable.pdf",
+                },
+            }
+        )
+        file_download_resp = MagicMock()
+        file_download_resp.status = 200
+
+        # Simulate chunk streaming
+        async def mock_read(chunk_size):
+            if not hasattr(mock_read, "called"):
+                mock_read.called = True
+                return b"%PDF-1.4 test content"
+            return b""
+
+        file_download_resp.content.read = mock_read
+
+        # Return get_file_resp first, then file_download_resp
+        mock_session.get.return_value.__aenter__.side_effect = [
+            get_file_resp,
+            file_download_resp,
+        ]
+        adapter._session = mock_session
+
+        dest_file = str(tmp_path / "downloaded.pdf")
+        saved_path = await adapter.download_file("file_123", dest_file)
+        assert saved_path == dest_file
+        with open(dest_file, "rb") as f:
+            assert f.read() == b"%PDF-1.4 test content"
+
+
+class TestTelegramMessageMediaAndContext:
+    """Test suite for media ingestion and multi-turn context."""
+
+    @pytest.mark.asyncio
+    async def test_multi_turn_conversation_context_persistence(self):
+        """Test conversation history persists across multiple turns."""
+        from app.intelligence.models.context import StudentContext
+
+        student_id = uuid4()
+        adapter = MagicMock(spec=TelegramBotAdapter)
+        adapter.send_message = AsyncMock(return_value="msg_1")
+        adapter._our_identity = None
+
+        mock_session = AsyncMock()
+
+        @asynccontextmanager
+        async def session_factory():
+            yield mock_session
+
+        mock_identity_resolver = MagicMock()
+        mock_identity_resolver.resolve = AsyncMock(
+            return_value=AuthenticatedIdentity(
+                provider="telegram_bot",
+                external_identity_id="user_linked",
+                student_id=student_id,
+                authentication_method=AuthenticationMethod.TELEGRAM_BOT,
+            )
+        )
+
+        mock_student_repo = MagicMock()
+        mock_student = Student(id=student_id, name="Harshik")
+        mock_student_repo.get_or_create = AsyncMock(return_value=mock_student)
+
+        # Mock conversation service that updates conversation history
+        async def mock_process(ctx: StudentContext, message_text: str):
+            conv = ctx.conversation.add_message("user", message_text)
+            conv = conv.add_message("assistant", f"Reply to: {message_text}")
+            return f"Reply to: {message_text}", StudentContext(
+                student_id=ctx.student_id,
+                profile=ctx.profile,
+                conversation=conv,
+            )
+
+        mock_conversation_service = MagicMock()
+        mock_conversation_service.process_message = AsyncMock(side_effect=mock_process)
+
+        handler = TelegramMessageHandler(
+            adapter=adapter,
+            session_factory=session_factory,
+            identity_resolver=mock_identity_resolver,
+            conversation_service=mock_conversation_service,
+            student_repo=mock_student_repo,
+        )
+
+        # Turn 1
+        msg1 = _make_incoming_message(
+            text="Hello Beru", user_id="user_linked", event_id="ev_1"
+        )
+        await handler._handle_message(msg1)
+
+        # Verify context now has turn 1
+        saved_conv = handler._conversation_contexts.get(student_id)
+        assert saved_conv is not None
+        assert len(saved_conv.recent_messages) == 2
+
+        # Turn 2
+        msg2 = _make_incoming_message(
+            text="What classes tomorrow?", user_id="user_linked", event_id="ev_2"
+        )
+        await handler._handle_message(msg2)
+
+        # Verify context now has turn 1 and turn 2 (4 messages total)
+        saved_conv = handler._conversation_contexts.get(student_id)
+        assert saved_conv is not None
+        assert len(saved_conv.recent_messages) == 4
+        assert saved_conv.recent_messages[0]["content"] == "Hello Beru"
+        assert saved_conv.recent_messages[2]["content"] == "What classes tomorrow?"
+
+    @pytest.mark.asyncio
+    async def test_handle_media_photo_message(self):
+        """Test photo message returns prompt requesting official PDF."""
+        from app.telegram.models import TelegramMessageAttachment
+
+        student_id = uuid4()
+        adapter = MagicMock(spec=TelegramBotAdapter)
+        adapter.send_message = AsyncMock(return_value="msg_photo")
+        adapter.download_file = AsyncMock(return_value="storage/timetables/test.jpg")
+        adapter._our_identity = None
+
+        mock_session = AsyncMock()
+
+        @asynccontextmanager
+        async def session_factory():
+            yield mock_session
+
+        mock_identity_resolver = MagicMock()
+        mock_identity_resolver.resolve = AsyncMock(
+            return_value=AuthenticatedIdentity(
+                provider="telegram_bot",
+                external_identity_id="user_linked",
+                student_id=student_id,
+                authentication_method=AuthenticationMethod.TELEGRAM_BOT,
+            )
+        )
+
+        mock_student_repo = MagicMock()
+        mock_student = Student(id=student_id, name="Harshik")
+        mock_student_repo.get_or_create = AsyncMock(return_value=mock_student)
+
+        handler = TelegramMessageHandler(
+            adapter=adapter,
+            session_factory=session_factory,
+            identity_resolver=mock_identity_resolver,
+            student_repo=mock_student_repo,
+        )
+
+        from_contact = TelegramContactIdentity(
+            provider="telegram_bot", provider_user_id="user_linked"
+        )
+        to_contact = TelegramContactIdentity(
+            provider="telegram_bot", provider_user_id="bot123"
+        )
+        attachment = TelegramMessageAttachment(
+            media_type=TelegramMessageType.PHOTO,
+            file_id="photo_file_id",
+            file_unique_id="unique_photo_1",
+        )
+        photo_msg = IncomingTelegramMessage(
+            event_id="photo:1",
+            provider="telegram_bot",
+            provider_timestamp=int(datetime.now(UTC).timestamp()),
+            from_contact=from_contact,
+            to_contact=to_contact,
+            message_type=TelegramMessageType.PHOTO,
+            chat_id="chat_1",
+            attachment=attachment,
+        )
+
+        await handler._handle_message(photo_msg)
+
+        assert adapter.send_message.called
+        call_arg = adapter.send_message.call_args[0][0]
+        assert "Received your timetable photo" in call_arg.text
+        assert "PDF document" in call_arg.text

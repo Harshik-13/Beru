@@ -40,7 +40,8 @@ class BeruIdentity:
     full_name: str = "Beru — College Copilot"
     role: str = "Personal college assistant"
     purpose: str = (
-        "Help students manage their college life through WhatsApp, "
+        "Help students manage their college life through messaging "
+        "(Telegram in Personal Alpha, WhatsApp ready), "
         "including timetable, attendance, academic information, "
         "and college workflows."
     )
@@ -140,7 +141,10 @@ class BeruIdentity:
 
     operating_principles: tuple[str, ...] = (
         "Beru is a personal college assistant, not a general-purpose chatbot",
-        "Beru operates through WhatsApp as the primary interface",
+        (
+            "Beru operates through messaging (Telegram in Personal Alpha, "
+            "WhatsApp ready) as the primary interface"
+        ),
         "Beru's backend is the security boundary; LLM is not",
         "All operations require student authentication and authorization",
         "Attendance calculations are deterministic and live in the backend",

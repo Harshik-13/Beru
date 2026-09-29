@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -307,6 +308,53 @@ class TelegramBotAdapter(TelegramProvider):
                 return str(data["result"]["message_id"])
             else:
                 raise RuntimeError(f"Telegram API error: {data}")
+
+    async def download_file(self, file_id: str, destination_path: str) -> str:
+        """Download a file from Telegram by file_id to destination_path.
+
+        Args:
+            file_id: Telegram file ID
+            destination_path: Local filesystem path where the file will be saved
+
+        Returns:
+            The saved destination path.
+        """
+        if not self._session or not self._config:
+            raise RuntimeError("Adapter not initialized")
+
+        get_file_url = (
+            f"https://api.telegram.org/bot{self._config.bot_token}/getFile"
+        )
+        async with self._session.get(get_file_url, params={"file_id": file_id}) as resp:
+            data = await resp.json()
+
+        if not data.get("ok"):
+            raise RuntimeError(f"Telegram getFile failed: {data}")
+
+        file_path = data.get("result", {}).get("file_path")
+        if not file_path:
+            raise RuntimeError("Telegram getFile returned no file_path")
+
+        download_url = (
+            f"https://api.telegram.org/file/bot{self._config.bot_token}/{file_path}"
+        )
+        os.makedirs(os.path.dirname(destination_path), exist_ok=True)
+
+        async with self._session.get(download_url) as resp:
+            if resp.status != 200:
+                raise RuntimeError(
+                    f"Telegram file download failed with status {resp.status}"
+                )
+            with open(destination_path, "wb") as f:
+                while chunk := await resp.content.read(65536):
+                    f.write(chunk)
+
+        logger.info(
+            "Downloaded Telegram file_id=%s to destination=%s",
+            file_id,
+            destination_path,
+        )
+        return destination_path
 
     async def incoming_messages(self) -> AsyncGenerator[IncomingTelegramMessage, None]:
         """Async generator yielding normalized inbound messages."""

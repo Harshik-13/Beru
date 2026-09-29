@@ -123,6 +123,30 @@ class ContextBuilder:
 
         lines.append(f"  Timezone: {profile.timezone}")
 
+        if profile.has_timetable:
+            lines.append("  Timetable Status: ACTIVE CONFIRMED TIMETABLE")
+        elif profile.timetable_status == "review_required":
+            if profile.needs_lab_batch:
+                lines.append(
+                    "  Timetable Status: PENDING REVIEW (requires lab batch). "
+                    "The timetable has slash-separated lab entries. "
+                    "Ask the student which lab batch (Batch 1 or Batch 2) "
+                    "they belong to."
+                )
+            else:
+                lines.append(
+                    "  Timetable Status: PENDING REVIEW. "
+                    "An extracted timetable is awaiting student confirmation. "
+                    "Ask the student to review and confirm their timetable."
+                )
+        else:
+            lines.append(
+                "  Timetable Status: NO TIMETABLE UPLOADED YET. "
+                "Proactively and warmly ask the student to send their timetable "
+                "PDF document or photo here on Telegram "
+                "so you can set up their daily schedule and attendance tracking."
+            )
+
         return "\n".join(lines)
 
     def _format_conversation_context(self, ctx: StudentContext) -> str:

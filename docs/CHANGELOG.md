@@ -1,8 +1,36 @@
 # CHANGELOG.md — Beru
 
-## 2026-09-29 — Fix OpenAI-compatible tool converter to support pre-formatted OpenAI tool schemas
+## 2026-09-29 — Complete real-usage gaps: Telegram media ingestion, timetable prompt, confirmation tool, and persistent conversation context
 
-**Commit:** `f256662`
+**Commit:** Pending
+
+### Why
+Following successful live Telegram conversation testing, several operational gaps remained for real-world academic assistance:
+1. When no timetable is uploaded, Beru did not proactively prompt the student to upload one.
+2. Incoming Telegram media (PDF circulars and timetable photos) was dropped by the message handler.
+3. The LLM had no tool to confirm an extracted timetable (`confirm_timetable`) when the user says "looks good, confirm it".
+4. Multi-turn conversation context was not retained across messages, preventing natural context carryover.
+
+### What changed
+- `backend/app/intelligence/models/identity.py`: Updated Beru's identity purpose and operating principles to reflect Telegram interface in Personal Alpha.
+- `backend/app/intelligence/models/context.py`: Added timetable awareness fields (`has_timetable`, `timetable_status`, `lab_batch`, `needs_lab_batch`, `academic_year`) to `StudentProfile`.
+- `backend/app/intelligence/services/context_builder.py`: Injected clear timetable presence/status and proactive instructions into `_format_student_context`.
+- `backend/app/intelligence/tools/timetable_tools.py`: Added `confirm_timetable` tool function, schema definition, and execution mapping.
+- `backend/app/intelligence/services/conversation.py`: Added `confirm_timetable` to allowlisted timetable tools.
+- `backend/app/telegram/bot_adapter.py`: Added `download_file(file_id, destination_path)` using Telegram Bot API's `getFile` endpoint.
+- `backend/app/telegram/message_handler.py`:
+  - Added support for `TelegramMessageType.DOCUMENT` and `TelegramMessageType.PHOTO`.
+  - Added `_handle_media_message` to save uploaded timetable PDFs, trigger `TimetableService.create_uploaded_timetable`, and report extraction review/confirmation status to student.
+  - Added persistent in-memory `_conversation_contexts` dictionary per student across message turns.
+  - Added safe timetable status lookup and context update handling.
+- `backend/tests/test_telegram_message_handler.py`: Added tests for `download_file`, multi-turn context persistence, and photo media handling.
+- `backend/tests/test_timetable.py`: Added tests for `confirm_timetable` tool.
+- `backend/tests/test_intelligence.py`: Updated tool count assertion for registered timetable tools.
+
+### Verification
+- 308 automated tests pass (`pytest backend/tests`).
+- `ruff check` on all modified files clean with 0 warnings.
+- Server restarted with live long-polling daemon active (`task-1366`).
 
 ### Why
 When `ConversationService` formatted tool definitions via `_tool_def_to_openai()` into OpenAI `{"type": "function", "function": {...}}` schema, `OpenAICompatibleLLMProvider._convert_tools()` expected flat dictionaries with `tool["name"]`, raising `KeyError: 'name'` and dropping incoming conversational messages.

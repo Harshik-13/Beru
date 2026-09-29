@@ -37,8 +37,8 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 
 ## TESTED
 
-- 303 tests pass (1 pre-existing flaky: `test_get_next_class`, time-dependent)
-- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence (real LLM provider, aliases, tool execution), models, portal, student profile, telegram isolation, telegram message handler, telegram startup, timetable, whatsapp isolation
+- 308 tests pass (1 pre-existing flaky: `test_get_next_class`, time-dependent)
+- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence (real LLM provider, aliases, tool execution), models, portal, student profile, telegram isolation, telegram message handler (media download, multi-turn context), telegram startup, timetable (including confirm_timetable tool), whatsapp isolation
 - Ruff: clean on all source files
 - Mypy: clean on all source files
 
@@ -49,19 +49,21 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 - Telegram /start flow creates challenge and sends onboarding message
 - Telegram message handler processes messages through conversation pipeline with request-scoped database sessions
 - Standard output logging configured via basicConfig with log_level from settings
-- LLM provider factory returns None for mock mode (default)
+- Real Groq LLM provider operational (`openai/gpt-oss-120b`) with tool calls
 - Briefing scheduler queries active students and checks briefing time
 - Database queries execute successfully (PostgreSQL)
 - TelegramLinkingChallengeRepository session factory pattern works correctly
 - Enum casting for PostgreSQL enum types works correctly
+- Multi-turn conversation context maintains chat turns in memory
+- Timetable awareness injected into LLM prompt
+- TelegramBotAdapter download_file retrieves binary documents from Telegram Bot API
 
 ## USER VERIFIED
 
-None explicitly confirmed by user.
+- User confirmed live conversational response on Telegram ("the response was good for testing, i spoke to it...").
 
 ## PARTIALLY IMPLEMENTED
 
-- **Conversation context persistence:** Current implementation creates fresh `ConversationContext` per message. Multi-turn context is not persisted across messages. The `ConversationContext` model supports message history (max 10) but it's not stored between requests.
 - **Portal sync automation:** Portal adapter and sync service exist, but automatic sync before attendance queries is not wired into the conversation flow.
 - **Error recovery in scheduler:** Failed briefing deliveries are recorded but not automatically retried.
 - **Telegram message idempotency:** In-memory `_processed_updates` set is not persistent across restarts.
@@ -72,12 +74,11 @@ None explicitly confirmed by user.
 
 ## KNOWN LIMITATIONS
 
-- **No persistent conversation context:** Each Telegram message creates a fresh `ConversationContext`. Multi-turn conversations don't carry history between messages.
+- **In-memory conversation context:** Conversation context persists in-memory per student; restart resets conversation history.
 - **In-memory idempotency:** Telegram update deduplication is in-memory only; restart loses state.
 - **No automatic portal sync:** Attendance data must be manually synced; conversation flow doesn't trigger sync.
 - **Single active Telegram identity:** Student can only have one active Telegram identity at a time.
 - **No retry mechanism for failed briefings:** Failed deliveries are logged but not retried.
-- **LLM provider defaults to mock:** `.env` has `LLM_PROVIDER=mock`; real LLM requires configuration.
 - **No webhook support:** Telegram uses long polling only; no webhook infrastructure.
 - **Briefing scheduler is in-process:** Runs as asyncio task; not a separate worker process.
 
@@ -89,11 +90,11 @@ None.
 
 | Integration | Status | Notes |
 |-------------|--------|-------|
-| Telegram | ✅ Live | Bot polling, /start linking, message handling |
-| LLM | ✅ Wired | Provider abstraction complete; mock by default |
+| Telegram | ✅ Live | Bot polling, /start linking, message handling, media ingestion |
+| LLM | ✅ Wired & Verified | Groq real provider active, natural multi-turn conversation |
 | Authentication/Linking | ✅ Working | Challenge/verify flow, audit logging |
-| Conversation Context | ⚠️ Partial | Fresh context per message; no persistence |
-| Timetable | ✅ Working | State machine, extraction, queries |
+| Conversation Context | ✅ Working | Multi-turn history persistent per student session |
+| Timetable | ✅ Working | State machine, PDF extraction, confirmation tool, batch resolution |
 | Attendance | ✅ Working | Deterministic calculations, simulations |
 | Doctus Portal | ✅ Implemented | Login, parsing, sync; not runtime-verified |
 | Briefing/Scheduler | ✅ Working | Per-student timezone, idempotent delivery |
@@ -104,6 +105,9 @@ None.
 
 | Commit | Description |
 |--------|-------------|
+| `HEAD` | Fill real-usage gaps: Telegram PDF/media ingestion, timetable proactive prompt, confirm_timetable tool, multi-turn conversation context |
+| `f256662` | Fix LLM tool parameter schema conversion in OpenAI-compatible provider |
+| `3d11e42` | Fix PostgreSQL native enum casting for Telegram identity and challenge models |
 | `008d890` | Fix real LLM provider message conversion, auto-register tools, add provider aliases, enrich conversational response |
 | `cb61881` | Decouple TelegramBotAdapter, scope session per message in TelegramMessageHandler, fix startup logging |
 | `055bb09` | Fix TelegramLinkingChallengeRepository session lifetime and enum casting |

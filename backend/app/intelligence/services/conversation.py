@@ -440,6 +440,7 @@ class ConversationService:
         try:
             # Handle timetable tools with TimetableService
             timetable_tools = {
+                "confirm_timetable",
                 "get_schedule",
                 "get_today_schedule",
                 "get_tomorrow_schedule",

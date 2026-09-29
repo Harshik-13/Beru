@@ -24,6 +24,11 @@ class StudentProfile:
     attendance_target: float | None = None
     briefing_time: str | None = None
     timezone: str = "Asia/Kolkata"
+    has_timetable: bool = False
+    timetable_status: str | None = None
+    lab_batch: str | None = None
+    needs_lab_batch: bool = False
+    academic_year: str | None = None
 
     def has_academic_info(self) -> bool:
         return all(

@@ -8,8 +8,10 @@ Beru intelligence pipeline (ConversationService) and Telegram linking flow.
 import asyncio
 import contextlib
 import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -24,6 +26,7 @@ from app.intelligence.services.context_builder import ContextBuilder
 from app.intelligence.services.conversation import ConversationService
 from app.intelligence.services.timetable_service import TimetableService
 from app.models.student import Student
+from app.models.timetable import Timetable, TimetableStatus
 from app.repositories.student import StudentRepository
 from app.repositories.telegram_identity import TelegramIdentityRepository
 from app.repositories.telegram_linking_challenge import (
@@ -80,6 +83,7 @@ class TelegramMessageHandler:
         self._running = False
         self._task: asyncio.Task[None] | None = None
         self._processed_keys: set[str] = set()
+        self._conversation_contexts: dict[UUID, ConversationContext] = {}
 
     async def start(self) -> None:
         """Start processing messages from the Telegram adapter."""
@@ -127,9 +131,17 @@ class TelegramMessageHandler:
             await self._mark_processed(idempotency_key)
             return
 
-        # 3. Skip non-text messages for now
-        if message.message_type != TelegramMessageType.TEXT or not message.text:
-            logger.debug(f"Skipping non-text message type: {message.message_type}")
+        # 3. Check message type
+        supported_types = {
+            TelegramMessageType.TEXT,
+            TelegramMessageType.DOCUMENT,
+            TelegramMessageType.PHOTO,
+        }
+        if message.message_type not in supported_types:
+            logger.debug(f"Skipping unsupported message type: {message.message_type}")
+            return
+
+        if message.message_type == TelegramMessageType.TEXT and not message.text:
             return
 
         # 4. Resolve identity and process conversation inside request-scoped session
@@ -161,20 +173,60 @@ class TelegramMessageHandler:
                 await self._mark_processed(idempotency_key)
                 return
 
-            # 5. Authenticated - load student profile
+            # 5. Authenticated - load student record
             student_id = auth_result.student_id
             student_repo = self._student_repo or StudentRepository(session)
             student = await student_repo.get_or_create(student_id)
 
-            profile = self._create_student_profile(student)
+            # 6. Handle media message (timetable PDF / photo)
+            if message.message_type in (
+                TelegramMessageType.DOCUMENT,
+                TelegramMessageType.PHOTO,
+            ):
+                await self._handle_media_message(
+                    message=message,
+                    session=session,
+                    student_id=student_id,
+                    student=student,
+                )
+                await self._mark_processed(idempotency_key)
+                return
+
+            # 7. Authenticated text message - load profile with timetable state
+            confirmed_tt = None
+            pending_tt = None
+            needs_batch = False
+            timetable_service = None
+            attendance_service = None
+            try:
+                timetable_service = TimetableService(session)
+                if self._student_repo:
+                    timetable_service.student_repo = self._student_repo
+                attendance_service = AttendanceService(session)
+                confirmed_tt = await timetable_service.get_confirmed_timetable(
+                    student_id
+                )
+                pending_tt = await timetable_service.get_pending_timetable(student_id)
+                needs_batch = await timetable_service.needs_lab_batch(student_id)
+            except Exception as e:
+                logger.debug(
+                    "Could not query timetable status for student %s: %s",
+                    student_id,
+                    e,
+                )
+
+            profile = self._create_student_profile(
+                student,
+                confirmed_tt=confirmed_tt,
+                pending_tt=pending_tt,
+                needs_batch=needs_batch,
+            )
             student_context = self._create_student_context(student_id, profile)
 
-            # 6. Execute conversation pipeline
+            # 8. Execute conversation pipeline
             if self._conversation_service is not None:
                 conversation_service = self._conversation_service
             else:
-                timetable_service = TimetableService(session)
-                attendance_service = AttendanceService(session)
                 conversation_service = ConversationService(
                     tool_registry_instance=None,
                     context_builder=ContextBuilder(),
@@ -188,9 +240,11 @@ class TelegramMessageHandler:
                 student_id,
                 message.text,
             )
-            response, _ = await conversation_service.process_message(
-                student_context, message.text
+            response, updated_context = await conversation_service.process_message(
+                student_context, message.text or ""
             )
+            if updated_context is not None and hasattr(updated_context, "conversation"):
+                self._conversation_contexts[student_id] = updated_context.conversation
             logger.info(
                 "Generated response for student_id=%s: %r...",
                 student_id,
@@ -198,7 +252,7 @@ class TelegramMessageHandler:
             )
             await self._send_response(message.chat_id, response)
 
-        # 7. Mark as processed (idempotency)
+        # 9. Mark as processed (idempotency)
         await self._mark_processed(idempotency_key)
 
     async def _handle_start_command(self, message: IncomingTelegramMessage) -> None:
@@ -253,25 +307,179 @@ class TelegramMessageHandler:
         """Mark message as processed."""
         self._processed_keys.add(idempotency_key)
 
-    def _create_student_profile(self, student: Student) -> StudentProfile:
-        """Create a student profile from Student model."""
+    def _create_student_profile(
+        self,
+        student: Student,
+        confirmed_tt: Any | None = None,
+        pending_tt: Any | None = None,
+        needs_batch: bool = False,
+    ) -> StudentProfile:
+        """Create a student profile from Student model with timetable status."""
+        has_tt = isinstance(confirmed_tt, Timetable)
+        if has_tt:
+            tt_status = "confirmed"
+        elif isinstance(pending_tt, Timetable):
+            tt_status = "review_required"
+        else:
+            tt_status = "none"
+
+        lab_batch_val = None
+        if hasattr(student, "lab_batch") and student.lab_batch:
+            lab_batch_val = getattr(student.lab_batch, "value", str(student.lab_batch))
+
         return StudentProfile(
             student_id=student.id,
             name=student.name,
             attendance_target=student.attendance_target,
             briefing_time=student.briefing_time,
             timezone=student.timezone or "Asia/Kolkata",
+            has_timetable=has_tt,
+            timetable_status=tt_status,
+            lab_batch=lab_batch_val,
+            needs_lab_batch=bool(needs_batch is True),
+            academic_year=confirmed_tt.academic_year if has_tt else None,
+            semester=confirmed_tt.semester if has_tt else None,
+            branch=confirmed_tt.branch if has_tt else None,
         )
 
     def _create_student_context(
         self, student_id: UUID, profile: StudentProfile
     ) -> StudentContext:
-        """Create a StudentContext for the conversation service."""
+        """Create or retrieve a StudentContext with persistent conversation history."""
+        existing_conv = self._conversation_contexts.get(student_id)
+        if existing_conv is None:
+            existing_conv = ConversationContext(student_id=student_id)
+
         return StudentContext(
             student_id=student_id,
             profile=profile,
-            conversation=ConversationContext(student_id=student_id),
+            conversation=existing_conv,
         )
+
+    async def _handle_media_message(
+        self,
+        message: IncomingTelegramMessage,
+        session: Any,
+        student_id: UUID,
+        student: Student,
+    ) -> None:
+        """Handle incoming document or photo attachment (e.g. timetable)."""
+        attachment = message.attachment
+        if not attachment or not attachment.file_id:
+            logger.warning("Media message received without attachment or file_id")
+            await self._send_response(
+                message.chat_id,
+                "I couldn't access that media file. Please try uploading again.",
+            )
+            return
+
+        is_photo = message.message_type == TelegramMessageType.PHOTO
+        orig_filename = attachment.file_name or (
+            "timetable.jpg" if is_photo else "timetable.pdf"
+        )
+        file_ext = (
+            os.path.splitext(orig_filename)[1].lower()
+            or (".jpg" if is_photo else ".pdf")
+        )
+
+        storage_dir = os.path.join("storage", "timetables")
+        os.makedirs(storage_dir, exist_ok=True)
+        unique_suffix = attachment.file_unique_id or str(
+            int(datetime.now(UTC).timestamp())
+        )
+        safe_name = f"{student_id}_{unique_suffix}{file_ext}"
+        dest_path = os.path.join(storage_dir, safe_name)
+
+        try:
+            await self._adapter.download_file(attachment.file_id, dest_path)
+        except Exception as e:
+            logger.exception("Failed to download media file from Telegram: %s", e)
+            await self._send_response(
+                message.chat_id,
+                "Sorry, I had trouble downloading your file from Telegram. "
+                "Please try again in a moment.",
+            )
+            return
+
+        if file_ext == ".pdf":
+            await self._send_response(
+                message.chat_id,
+                "📥 Received your timetable PDF! "
+                "Analyzing layout and extracting schedule...",
+            )
+            timetable_service = TimetableService(session)
+            try:
+                timetable = await timetable_service.create_uploaded_timetable(
+                    student_id=student_id,
+                    file_path=dest_path,
+                    original_filename=orig_filename,
+                )
+                commit_fn = getattr(session, "commit", None)
+                if callable(commit_fn):
+                    import inspect
+
+                    res = commit_fn()
+                    if inspect.isawaitable(res):
+                        await res
+
+                if timetable.status == TimetableStatus.FAILED:
+                    await self._send_response(
+                        message.chat_id,
+                        "❌ I couldn't extract timetable entries from this PDF. "
+                        "Please verify that this is an official college circular.",
+                    )
+                elif timetable.status == TimetableStatus.REVIEW_REQUIRED:
+                    needs_batch = await timetable_service.needs_lab_batch(student_id)
+                    entries = await timetable_service.entry_repo.get_for_timetable(
+                        timetable.id
+                    )
+                    sem_str = (
+                        f"Semester {timetable.semester}"
+                        if timetable.semester
+                        else "Current Semester"
+                    )
+                    branch_str = f" - {timetable.branch}" if timetable.branch else ""
+                    if needs_batch:
+                        reply = (
+                            f"📋 Timetable Extracted ({len(entries)} classes)\n"
+                            f"Program: {sem_str}{branch_str}\n\n"
+                            "⚠️ Slash-separated lab sessions detected "
+                            "(Batch 1 / Batch 2).\n"
+                            "Which lab batch are you in? "
+                            "Please reply with Batch 1 or Batch 2."
+                        )
+                    else:
+                        reply = (
+                            f"📋 Timetable Extracted ({len(entries)} classes)\n"
+                            f"Program: {sem_str}{branch_str}\n\n"
+                            "Everything looks clean! "
+                            "Please reply with Confirm timetable to activate it."
+                        )
+                    await self._send_response(message.chat_id, reply)
+                elif timetable.status == TimetableStatus.CONFIRMED:
+                    entries = await timetable_service.entry_repo.get_for_timetable(
+                        timetable.id
+                    )
+                    await self._send_response(
+                        message.chat_id,
+                        f"✅ Timetable confirmed ({len(entries)} classes)!\n"
+                        "You'll get daily morning briefings automatically.",
+                    )
+            except Exception as e:
+                logger.exception("Error processing timetable PDF: %s", e)
+                await self._send_response(
+                    message.chat_id,
+                    f"Encountered an issue processing timetable: {e!s}",
+                )
+        else:
+            await self._send_response(
+                message.chat_id,
+                "📸 Received your timetable photo!\n\n"
+                "To ensure 100% accurate extraction of multi-period lab blocks "
+                "and rooms, please send the official timetable PDF document.\n\n"
+                "If you only have this photo, you can type your schedule or send "
+                "the PDF file whenever available.",
+            )
 
     async def _send_unlinked_response(self, chat_id: str) -> None:
         """Send response to unlinked user."""

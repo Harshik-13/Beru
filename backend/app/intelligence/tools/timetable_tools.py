@@ -305,8 +305,58 @@ async def set_lab_batch(
     }
 
 
+async def confirm_timetable(
+    service: "TimetableService",
+    student_id: str,
+) -> dict:
+    """Confirm a pending timetable for the student."""
+    from uuid import UUID
+
+    student_uuid = UUID(student_id)
+    pending = await service.get_pending_timetable(student_uuid)
+    if not pending:
+        return {
+            "success": False,
+            "message": "No pending timetable found awaiting review/confirmation.",
+        }
+
+    confirmed = await service.confirm_timetable(pending.id)
+    return {
+        "success": True,
+        "timetable_id": str(confirmed.id),
+        "status": "confirmed",
+        "message": (
+            f"Timetable confirmed successfully! Version {confirmed.version} "
+            "is now active."
+        ),
+    }
+
+
 # Tool definitions for registry
 TIMETABLE_TOOL_DEFINITIONS = [
+    {
+        "name": "confirm_timetable",
+        "description": (
+            "Confirm the student's pending timetable, activating it for daily "
+            "briefings and schedule queries."
+        ),
+        "arguments_schema": {
+            "type": "object",
+            "properties": {
+                "student_id": {"type": "string", "format": "uuid"},
+            },
+            "required": ["student_id"],
+        },
+        "result_schema": {
+            "type": "object",
+            "properties": {
+                "success": {"type": "boolean"},
+                "timetable_id": {"type": "string"},
+                "status": {"type": "string"},
+                "message": {"type": "string"},
+            },
+        },
+    },
     {
         "name": "get_schedule",
         "description": (
@@ -555,6 +605,8 @@ async def execute_timetable_tool(
     **kwargs,
 ) -> dict:
     """Execute a timetable tool by name."""
+    if tool_name == "confirm_timetable":
+        return await confirm_timetable(service, student_id)
     if tool_name == "get_schedule":
         return await get_schedule(service, student_id, kwargs.get("target_date"))
     if tool_name == "get_today_schedule":
