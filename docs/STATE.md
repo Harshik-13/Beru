@@ -3,7 +3,7 @@
 ## Current State
 
 - **Last updated:** 2026-09-29
-- **Current commit:** `cb61881`
+- **Current commit:** `008d890`
 - **Current branch:** master
 
 ## Overall Project Status
@@ -104,7 +104,7 @@ None.
 
 | Commit | Description |
 |--------|-------------|
-| `pending` | Fix real LLM provider message conversion, auto-register tools, add provider aliases, enrich conversational response |
+| `008d890` | Fix real LLM provider message conversion, auto-register tools, add provider aliases, enrich conversational response |
 | `cb61881` | Decouple TelegramBotAdapter, scope session per message in TelegramMessageHandler, fix startup logging |
 | `055bb09` | Fix TelegramLinkingChallengeRepository session lifetime and enum casting |
 | `635e5ff` | Integrate real LLM provider into Telegram conversation flow |

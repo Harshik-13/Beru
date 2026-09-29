@@ -41,7 +41,7 @@
 
 | Commit | Date | Purpose | Subsystem | Verification |
 |--------|------|---------|-----------|--------------|
-| `pending` | 2026-09-29 | Fix real LLM message conversion, auto-register tools, add aliases, enrich persona | LLM, Intelligence | 303 tests pass |
+| `008d890` | 2026-09-29 | Fix real LLM message conversion, auto-register tools, add aliases, enrich persona | LLM, Intelligence | 303 tests pass |
 | `d40585f` | 2026-09-25 | Establish Beru intelligence foundation | Intelligence | Tests pass |
 | `bbeeca9` | 2026-09-25 | Establish multi-provider LLM architecture | LLM | Tests pass |
 | `23d10c9` | 2026-09-25 | Close phase 7 LLM integration | LLM | Tests pass |

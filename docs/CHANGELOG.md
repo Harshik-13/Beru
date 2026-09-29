@@ -2,7 +2,7 @@
 
 ## 2026-09-29 — Enable real LLM natural language understanding and function calling
 
-**Commit:** pending
+**Commit:** `008d890`
 
 ### Why
 1. `_mock_interpret_intent` was acting as a fallback keyword matcher when `llm_provider` was None, creating robotic keyword-triggered behavior.
