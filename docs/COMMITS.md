@@ -70,6 +70,7 @@
 
 | Commit | Date | Purpose | Subsystem | Verification |
 |--------|------|---------|-----------|--------------|
+| `5c0c5f2` | 2026-09-29 | Phase 4B: Security, boundary, failure-path & duplicate-upload hardening | Timetable, Tests | 13 tests pass |
 | `fabf9d2` | 2026-09-29 | Phase 4A: Enrich academic profile, college domain self-model, and semantic tool definitions | Timetable, Intelligence | Tests pass |
 | `054488e` | 2026-09-29 | Phase 3: Briefing time, week/weekday/metadata tools, course_metadata mapping | Timetable | Tests pass |
 | `de13925` | 2026-09-29 | Implement hybrid OCR timetable extractor for scanned/image PDFs | Timetable | 312 tests pass |

@@ -1,5 +1,42 @@
 # CHANGELOG.md — Beru
 
+## 2026-09-29 — Phase 4B: Security, boundary, failure-path & duplicate-upload hardening
+
+**Commit:** `5c0c5f2`
+
+### Why
+To ensure Beru functions as a safe, robust, multi-tenant system, timetable operations must rigorously enforce security boundaries (cross-student access rejection, confirmed state modification guards), review state quarantine, exact-target correction semantics, failure retry capability, and duplicate-upload versioning/archival semantics.
+
+### What changed
+- `backend/tests/test_timetable_onboarding_e2e.py`:
+  - Implemented `InMemoryTimetableDataStore` repository doubles providing in-memory state tracking for pure async pytest execution without database or SQLite dependencies.
+  - Added `TestSecurityAndIsolation`:
+    - Cross-student entry update rejected when authenticated as another student.
+    - Cross-student timetable confirmation rejected.
+    - Confirmed timetable modification strictly rejected with `TimetableStateError`.
+  - Added `TestReviewStateQuarantine`:
+    - `REVIEW_REQUIRED` timetables never leak into date, today, or week schedule queries.
+  - Added `TestInputAndFormatValidation`:
+    - Invalid lab batch strings rejected (`ValueError`).
+    - Invalid weekday index rejected (must be 0-5).
+    - Invalid briefing time formats rejected (must be 24h HH:MM).
+  - Added `TestCorrectionSemanticsAndAmbiguity`:
+    - Modifying an entry targets strictly by `entry_id`, leaving identical subjects on other periods/days untouched.
+    - Cells with missing room or faculty preserve `None` rather than fabricating hallucinated data.
+  - Added `TestFailurePathsAndRetry`:
+    - Corrupt/unparsable upload transitions to `FAILED`, and retry from `FAILED` state succeeds cleanly.
+    - Malformed timetables cannot be confirmed.
+  - Added `TestDuplicateUploadAndVersioning`:
+    - Uploading `v2` creates version 2 in `REVIEW_REQUIRED` while preserving active confirmed `v1`.
+    - Confirmation of `v2` archives `v1`, ensuring exactly one active confirmed timetable.
+    - Idempotent `set_lab_batch` and `confirm_timetable` execution without duplicate entries or errors.
+
+### Verification
+- 13/13 tests in `test_timetable_onboarding_e2e.py` passed cleanly.
+- `ruff check` passed with zero errors.
+
+---
+
 ## 2026-09-29 — Phase 4A: Enrich academic profile, college domain self-model, and semantic tool definitions
 
 **Commit:** `fabf9d2`

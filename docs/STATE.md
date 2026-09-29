@@ -3,7 +3,7 @@
 ## Current State
 
 - **Last updated:** 2026-09-29
-- **Current commit:** `fabf9d2`
+- **Current commit:** `5c0c5f2`
 - **Current branch:** master
 
 ## Overall Project Status
@@ -112,7 +112,8 @@ None.
 
 | Commit | Description |
 |--------|-------------|
-| `HEAD` | Phase 4A: Enrich academic profile, college domain self-model, and semantic tool definitions |
+| `HEAD` | Phase 4B: Security, boundary, failure-path & duplicate-upload hardening |
+| `fabf9d2` | Phase 4A: Enrich academic profile, college domain self-model, and semantic tool definitions |
 | `054488e` | Phase 3: Briefing time, week/weekday/metadata tools, course_metadata mapping |
 | `f765640` | Fix Groq 400 by stripping student_id from LLM tool schemas and add graceful error fallback |
 | `de13925` | Implement hybrid timetable extractor with RapidOCR fallback for scanned/image PDFs and photos |
@@ -137,4 +138,4 @@ None.
 
 ## CURRENT NEXT ACTION
 
-Phase 4A complete. Ready to proceed with Phase 4B: Security, Boundary, Failure-Path & Duplicate-Upload Hardening in backend/tests/test_timetable_onboarding_e2e.py.
+Phase 4B complete. Ready to proceed with Phase 4C: Full End-to-End Pipeline, Briefing Integration & Paraphrase Simulation in backend/tests/test_timetable_onboarding_e2e.py.
