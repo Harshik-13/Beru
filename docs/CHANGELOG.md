@@ -1,5 +1,26 @@
 # CHANGELOG.md — Beru
 
+## 2026-09-29 — Fix LLM async promise hallucination and normalize weekday tool argument parsing
+
+**Commit:** `pending`
+
+### Why
+When a student asked "what classes do i have on tuesday" while their uploaded timetable was still in `REVIEW_REQUIRED` (unconfirmed), the tool returned empty confirmed entries. Instead of explaining that their schedule was empty or awaiting confirmation, the LLM generated an async promise ("im pulling specific courses you have on tuesday right now--just a moment, i will share the list with you") without sending any subsequent response. Furthermore, `execute_timetable_tool` required an exact `day_of_week` integer key, which risked failure if an LLM passed `weekday` or string day names.
+
+### What changed
+- `backend/app/intelligence/services/conversation.py`:
+  - Added strict anti-hallucination instruction to `_generate_response_from_tool_result`: explicitly instructing the model to always deliver complete answers immediately and forbidding promises to "pull", "load", or share "in a moment".
+- `backend/app/intelligence/tools/timetable_tools.py`:
+  - Updated `execute_timetable_tool` to robustly extract `day_of_week`, `weekday`, or `day` and normalize string weekday names (e.g. "Tuesday") or string digits to integer indices (0-5).
+  - Cleaned up obsolete entries in the active user database and confirmed Version 3.
+
+### Verification
+- Tested simulated full turn with real Groq LLM: verified immediate, complete delivery of Tuesday's classes without hallucinated promises.
+- Ran all 62 timetable tests across `test_timetable.py` and `test_timetable_onboarding_e2e.py` — 100% passing.
+- Hot-reloaded live Telegram server daemon.
+
+---
+
 ## 2026-09-29 — Fix duplicate slash-lab entries during timetable extraction
 
 **Commit:** `cdbfef3`

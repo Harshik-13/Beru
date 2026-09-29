@@ -539,7 +539,7 @@ async def get_week_schedule(
 
     entries = await service.entry_repo.get_for_timetable(timetable.id)
 
-    week: dict[str, list] = {}
+    week = {}
     for day_idx, day_name in enumerate(DAY_NAMES):
         day_entries = [e for e in entries if e.day_of_week == day_idx]
         week[day_name] = [
@@ -1190,8 +1190,26 @@ async def execute_timetable_tool(
     if tool_name == "get_week_schedule":
         return await get_week_schedule(service, student_id)
     if tool_name == "get_schedule_for_weekday":
+        dow = kwargs.get("day_of_week")
+        if dow is None:
+            dow = kwargs.get("weekday") or kwargs.get("day")
+        if isinstance(dow, str):
+            dow_clean = dow.strip().lower()
+            for idx, name in enumerate(DAY_NAMES):
+                if name.lower().startswith(dow_clean) or dow_clean.startswith(
+                    name.lower()[:3]
+                ):
+                    dow = idx
+                    break
+            else:
+                try:
+                    dow = int(dow_clean)
+                except ValueError:
+                    dow = 0
+        elif dow is None:
+            dow = 0
         return await get_schedule_for_weekday(
-            service, student_id, kwargs["day_of_week"]
+            service, student_id, dow
         )
     if tool_name == "get_timetable_metadata":
         return await get_timetable_metadata(service, student_id)

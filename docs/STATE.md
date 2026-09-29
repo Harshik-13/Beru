@@ -3,7 +3,7 @@
 ## Current State
 
 - **Last updated:** 2026-09-29
-- **Current commit:** `cdbfef3`
+- **Current commit:** `pending`
 - **Current branch:** master
 
 ## Overall Project Status
@@ -21,14 +21,14 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 - Telegram message handler (idempotency, request-scoped DB sessions, identity resolution, request-scoped domain services, conversation pipeline)
 - LLM provider abstraction (OpenAI-compatible + Mock; aliases for OpenRouter, Groq, OpenAI, NVIDIA, Ollama)
 - Real LLM provider integration (wired in lifespan, dict/object message support, safe tool argument parsing)
-- Conversation service (intent interpretation → tool dispatch → personalized natural language response generation)
+- Conversation service (intent interpretation → tool dispatch → personalized natural language response generation, strict anti-async-hallucination instruction)
 - Tool registry (automatic registration of all timetable and attendance tools)
 - Timetable service (state machine, extraction, confirmation, queries; no auto-confirm — explicit student confirmation required)
 - Hybrid timetable extractor (PDF vector table extraction + RapidOCR fallback for scanned/image PDFs and photos)
 - Timetable review surface (weekday grid formatter, photo upload through hybrid extractor, pending timetable with entries fetch)
 - Timetable correction tools (get_extracted_timetable, update/add/delete entry — REVIEW_REQUIRED only)
 - Briefing time setup tool (set_briefing_time)
-- Week/weekday/metadata query tools (get_week_schedule, get_schedule_for_weekday, get_timetable_metadata)
+- Week/weekday/metadata query tools (get_week_schedule, get_schedule_for_weekday with resilient weekday argument normalization, get_timetable_metadata)
 - Course metadata mapped onto entries during extraction (course_code, faculty)
 - Attendance service (deterministic calculations, simulations, recovery)
 - Briefing service (deterministic facts + natural language rendering)
