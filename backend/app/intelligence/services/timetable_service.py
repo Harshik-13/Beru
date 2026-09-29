@@ -61,11 +61,15 @@ class TimetableService:
         """
         Create a new timetable in UPLOADED state and start extraction.
         """
+        # Check latest version for student
+        latest = await self.timetable_repo.get_latest_for_student(student_id)
+        version = (latest.version + 1) if latest else 1
+
         # Create timetable record
         timetable = Timetable(
             student_id=student_id,
             status=TimetableStatus.UPLOADED,
-            version=1,
+            version=version,
         )
         await self.timetable_repo.create(timetable)
 
@@ -142,18 +146,17 @@ class TimetableService:
         if entries:
             await self.entry_repo.create_batch(entries)
 
-        # Determine next state
-        if result.requires_review:
-            timetable.status = TimetableStatus.REVIEW_REQUIRED
-        else:
+        # Determine next state: Always transition to REVIEW_REQUIRED first
+        timetable.status = TimetableStatus.REVIEW_REQUIRED
+        await self.session.flush()
+
+        if not result.requires_review:
             # No ambiguity - can auto-confirm if we have lab_batch or no slash labs
             student = await self.student_repo.get_by_id(timetable.student_id)
             if student and (
                 student.lab_batch != LabBatch.UNKNOWN or not result.slash_labs
             ):
                 return await self.confirm_timetable(timetable_id)
-            else:
-                timetable.status = TimetableStatus.REVIEW_REQUIRED
 
         await self.session.flush()
         return timetable

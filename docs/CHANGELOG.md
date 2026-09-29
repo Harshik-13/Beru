@@ -1,5 +1,26 @@
 # CHANGELOG.md — Beru
 
+## 2026-09-29 — Fix timetable extraction state machine transition and version increment
+
+**Commit:** `HEAD`
+
+### Why
+1. When uploading a timetable PDF on Telegram, `TimetableService.extract_timetable()` previously called `self.confirm_timetable(timetable_id)` directly if the extraction contained no review triggers. However, `timetable.status` in the session was still `TimetableStatus.EXTRACTING`. Because `confirm_timetable()` strictly enforces `if timetable.status != TimetableStatus.REVIEW_REQUIRED: raise TimetableStateError(...)`, extraction aborted with:
+   `"can only confirm timetable in review_required status, got timetablestatus.EXTRACTING"`.
+2. `create_uploaded_timetable()` hardcoded `version=1`, which risked unique constraint collisions if a student uploaded updated timetables.
+
+### What changed
+- `backend/app/intelligence/services/timetable_service.py`:
+  - In `create_uploaded_timetable()`: Check latest version for student and set `version = (latest.version + 1) if latest else 1`.
+  - In `extract_timetable()`: Set `timetable.status = TimetableStatus.REVIEW_REQUIRED` and `await self.session.flush()` immediately after cells and slash labs are persisted. This strictly satisfies the state transition before checking whether auto-confirmation can proceed.
+- `.gitignore`: Added `storage/` to prevent runtime uploaded files from being tracked.
+- `backend/tests/test_timetable.py`: Added `test_extract_timetable_auto_confirm_transitions_properly` to verify the state transition from `EXTRACTING` through `REVIEW_REQUIRED` to `CONFIRMED`.
+
+### Verification
+- Added test passes; all 309 automated tests pass (`pytest backend/tests`).
+- `ruff check` on modified files clean with 0 warnings.
+- Server running live with long-polling daemon.
+
 ## 2026-09-29 — Complete real-usage gaps: Telegram media ingestion, timetable prompt, confirmation tool, and persistent conversation context
 
 **Commit:** `ec4fad8`

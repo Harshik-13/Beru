@@ -37,8 +37,8 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 
 ## TESTED
 
-- 308 tests pass (1 pre-existing flaky: `test_get_next_class`, time-dependent)
-- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence (real LLM provider, aliases, tool execution), models, portal, student profile, telegram isolation, telegram message handler (media download, multi-turn context), telegram startup, timetable (including confirm_timetable tool), whatsapp isolation
+- 309 tests pass (1 pre-existing flaky: `test_get_next_class`, time-dependent)
+- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence (real LLM provider, aliases, tool execution), models, portal, student profile, telegram isolation, telegram message handler (media download, multi-turn context), telegram startup, timetable (including confirm_timetable tool and extraction state machine transitions), whatsapp isolation
 - Ruff: clean on all source files
 - Mypy: clean on all source files
 
@@ -105,7 +105,8 @@ None.
 
 | Commit | Description |
 |--------|-------------|
-| `HEAD` | Fill real-usage gaps: Telegram PDF/media ingestion, timetable proactive prompt, confirm_timetable tool, multi-turn conversation context |
+| `HEAD` | Fix timetable extraction state machine transition to REVIEW_REQUIRED before auto-confirmation and auto-increment version |
+| `ec4fad8` | Fill real-usage gaps: Telegram PDF/media ingestion, timetable proactive prompt, confirm_timetable tool, multi-turn conversation context |
 | `f256662` | Fix LLM tool parameter schema conversion in OpenAI-compatible provider |
 | `3d11e42` | Fix PostgreSQL native enum casting for Telegram identity and challenge models |
 | `008d890` | Fix real LLM provider message conversion, auto-register tools, add provider aliases, enrich conversational response |
@@ -125,4 +126,4 @@ None.
 
 ## CURRENT NEXT ACTION
 
-Implement persistent conversation context for Telegram multi-turn conversations. Current implementation creates fresh `ConversationContext` per message; need to persist context across messages scoped to authenticated student.
+Test live timetable PDF upload and extraction on Telegram with the updated server.

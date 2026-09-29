@@ -33,6 +33,7 @@ from app.intelligence.services.timetable_service import (
     TimetableService,
     TimetableStateError,
 )
+from app.models.student import Student
 from app.models.timetable import (
     ActivityType,
     LabBatch,
@@ -158,6 +159,44 @@ class TestTimetableStateTransitions:
         )
         timetable.status = TimetableStatus.REVIEW_REQUIRED
         assert timetable.status == TimetableStatus.REVIEW_REQUIRED
+
+    @pytest.mark.asyncio
+    async def test_extract_timetable_auto_confirm_transitions_properly(
+        self, timetable_service, mock_timetable_repo, mock_student_repo
+    ):
+        """extract_timetable must set REVIEW_REQUIRED before auto-confirming."""
+        student_id = uuid4()
+        timetable = Timetable(
+            id=uuid4(),
+            student_id=student_id,
+            status=TimetableStatus.UPLOADED,
+            version=1,
+        )
+        mock_timetable_repo.get_by_id.return_value = timetable
+        mock_timetable_repo.get_by_id_with_entries.return_value = timetable
+        mock_student = Student(id=student_id, lab_batch=LabBatch.BATCH_1)
+        mock_student_repo.get_by_id.return_value = mock_student
+
+        mock_result = TimetableExtractionResult(
+            metadata=ExtractedMetadata(),
+            cells=(),
+            slash_labs=(),
+            warnings=(),
+            errors=(),
+        )
+
+        with pytest.MonkeyPatch.context() as mp:
+            mock_extractor = MagicMock()
+            mock_extractor.extract = AsyncMock(return_value=mock_result)
+            mp.setattr(
+                "app.intelligence.services.timetable_service.create_timetable_extractor",
+                lambda: mock_extractor,
+            )
+            confirmed = await timetable_service.extract_timetable(
+                timetable.id, "dummy.pdf"
+            )
+
+        assert confirmed.status == TimetableStatus.CONFIRMED
 
     @pytest.mark.asyncio
     async def test_review_required_to_confirmed(
