@@ -889,9 +889,11 @@ TIMETABLE_TOOL_DEFINITIONS = [
     {
         "name": "get_extracted_timetable",
         "description": (
-            "Get the pending extracted timetable for review. "
-            "Returns the weekday grid and all entries with IDs. "
-            "This is a review tool, not a confirmed schedule query."
+            "Get the pending extracted timetable awaiting student review "
+            "(REVIEW_REQUIRED status). Returns the weekday grid and all "
+            "entries with entry IDs. Use when the student asks to review or "
+            "see what was parsed from their uploaded document before confirming, "
+            "or needs entry IDs to make corrections."
         ),
         "arguments_schema": {
             "type": "object",
@@ -1050,7 +1052,12 @@ TIMETABLE_TOOL_DEFINITIONS = [
     {
         "name": "get_week_schedule",
         "description": (
-            "Get the full week schedule (Mon-Sat) from the confirmed timetable."
+            "Get the full weekly schedule (Monday to Saturday) from the "
+            "confirmed timetable, including all classes, laboratory practical "
+            "sessions, timings, rooms, and faculty. Use when the student asks "
+            "for their entire week schedule, a list of labs or practicals, "
+            "overview of subjects/courses, or who teaches which subject across "
+            "the week."
         ),
         "arguments_schema": {
             "type": "object",
@@ -1071,8 +1078,11 @@ TIMETABLE_TOOL_DEFINITIONS = [
     {
         "name": "get_schedule_for_weekday",
         "description": (
-            "Get schedule for a specific weekday from the confirmed timetable. "
-            "day_of_week: 0=Monday, 1=Tuesday, ..., 5=Saturday."
+            "Get schedule for a specific weekday from the confirmed timetable "
+            "(day_of_week: 0=Monday, 1=Tuesday, 2=Wednesday, 3=Thursday, "
+            "4=Friday, 5=Saturday). Use when the student asks what classes or "
+            "labs they have on a particular day (e.g. 'What do I have on "
+            "Wednesday?', 'Am I free on Friday afternoon?')."
         ),
         "arguments_schema": {
             "type": "object",
@@ -1110,9 +1120,10 @@ TIMETABLE_TOOL_DEFINITIONS = [
     {
         "name": "get_timetable_metadata",
         "description": (
-            "Get timetable metadata (section, branch, programme, regulation, "
-            "academic_year, semester, year, default_classroom) from the "
-            "confirmed timetable."
+            "Get academic and timetable metadata from the confirmed timetable, "
+            "such as section, department/branch, programme, academic year, "
+            "semester, regulation, and default classroom. Use when the student "
+            "asks about their section, department, branch, or classroom location."
         ),
         "arguments_schema": {
             "type": "object",

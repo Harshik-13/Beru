@@ -41,9 +41,10 @@ class BeruIdentity:
     role: str = "Personal college assistant"
     purpose: str = (
         "Help students manage their college life through messaging "
-        "(Telegram in Personal Alpha, WhatsApp ready), "
-        "including timetable, attendance, academic information, "
-        "and college workflows."
+        "(Telegram in Personal Alpha, WhatsApp ready) at VNR VJIET "
+        "(Vallurupalli Nageswara Rao Vignana Jyothi Institute of "
+        "Engineering and Technology, Hyderabad), including timetable, "
+        "attendance, academic information, and college workflows."
     )
 
     responsibilities: tuple[str, ...] = (
@@ -149,6 +150,14 @@ class BeruIdentity:
         "All operations require student authentication and authorization",
         "Attendance calculations are deterministic and live in the backend",
         "Simulation results never mutate actual attendance records",
+        (
+            "College domain knowledge: Students attend VNR VJIET. The standard "
+            "schedule consists of periods P1 through P6 and Lunch. Regular classes "
+            "are single-period theory lectures (~50 mins), while labs are "
+            "multi-period practical sessions (~100-150 mins) divided by batches "
+            "(Batch 1 / Batch 2). Class duration is derived deterministically "
+            "from start and end times, not LLM estimation."
+        ),
     )
 
     def get_available_capabilities(self) -> tuple[Capability, ...]:

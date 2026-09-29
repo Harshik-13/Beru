@@ -341,6 +341,12 @@ class TelegramMessageHandler:
         if hasattr(student, "lab_batch") and student.lab_batch:
             lab_batch_val = getattr(student.lab_batch, "value", str(student.lab_batch))
 
+        active_tt = (
+            confirmed_tt
+            if isinstance(confirmed_tt, Timetable)
+            else (pending_tt if isinstance(pending_tt, Timetable) else None)
+        )
+
         return StudentProfile(
             student_id=student.id,
             name=student.name,
@@ -351,9 +357,12 @@ class TelegramMessageHandler:
             timetable_status=tt_status,
             lab_batch=lab_batch_val,
             needs_lab_batch=bool(needs_batch is True),
-            academic_year=confirmed_tt.academic_year if has_tt else None,
-            semester=confirmed_tt.semester if has_tt else None,
-            branch=confirmed_tt.branch if has_tt else None,
+            academic_year=active_tt.academic_year if active_tt else None,
+            year=active_tt.year if active_tt else None,
+            course=active_tt.programme if active_tt else None,
+            branch=active_tt.branch if active_tt else None,
+            semester=active_tt.semester if active_tt else None,
+            section=active_tt.section if active_tt else None,
         )
 
     def _create_student_context(

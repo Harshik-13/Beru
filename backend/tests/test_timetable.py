@@ -851,7 +851,9 @@ class TestScheduleQueries:
         )
         mock_entry_repo.get_for_timetable.return_value = [entry1, entry2]
 
-        next_class = await timetable_service.get_next_class(uuid4())
+        next_class = await timetable_service.get_next_class(
+            uuid4(), from_time=time(10, 0)
+        )
         assert next_class is not None
         assert next_class.activity_name == "Late Class"
 
