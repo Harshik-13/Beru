@@ -1,5 +1,42 @@
 # CHANGELOG.md — Beru
 
+## 2026-09-29 — Phase 4C: Full End-to-End Pipeline, Briefing Scheduler Integration & Natural-Language Paraphrase Simulation
+
+**Commit:** Pending
+
+### Why
+To complete Beru's timetable domain capabilities, we must verify the complete end-to-end user lifecycle from pre-onboarding greeting through fixture PDF extraction, weekday review formatting, conversational lab batch resolution, single-entry correction, explicit confirmation, custom briefing time persistence, and deterministic morning briefing delivery. Furthermore, we must guarantee that tool dispatch functions through pure natural-language semantic understanding across varied phrasings rather than brittle keyword menus.
+
+### What changed
+- `backend/tests/test_timetable_onboarding_e2e.py`:
+  - Added `FakeAttendanceService` and `SemanticRouterMockLLM` test doubles.
+  - Implemented `TestFullTimetableOnboardingE2E`:
+    - Step 1: Pre-onboarding greeting verified with unconfigured profile (`has_timetable=False`, `timetable_status="none"`).
+    - Step 2: Extraction from fixture PDF `5_6185777998969446650.pdf` via `create_uploaded_timetable()` yields `REVIEW_REQUIRED`, version 1, academic metadata (`2026-2027`, `CSE-CYS`, `R25`, `Section A`), extracted entries, and detected slash labs.
+    - Step 3: Weekday grid formatted with `format_week_schedule()`, verifying days (Monday–Saturday) and header elements.
+    - Step 4: `set_lab_batch("batch_1")` resolves ambiguous slash labs, preserving `REVIEW_REQUIRED` quarantine.
+    - Step 5: `update_timetable_entry()` applies targeted correction to room and activity name.
+    - Step 6: `confirm_timetable()` marks status `CONFIRMED` and registers active timetable.
+    - Step 7: `set_briefing_time("08:00")` sets custom briefing time on student model.
+    - Step 8: `BriefingService.generate_briefing()` generates morning briefing with Monday's classes derived from the confirmed timetable.
+    - Step 9: Query tools (`get_week_schedule`, `get_schedule_for_weekday`, `get_timetable_metadata`, `get_today_schedule`) return verified confirmed data.
+    - Step 10: Activity classification distinguishes multi-period `ActivityType.LAB` from `ActivityType.ACADEMIC` lectures.
+    - Step 11: Derived duration arithmetic verifies all class durations are positive, labs >= 90 mins, and lectures <= 70 mins.
+    - Step 12: Placement and circular metadata (`section="A"`, `branch="CSE-CYS"`, `regulation="R25"`, `academic_year="2026-2027"`) match circular specifications.
+  - Implemented `TestNaturalLanguageParaphraseRouting`:
+    - Tested multiple distinct paraphrases for weekday schedules ("What do I have on Wednesday?", "Could you check my Wednesday classes please?", "Show me what's scheduled for Wednesday", "Am I free on Wednesday afternoon?") routing to `get_schedule_for_weekday`.
+    - Tested full-week queries routing to `get_week_schedule`.
+    - Tested metadata inquiries routing to `get_timetable_metadata`.
+    - Tested conversational batch assignment ("Put me in lab batch 1") and confirmation ("The schedule looks completely accurate, confirm it").
+    - Verified strict conversation quarantine: unconfirmed `REVIEW_REQUIRED` timetables never leak classes into query tool results.
+
+### Verification
+- 19/19 tests in `test_timetable_onboarding_e2e.py` passed cleanly.
+- 331/331 tests across the entire backend suite passed cleanly.
+- `ruff check` passed with zero errors.
+
+---
+
 ## 2026-09-29 — Phase 4B: Security, boundary, failure-path & duplicate-upload hardening
 
 **Commit:** `5c0c5f2`

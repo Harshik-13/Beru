@@ -43,8 +43,9 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 
 ## TESTED
 
-- 283 tests pass (1 pre-existing flaky: `test_get_next_class`, time-dependent)
-- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence (real LLM provider, aliases, tool execution), models, portal, student profile, telegram isolation, telegram message handler (media download, photo through extractor, multi-turn context), telegram startup, timetable (including confirm_timetable tool, extraction state machine transitions, no auto-confirm, and hybrid/OCR timetable extraction), whatsapp isolation
+- 331 tests pass (3 warnings related to unawaited test mocks in telegram message handler)
+- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence (real LLM provider, aliases, tool execution), models, portal, student profile, telegram isolation, telegram message handler (media download, photo through extractor, multi-turn context), telegram startup, timetable (including confirm_timetable tool, extraction state machine transitions, no auto-confirm, and hybrid/OCR timetable extraction), whatsapp isolation, timetable end-to-end onboarding suite (`test_timetable_onboarding_e2e.py`: 19 tests covering cross-student isolation, boundary guards, duplicate upload versioning/archival, 12-step PDF onboarding pipeline, BriefingService generation, derived duration arithmetic, lab/theory classification, and natural language paraphrase routing without keyword menus)
+- Flaky bug fixed: `test_get_next_class` clock flakiness resolved with deterministic `from_time`
 - Ruff: clean on all source files
 - Mypy: clean on all source files
 
@@ -77,7 +78,7 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 
 ## KNOWN BUGS
 
-- `test_get_next_class` is flaky (time-dependent; fails when test runs near end of day)
+None.
 
 ## KNOWN LIMITATIONS
 
