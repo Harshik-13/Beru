@@ -2,7 +2,7 @@
 
 ## 2026-09-29 — Implement hybrid timetable extractor with RapidOCR fallback for scanned/image PDFs and photos
 
-**Commit:** `HEAD`
+**Commit:** `de13925`
 
 ### Why
 Students frequently upload scanned timetables, image-based PDFs, or camera photos. The existing `PdfTimetableExtractor` relied exclusively on `pdfplumber` vector line and char extraction, which yielded 0 tables and 0 classes on scanned/image-based documents.
