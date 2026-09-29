@@ -1,5 +1,25 @@
 # CHANGELOG.md — Beru
 
+## 2026-09-29 — Fix PostgreSQL native enum mapping for Telegram linking challenge status
+
+**Commit:** Pending
+
+### Why
+When a Telegram user sent `/start` to the bot, the backend raised `asyncpg.exceptions.DatatypeMismatchError: column "status" is of type telegram_linking_challenge_status but expression is of type character varying` during `INSERT INTO telegram_linking_challenges`. This rolled back the transaction and prevented sending the onboarding token.
+
+### What changed
+- `backend/app/models/telegram_linking_challenge.py`: Updated `status` column from `String(20)` to `SQLEnum(TelegramLinkingChallengeStatus, name="telegram_linking_challenge_status", values_callable=lambda obj: [e.value for e in obj])`.
+- `backend/app/repositories/telegram_linking_challenge.py`: Replaced manual postgres enum casting and string literals with `TelegramLinkingChallengeStatus` enum values in `create`, `get_pending_by_telegram_user_id`, `mark_used`, and `mark_expired`.
+
+### Why this approach
+Aligns SQLAlchemy's ORM model type directly with the PostgreSQL native enum type `telegram_linking_challenge_status` created by migration `c1d2e3f4a5b6_add_telegram_linking_challenge.py`, allowing asyncpg to bind enum values natively without type mismatch errors.
+
+### Verification
+- Python test verifying SQL insertion into `telegram_linking_challenges` with PostgreSQL native enum passed.
+- `ruff check` on modified files passed with 0 errors.
+- 303 automated tests pass.
+- Server restarted with live polling and ready to process `/start`.
+
 ## 2026-09-29 — Enable real LLM natural language understanding and function calling
 
 **Commit:** `008d890`

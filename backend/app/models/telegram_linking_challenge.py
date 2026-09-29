@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -32,9 +33,13 @@ class TelegramLinkingChallenge(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         DateTime(timezone=True), nullable=False
     )
 
-    status: Mapped[str] = mapped_column(
-        String(20),
-        default="pending",
+    status: Mapped[TelegramLinkingChallengeStatus] = mapped_column(
+        SQLEnum(
+            TelegramLinkingChallengeStatus,
+            name="telegram_linking_challenge_status",
+            values_callable=lambda obj: [e.value for e in obj],
+        ),
+        default=TelegramLinkingChallengeStatus.PENDING,
         nullable=False,
     )
 
