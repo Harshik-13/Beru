@@ -69,6 +69,12 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 ## USER VERIFIED
 
 - User confirmed live conversational response on Telegram ("the response was good for testing, i spoke to it...").
+- **Timetable Onboarding & Natural Language Querying Live on Telegram (Phase 4):**
+  - Live PDF timetable upload and hybrid extraction of 28 schedule entries with classroom, branch, semester metadata.
+  - Formatted weekday review grid presentation via Telegram.
+  - Conversational lab batch resolution ("Batch 1" cleanly disambiguating slash labs, e.g., CF LAB selected over CN LAB).
+  - Explicit timetable confirmation and version activation.
+  - Natural-language schedule queries ("What classes do I have on Tuesday?") executing deterministic backend tool dispatch and delivering accurate Tuesday classes with timing and course names directly to the student on Telegram, confirmed by the user ("working absolutely fine!!").
 
 ## PARTIALLY IMPLEMENTED
 
@@ -98,11 +104,11 @@ None.
 
 | Integration | Status | Notes |
 |-------------|--------|-------|
-| Telegram | ✅ Live | Bot polling, /start linking, message handling, media ingestion |
-| LLM | ✅ Wired & Verified | Groq real provider active, natural multi-turn conversation |
+| Telegram | ✅ Live & User Verified | Bot polling, /start linking, message handling, media ingestion, schedule queries |
+| LLM | ✅ Wired & Verified | Groq real provider active, natural multi-turn conversation, anti-hallucination guard |
 | Authentication/Linking | ✅ Working | Challenge/verify flow, audit logging |
 | Conversation Context | ✅ Working | Multi-turn history persistent per student session |
-| Timetable | ✅ Working | State machine, PDF/photo extraction, review grid, confirmation tool, batch resolution |
+| Timetable | ✅ Live & User Verified | State machine, PDF/photo extraction, review grid, confirmation tool, batch resolution, queries |
 | Attendance | ✅ Working | Deterministic calculations, simulations |
 | Doctus Portal | ✅ Implemented | Login, parsing, sync; not runtime-verified |
 | Briefing/Scheduler | ✅ Working | Per-student timezone, idempotent delivery |
@@ -113,30 +119,18 @@ None.
 
 | Commit | Description |
 |--------|-------------|
-| `HEAD` | Phase 4B: Security, boundary, failure-path & duplicate-upload hardening |
+| `fdaea24` | Fix LLM async promise hallucination and normalize weekday tool arguments |
+| `cdbfef3` | Fix duplicate slash-lab entries during timetable extraction |
+| `77f9271` | Fix MultipleResultsFound on timetable queries with limit(1) |
+| `c2833d0` | Phase 4C: Full E2E pipeline, briefing scheduler integration & natural-language paraphrase simulation |
+| `5c0c5f2` | Phase 4B: Security, boundary, failure-path & duplicate-upload hardening |
 | `fabf9d2` | Phase 4A: Enrich academic profile, college domain self-model, and semantic tool definitions |
 | `054488e` | Phase 3: Briefing time, week/weekday/metadata tools, course_metadata mapping |
 | `f765640` | Fix Groq 400 by stripping student_id from LLM tool schemas and add graceful error fallback |
 | `de13925` | Implement hybrid timetable extractor with RapidOCR fallback for scanned/image PDFs and photos |
 | `f9ed817` | Fix timetable extraction state machine transition to REVIEW_REQUIRED before auto-confirmation and auto-increment version |
 | `ec4fad8` | Fill real-usage gaps: Telegram PDF/media ingestion, timetable proactive prompt, confirm_timetable tool, multi-turn conversation context |
-| `f256662` | Fix LLM tool parameter schema conversion in OpenAI-compatible provider |
-| `3d11e42` | Fix PostgreSQL native enum casting for Telegram identity and challenge models |
-| `008d890` | Fix real LLM provider message conversion, auto-register tools, add provider aliases, enrich conversational response |
-| `cb61881` | Decouple TelegramBotAdapter, scope session per message in TelegramMessageHandler, fix startup logging |
-| `055bb09` | Fix TelegramLinkingChallengeRepository session lifetime and enum casting |
-| `635e5ff` | Integrate real LLM provider into Telegram conversation flow |
-| `2570ae7` | Add BERU_STATE.md and update AGENTS.md with state-file workflow |
-| `2c16e7d` | Align TelegramLinkingChallengeStatus enum with DB enum values |
-| `00471e1` | Fix Telegram startup wiring — logging, error handling, enum fix |
-| `7db7f76` | Repair alembic migration chain duplicate revision and enum creation |
-| `512dadd` | Persist student profile name and attendance target |
-| `b34f58a` | Add daily morning briefing scheduler with Telegram delivery |
-| `5609fb9` | Implement Telegram conversation integration |
-| `13eed5b` | Implement Telegram identity linking |
-| `7fb5675` | Add Telegram Bot API startup verification and error handling |
-| `c32e1ee` | Add Telegram Bot API adapter foundation |
 
 ## CURRENT NEXT ACTION
 
-Phase 4B complete. Ready to proceed with Phase 4C: Full End-to-End Pipeline, Briefing Integration & Paraphrase Simulation in backend/tests/test_timetable_onboarding_e2e.py.
+Phase 4 (Timetable Domain Complete) fully USER_VERIFIED. Timetable extraction, confirmation, lab batch resolution, correction tools, and natural-language schedule queries are operating live and verified on Telegram. Ready to proceed to next planned domain (Doctus portal live verification / attendance workflows).
