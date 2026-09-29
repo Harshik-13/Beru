@@ -108,6 +108,7 @@ TelegramMessageHandler._handle_message(message)
 - `ToolRegistry` in `app/intelligence/tools/registry.py`
 - All confirmed timetable tools and verified attendance tools auto-registered at startup via `register_builtin_tools()`
 - Tools: `confirm_timetable`, `get_today_schedule`, `get_tomorrow_schedule`, `get_next_class`, `get_first_class_tomorrow`, `get_timetable_status`, `needs_lab_batch`, `set_lab_batch`, `get_overall_attendance`, `get_subject_attendance`, `get_attendance_summary`, `get_subjects_below_target`, `simulate_absence`, `calculate_classes_needed`, `get_attendance_snapshot_info`, `get_subject_codes`, `sync_attendance`
+- Phase 1: Photo uploads routed through existing `HybridTimetableExtractor` (no new OCR/vision provider)
 - LLM selects tool via standard OpenAI function calling schemas; backend validates and executes deterministically
 - Tool results are strictly deterministic; LLM receives backend output to synthesize a friendly, senior-copilot response in Beru's persona
 
@@ -115,9 +116,12 @@ TelegramMessageHandler._handle_message(message)
 
 **TimetableService** (`app/intelligence/services/timetable_service.py`):
 - State machine: `UPLOADED → EXTRACTING → REVIEW_REQUIRED → CONFIRMED → ARCHIVED` (FAILED possible)
+- No auto-confirm — explicit student confirmation required
 - Only CONFIRMED timetables used for queries
 - Slash labs resolved at confirm time based on student's `lab_batch`
 - Deterministic schedule queries: today, tomorrow, next class, first class
+- `format_week_schedule()` — deterministic weekday grid formatter for review display
+- `get_pending_timetable_with_entries()` — fetches pending timetable + entries for review
 
 **AttendanceService** (`app/intelligence/services/attendance_service.py`):
 - Deterministic calculations: percentage, simulation, recovery

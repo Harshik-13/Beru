@@ -1,5 +1,31 @@
 # CHANGELOG.md — Beru
 
+## 2026-09-29 — Phase 1: Timetable review surface — disable auto-confirm, show weekday grid, photo upload
+
+**Commit:** pending
+
+### Why
+After uploading a timetable, Beru was auto-confirming without showing the parsed classes to the student. The user had no way to verify or correct extracted data before it became active. Additionally, photo uploads were rejected with a "send PDF instead" dead-end instead of using the existing hybrid extractor.
+
+### What changed
+- `backend/app/intelligence/services/timetable_service.py`:
+  - Removed auto-confirm logic from `extract_timetable()` — extraction now always returns `REVIEW_REQUIRED` on success
+  - Added `format_week_schedule()` helper — deterministic weekday grid formatter (Mon-Sat, times, activity, type, room)
+  - Added `get_pending_timetable_with_entries()` — fetches pending timetable + entries for review display
+- `backend/app/telegram/message_handler.py`:
+  - `_handle_media_message()`: After extraction, sends the full weekday grid for student review
+  - Photos (`.jpg`, `.jpeg`, `.png`) now routed through the same `create_uploaded_timetable` → `HybridTimetableExtractor` path as PDFs
+  - Removed "send PDF instead" dead-end for photos
+
+### Verification
+- Code changes complete; tests pending Phase 4 E2E
+
+### Security
+- No security boundaries weakened; explicit student confirmation now required before timetable becomes active
+- Photo uploads use existing hybrid extractor; no new OCR/vision provider introduced
+
+---
+
 ## 2026-09-29 — Fix Groq 400 by stripping student_id from LLM tool schemas and add graceful error fallback
 
 **Commit:** `f765640`

@@ -415,11 +415,12 @@ class TelegramMessageHandler:
             )
             return
 
-        if file_ext == ".pdf":
+        if file_ext in (".pdf", ".jpg", ".jpeg", ".png"):
+            file_type = "PDF" if file_ext == ".pdf" else "image"
             await self._send_response(
                 message.chat_id,
-                "📥 Received your timetable PDF! "
-                "Analyzing layout and extracting schedule...",
+                f"Received your timetable {file_type}! "
+                "Analyzing and extracting schedule...",
             )
             timetable_service = TimetableService(session)
             try:
@@ -439,48 +440,42 @@ class TelegramMessageHandler:
                 if timetable.status == TimetableStatus.FAILED:
                     await self._send_response(
                         message.chat_id,
-                        "❌ I couldn't extract timetable entries from this PDF. "
-                        "Please verify that this is an official college circular.",
+                        "I couldn't extract timetable entries from this file. "
+                        "Please verify that this is an official college timetable.",
                     )
                 elif timetable.status == TimetableStatus.REVIEW_REQUIRED:
                     needs_batch = await timetable_service.needs_lab_batch(student_id)
-                    entries = await timetable_service.entry_repo.get_for_timetable(
-                        timetable.id
+                    _, entries = (
+                        await timetable_service.get_pending_timetable_with_entries(
+                            student_id
+                        )
                     )
-                    sem_str = (
-                        f"Semester {timetable.semester}"
-                        if timetable.semester
-                        else "Current Semester"
+                    from app.intelligence.services.timetable_service import (
+                        format_week_schedule,
                     )
-                    branch_str = f" - {timetable.branch}" if timetable.branch else ""
+
+                    week_grid = format_week_schedule(entries, timetable)
+                    entry_count = len(entries)
+
                     if needs_batch:
                         reply = (
-                            f"📋 Timetable Extracted ({len(entries)} classes)\n"
-                            f"Program: {sem_str}{branch_str}\n\n"
-                            "⚠️ Slash-separated lab sessions detected "
+                            f"Timetable extracted ({entry_count} entries)\n\n"
+                            f"{week_grid}\n"
+                            "Slash-separated lab sessions detected "
                             "(Batch 1 / Batch 2).\n"
                             "Which lab batch are you in? "
                             "Please reply with Batch 1 or Batch 2."
                         )
                     else:
                         reply = (
-                            f"📋 Timetable Extracted ({len(entries)} classes)\n"
-                            f"Program: {sem_str}{branch_str}\n\n"
-                            "Everything looks clean! "
-                            "Please reply with Confirm timetable to activate it."
+                            f"Timetable extracted ({entry_count} entries)\n\n"
+                            f"{week_grid}\n"
+                            "Please review. Reply with Confirm if this looks right, "
+                            "or tell me what to change."
                         )
                     await self._send_response(message.chat_id, reply)
-                elif timetable.status == TimetableStatus.CONFIRMED:
-                    entries = await timetable_service.entry_repo.get_for_timetable(
-                        timetable.id
-                    )
-                    await self._send_response(
-                        message.chat_id,
-                        f"✅ Timetable confirmed ({len(entries)} classes)!\n"
-                        "You'll get daily morning briefings automatically.",
-                    )
             except Exception as e:
-                logger.exception("Error processing timetable PDF: %s", e)
+                logger.exception("Error processing timetable: %s", e)
                 await self._send_response(
                     message.chat_id,
                     f"Encountered an issue processing timetable: {e!s}",
@@ -488,11 +483,8 @@ class TelegramMessageHandler:
         else:
             await self._send_response(
                 message.chat_id,
-                "📸 Received your timetable photo!\n\n"
-                "To ensure 100% accurate extraction of multi-period lab blocks "
-                "and rooms, please send the official timetable PDF document.\n\n"
-                "If you only have this photo, you can type your schedule or send "
-                "the PDF file whenever available.",
+                "I couldn't process that file. "
+                "Please send your timetable as a PDF document or a clear photo.",
             )
 
     async def _send_unlinked_response(self, chat_id: str) -> None:

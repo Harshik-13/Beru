@@ -54,8 +54,10 @@
 
 1. **State machine** — UPLOADED → EXTRACTING → REVIEW_REQUIRED → CONFIRMED → ARCHIVED (FAILED possible).
 2. **Only CONFIRMED timetables used** — For attendance projections and schedule queries.
-3. **Slash lab resolution** — Based on student's lab_batch; resolved at confirm time.
-4. **Saturday has classes; Sunday has no classes.**
+3. **No auto-confirm** — Every successful extract stays in REVIEW_REQUIRED until the student explicitly confirms. Auto-confirm is disabled.
+4. **Review surface** — After extraction, the parsed timetable is shown as a weekday grid (Mon-Sat) for student verification before confirmation.
+5. **Slash lab resolution** — Based on student's lab_batch; resolved at confirm time. `set_lab_batch` may resolve names for review display; confirm re-applies the same rule.
+6. **Saturday has classes; Sunday has no classes.**
 
 ### LLM/Provider Requirements
 

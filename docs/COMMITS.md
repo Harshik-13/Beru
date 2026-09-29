@@ -1,5 +1,11 @@
 # COMMITS.md — Beru
 
+## Timetable
+
+| Commit | Date | Purpose | Subsystem | Verification |
+|--------|------|---------|-----------|--------------|
+| `cd2b3d4` | 2026-09-29 | Phase 1: disable auto-confirm, show weekday grid, photo upload | Timetable, Telegram | Code complete |
+
 ## Infrastructure
 
 | Commit | Date | Purpose | Subsystem | Verification |

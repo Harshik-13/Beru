@@ -23,8 +23,9 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 - Real LLM provider integration (wired in lifespan, dict/object message support, safe tool argument parsing)
 - Conversation service (intent interpretation → tool dispatch → personalized natural language response generation)
 - Tool registry (automatic registration of all timetable and attendance tools)
-- Timetable service (state machine, extraction, confirmation, queries)
+- Timetable service (state machine, extraction, confirmation, queries; no auto-confirm — explicit student confirmation required)
 - Hybrid timetable extractor (PDF vector table extraction + RapidOCR fallback for scanned/image PDFs and photos)
+- Timetable review surface (weekday grid formatter, photo upload through hybrid extractor, pending timetable with entries fetch)
 - Attendance service (deterministic calculations, simulations, recovery)
 - Briefing service (deterministic facts + natural language rendering)
 - Briefing scheduler (per-student timezone/time, idempotent delivery)
@@ -96,7 +97,7 @@ None.
 | LLM | ✅ Wired & Verified | Groq real provider active, natural multi-turn conversation |
 | Authentication/Linking | ✅ Working | Challenge/verify flow, audit logging |
 | Conversation Context | ✅ Working | Multi-turn history persistent per student session |
-| Timetable | ✅ Working | State machine, PDF extraction, confirmation tool, batch resolution |
+| Timetable | ✅ Working | State machine, PDF/photo extraction, review grid, confirmation tool, batch resolution |
 | Attendance | ✅ Working | Deterministic calculations, simulations |
 | Doctus Portal | ✅ Implemented | Login, parsing, sync; not runtime-verified |
 | Briefing/Scheduler | ✅ Working | Per-student timezone, idempotent delivery |

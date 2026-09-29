@@ -39,6 +39,57 @@ class TimetableStateError(Exception):
     pass
 
 
+DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+
+
+def format_week_schedule(
+    entries: list["TimetableEntry"],
+    metadata: "Timetable | None" = None,
+) -> str:
+    """Format timetable entries as a weekday grid for review display."""
+    lines: list[str] = []
+
+    if metadata:
+        header_parts: list[str] = []
+        if metadata.programme:
+            header_parts.append(metadata.programme)
+        if metadata.branch:
+            header_parts.append(metadata.branch)
+        if metadata.semester:
+            header_parts.append(f"Semester {metadata.semester}")
+        if metadata.section:
+            header_parts.append(f"Section {metadata.section}")
+        if metadata.academic_year:
+            header_parts.append(metadata.academic_year)
+        if header_parts:
+            lines.append(" | ".join(header_parts))
+        if metadata.default_classroom:
+            lines.append(f"Default Classroom: {metadata.default_classroom}")
+        lines.append("")
+
+    for day_idx, day_name in enumerate(DAY_NAMES):
+        day_entries = [e for e in entries if e.day_of_week == day_idx]
+        if not day_entries:
+            continue
+
+        lines.append(f"<b>{day_name}</b>")
+        for entry in sorted(day_entries, key=lambda e: e.start_time):
+            time_str = f"{entry.start_time.strftime('%H:%M')}-{entry.end_time.strftime('%H:%M')}"
+            type_label = ""
+            if entry.activity_type == ActivityType.LAB:
+                type_label = " [LAB]"
+            elif entry.activity_type == ActivityType.BREAK:
+                type_label = " [BREAK]"
+            elif entry.activity_type == ActivityType.ACTIVITY:
+                type_label = " [ACTIVITY]"
+
+            room_str = f" @ {entry.room}" if entry.room else ""
+            lines.append(f"  {time_str} {entry.activity_name}{type_label}{room_str}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 class TimetableService:
     """
     Service for managing timetable lifecycle.
@@ -146,24 +197,23 @@ class TimetableService:
         if entries:
             await self.entry_repo.create_batch(entries)
 
-        # Determine next state: Always transition to REVIEW_REQUIRED first
         timetable.status = TimetableStatus.REVIEW_REQUIRED
-        await self.session.flush()
-
-        if not result.requires_review:
-            # No ambiguity - can auto-confirm if we have lab_batch or no slash labs
-            student = await self.student_repo.get_by_id(timetable.student_id)
-            if student and (
-                student.lab_batch != LabBatch.UNKNOWN or not result.slash_labs
-            ):
-                return await self.confirm_timetable(timetable_id)
-
         await self.session.flush()
         return timetable
 
     async def get_pending_timetable(self, student_id: UUID) -> Timetable | None:
         """Get the timetable pending review for a student."""
         return await self.timetable_repo.get_pending_for_student(student_id)
+
+    async def get_pending_timetable_with_entries(
+        self, student_id: UUID
+    ) -> tuple[Timetable | None, list[TimetableEntry]]:
+        """Get the pending timetable with its entries for review display."""
+        pending = await self.timetable_repo.get_pending_for_student(student_id)
+        if not pending:
+            return None, []
+        entries = await self.entry_repo.get_for_timetable(pending.id)
+        return pending, entries
 
     async def confirm_timetable(self, timetable_id: UUID) -> Timetable:
         """
