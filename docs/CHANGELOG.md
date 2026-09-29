@@ -2,7 +2,7 @@
 
 ## 2026-09-29 — Fix PostgreSQL native enum mapping for Telegram linking challenge status
 
-**Commit:** Pending
+**Commit:** `3d11e42`
 
 ### Why
 When a Telegram user sent `/start` to the bot, the backend raised `asyncpg.exceptions.DatatypeMismatchError: column "status" is of type telegram_linking_challenge_status but expression is of type character varying` during `INSERT INTO telegram_linking_challenges`. This rolled back the transaction and prevented sending the onboarding token.
