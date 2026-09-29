@@ -691,7 +691,7 @@ TIMETABLE_TOOL_DEFINITIONS = [
     },
     {
         "name": "get_today_schedule",
-        "description": "Get today's class schedule.",
+        "description": "Get the student's scheduled classes for today.",
         "arguments_schema": {
             "type": "object",
             "properties": {
@@ -724,7 +724,10 @@ TIMETABLE_TOOL_DEFINITIONS = [
     },
     {
         "name": "get_tomorrow_schedule",
-        "description": "Get tomorrow's class schedule.",
+        "description": (
+            "Get the student's scheduled classes for tomorrow. "
+            "Use this whenever the student asks about classes or schedule tomorrow."
+        ),
         "arguments_schema": {
             "type": "object",
             "properties": {
@@ -818,8 +821,8 @@ TIMETABLE_TOOL_DEFINITIONS = [
     {
         "name": "get_timetable_status",
         "description": (
-            "Get the current status of the student's timetable "
-            "(confirmed, pending, none)."
+            "Check whether the student's timetable is confirmed, pending, or none. "
+            "Do NOT use this tool for questions about scheduled classes or timings."
         ),
         "arguments_schema": {
             "type": "object",

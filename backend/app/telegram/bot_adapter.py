@@ -119,9 +119,10 @@ class TelegramBotAdapter(TelegramProvider):
         )
         self._config = bot_config
 
-        # Create aiohttp session
+        # Create aiohttp session with connector cleanup
         timeout = aiohttp.ClientTimeout(total=60)
-        self._session = aiohttp.ClientSession(timeout=timeout)
+        connector = aiohttp.TCPConnector(enable_cleanup_closed=True)
+        self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
 
         # Get bot info
         await self._get_me()
@@ -306,27 +307,38 @@ class TelegramBotAdapter(TelegramProvider):
             short_text,
         )
 
-        async with self._session.post(url, json=payload) as resp:
-            data = await resp.json()
-            if data.get("ok"):
-                return str(data["result"]["message_id"])
+        for attempt in range(2):
+            try:
+                async with self._session.post(url, json=payload) as resp:
+                    data = await resp.json()
+                    if data.get("ok"):
+                        return str(data["result"]["message_id"])
 
-            # Fallback retry without HTML formatting if Telegram entity parsing failed
-            is_parse_err = "parse" in str(data.get("description", "")).lower()
-            if resp.status == 400 and is_parse_err:
-                logger.warning(
-                    "Telegram HTML parsing failed (%s), retrying as plain text...",
-                    data.get("description"),
-                )
-                plain_payload = dict(payload)
-                plain_payload.pop("parse_mode", None)
-                plain_payload["text"] = strip_html_tags(formatted_text)
-                async with self._session.post(url, json=plain_payload) as retry_resp:
-                    retry_data = await retry_resp.json()
-                    if retry_data.get("ok"):
-                        return str(retry_data["result"]["message_id"])
+                    # Fallback retry without HTML formatting
+                    # if Telegram entity parsing failed
+                    is_parse_err = "parse" in str(data.get("description", "")).lower()
+                    if resp.status == 400 and is_parse_err:
+                        logger.warning(
+                            "Telegram HTML parse failed (%s), retrying plain text...",
+                            data.get("description"),
+                        )
+                        plain_payload = dict(payload)
+                        plain_payload.pop("parse_mode", None)
+                        plain_payload["text"] = strip_html_tags(formatted_text)
+                        async with self._session.post(
+                            url, json=plain_payload
+                        ) as retry_resp:
+                            retry_data = await retry_resp.json()
+                            if retry_data.get("ok"):
+                                return str(retry_data["result"]["message_id"])
 
-            raise RuntimeError(f"Telegram API error: {data}")
+                    raise RuntimeError(f"Telegram API error: {data}")
+            except aiohttp.ClientError as e:
+                if attempt == 0:
+                    logger.warning("Network error on Telegram send (%s), retry...", e)
+                    await asyncio.sleep(0.5)
+                    continue
+                raise
 
     async def download_file(self, file_id: str, destination_path: str) -> str:
         """Download a file from Telegram by file_id to destination_path.
