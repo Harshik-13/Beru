@@ -2,7 +2,7 @@
 
 ## 2026-09-29 — Phase 4C: Full End-to-End Pipeline, Briefing Scheduler Integration & Natural-Language Paraphrase Simulation
 
-**Commit:** Pending
+**Commit:** `c2833d0`
 
 ### Why
 To complete Beru's timetable domain capabilities, we must verify the complete end-to-end user lifecycle from pre-onboarding greeting through fixture PDF extraction, weekday review formatting, conversational lab batch resolution, single-entry correction, explicit confirmation, custom briefing time persistence, and deterministic morning briefing delivery. Furthermore, we must guarantee that tool dispatch functions through pure natural-language semantic understanding across varied phrasings rather than brittle keyword menus.

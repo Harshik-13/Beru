@@ -4,9 +4,12 @@
 
 | Commit | Date | Purpose | Subsystem | Verification |
 |--------|------|---------|-----------|--------------|
-| `e7622bb` | 2026-09-29 | Phase 1: disable auto-confirm, show weekday grid, photo upload | Timetable, Telegram | Code complete |
-| `c448e4e` | 2026-09-29 | Phase 2: correction tools, review context, explicit confirm | Timetable, Intelligence | Code complete |
+| `c2833d0` | 2026-09-29 | Phase 4C: full E2E pipeline, briefing scheduler integration & natural-language paraphrase simulation | Timetable, Intelligence, Briefing | 331 tests pass |
+| `5c0c5f2` | 2026-09-29 | Phase 4B: security, boundary, failure-path & duplicate-upload hardening | Timetable, Security | 325 tests pass |
+| `fabf9d2` | 2026-09-29 | Phase 4A: enrich academic profile, college domain self-model, and semantic tool definitions | Timetable, Telegram, Identity | 312 tests pass |
 | `054488e` | 2026-09-29 | Phase 3: briefing time, week/weekday/metadata tools, course_metadata mapping | Timetable, Intelligence | Code complete |
+| `c448e4e` | 2026-09-29 | Phase 2: correction tools, review context, explicit confirm | Timetable, Intelligence | Code complete |
+| `e7622bb` | 2026-09-29 | Phase 1: disable auto-confirm, show weekday grid, photo upload | Timetable, Telegram | Code complete |
 
 ## Infrastructure
 
