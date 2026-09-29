@@ -2,7 +2,7 @@
 
 ## 2026-09-29 — Decouple TelegramBotAdapter, scope DB session per message, and fix startup logging
 
-**Commit:** pending
+**Commit:** `cb61881`
 
 ### Why
 1. TelegramBotAdapter was coupled to database repositories (`TelegramLinkingChallengeRepository`), intercepting `/start` and violating provider abstraction.

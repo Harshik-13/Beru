@@ -3,7 +3,7 @@
 ## Current State
 
 - **Last updated:** 2026-09-29
-- **Current commit:** `3806fd4`
+- **Current commit:** `cb61881`
 - **Current branch:** master
 
 ## Overall Project Status
@@ -104,7 +104,7 @@ None.
 
 | Commit | Description |
 |--------|-------------|
-| `pending` | Decouple TelegramBotAdapter, scope session per message in TelegramMessageHandler, fix startup logging |
+| `cb61881` | Decouple TelegramBotAdapter, scope session per message in TelegramMessageHandler, fix startup logging |
 | `055bb09` | Fix TelegramLinkingChallengeRepository session lifetime and enum casting |
 | `635e5ff` | Integrate real LLM provider into Telegram conversation flow |
 | `2570ae7` | Add BERU_STATE.md and update AGENTS.md with state-file workflow |
