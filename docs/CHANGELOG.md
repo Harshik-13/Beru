@@ -2,7 +2,7 @@
 
 ## 2026-09-29 — Fix PostgreSQL native enums for identity and briefing models, safe session commits, and link user profile
 
-**Commit:** Pending
+**Commit:** `13fe634`
 
 ### Why
 1. `telegram_provider`, `telegram_identity_status`, and `briefing_delivery_status` were missing `values_callable`, causing SQLAlchemy to send uppercase Enum member names (`"TELEGRAM_BOT"`, `"ACTIVE"`, `"PENDING"`) into PostgreSQL native enums that expect lowercase values (`"telegram_bot"`, `"active"`, `"pending"`).
