@@ -61,6 +61,7 @@
 
 | Commit | Date | Purpose | Subsystem | Verification |
 |--------|------|---------|-----------|--------------|
+| `f9ed817` | 2026-09-29 | Fix state machine transition before auto-confirmation | Timetable | 309 tests pass |
 | `8f2daf9` | 2026-09-26 | Implement timetable pipeline | Timetable | Tests pass |
 | `2a240a6` | 2026-09-26 | Verify timetable confirmation and extraction | Timetable | Tests pass |
 

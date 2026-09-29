@@ -2,7 +2,7 @@
 
 ## 2026-09-29 — Fix timetable extraction state machine transition and version increment
 
-**Commit:** `HEAD`
+**Commit:** `f9ed817`
 
 ### Why
 1. When uploading a timetable PDF on Telegram, `TimetableService.extract_timetable()` previously called `self.confirm_timetable(timetable_id)` directly if the extraction contained no review triggers. However, `timetable.status` in the session was still `TimetableStatus.EXTRACTING`. Because `confirm_timetable()` strictly enforces `if timetable.status != TimetableStatus.REVIEW_REQUIRED: raise TimetableStateError(...)`, extraction aborted with:
