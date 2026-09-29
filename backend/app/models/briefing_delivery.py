@@ -60,7 +60,7 @@ class BriefingDelivery(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         SQLEnum(
             BriefingDeliveryStatus,
             name="briefing_delivery_status",
-            native_enum=False,
+            values_callable=lambda obj: [e.value for e in obj],
         ),
         default=BriefingDeliveryStatus.PENDING,
         nullable=False,

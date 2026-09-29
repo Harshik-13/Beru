@@ -215,6 +215,7 @@ class BriefingScheduler:
 
                 # Mark as sent
                 await delivery_repo.mark_sent(delivery.id, datetime.now(UTC))
+                await self._commit_session(session)
                 logger.info("Delivered briefing to student %s", student.id)
 
             except Exception as e:
@@ -226,6 +227,17 @@ class BriefingScheduler:
                 await delivery_repo.mark_failed(
                     delivery.id, str(e), delivery.attempt_count + 1
                 )
+                await self._commit_session(session)
+
+    async def _commit_session(self, session: Any) -> None:
+        """Safely commit session if commit method exists and is awaitable."""
+        import inspect
+
+        commit_fn = getattr(session, "commit", None)
+        if callable(commit_fn):
+            res = commit_fn()
+            if inspect.isawaitable(res):
+                await res
 
 
 def create_briefing_scheduler(

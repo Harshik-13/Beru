@@ -1,5 +1,29 @@
 # CHANGELOG.md — Beru
 
+## 2026-09-29 — Fix PostgreSQL native enums for identity and briefing models, safe session commits, and link user profile
+
+**Commit:** Pending
+
+### Why
+1. `telegram_provider`, `telegram_identity_status`, and `briefing_delivery_status` were missing `values_callable`, causing SQLAlchemy to send uppercase Enum member names (`"TELEGRAM_BOT"`, `"ACTIVE"`, `"PENDING"`) into PostgreSQL native enums that expect lowercase values (`"telegram_bot"`, `"active"`, `"pending"`).
+2. `TelegramIdentity`, `TelegramLinkingChallenge`, and `BriefingDelivery` were not exported from `app.models.__init__.py`, causing relationship resolution failures in SQLAlchemy mappers.
+3. `BriefingScheduler` and `TelegramMessageHandler` were missing explicit session commits on state transitions, causing transaction rollbacks upon context exit.
+
+### What changed
+- `backend/app/models/telegram_identity.py`: Added `values_callable=lambda obj: [e.value for e in obj]` to `provider` and `status` columns.
+- `backend/app/models/briefing_delivery.py`: Added `values_callable` to `status` column.
+- `backend/app/models/__init__.py`: Exported all Telegram and briefing delivery models and enums.
+- `backend/app/main.py`: Pre-imported `app.models` to guarantee all mapper relationships initialize on startup.
+- `backend/app/workers/briefing_scheduler.py`: Added `_commit_session` with coroutine/mock awaitable inspection and committed successful/failed deliveries.
+- `backend/app/telegram/message_handler.py`: Added safe commit on linking challenge creation.
+- Linked user Telegram ID `8543204958` to active student profile `Harsh`.
+
+### Verification
+- Morning briefing generated and delivered live to Telegram chat `8543204958`.
+- Delivery status marked `sent` and committed to PostgreSQL database.
+- 303 automated tests pass.
+- `ruff check` on modified files clean.
+
 ## 2026-09-29 — Fix PostgreSQL native enum mapping for Telegram linking challenge status
 
 **Commit:** `3d11e42`

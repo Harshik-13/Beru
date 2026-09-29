@@ -33,7 +33,11 @@ class TelegramIdentity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
 
     provider: Mapped[TelegramProvider] = mapped_column(
-        SQLEnum(TelegramProvider, name="telegram_provider", native_enum=False),
+        SQLEnum(
+            TelegramProvider,
+            name="telegram_provider",
+            values_callable=lambda obj: [e.value for e in obj],
+        ),
         default=TelegramProvider.TELEGRAM_BOT,
         nullable=False,
     )
@@ -49,7 +53,7 @@ class TelegramIdentity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         SQLEnum(
             TelegramIdentityStatus,
             name="telegram_identity_status",
-            native_enum=False,
+            values_callable=lambda obj: [e.value for e in obj],
         ),
         default=TelegramIdentityStatus.ACTIVE,
         nullable=False,

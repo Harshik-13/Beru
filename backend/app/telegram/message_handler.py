@@ -225,6 +225,13 @@ class TelegramMessageHandler:
             challenge_token = await linking_service.create_linking_challenge(
                 telegram_user_id=telegram_user_id
             )
+            commit_fn = getattr(session, "commit", None)
+            if callable(commit_fn):
+                import inspect
+
+                res = commit_fn()
+                if inspect.isawaitable(res):
+                    await res
 
         onboarding_text = (
             f"Welcome to Beru! 🎓\n\n"
