@@ -1,5 +1,24 @@
 # CHANGELOG.md — Beru
 
+## 2026-09-29 — Fix duplicate slash-lab entries during timetable extraction
+
+**Commit:** Pending
+
+### Why
+During live runtime verification of PDF timetable extraction on Telegram, slash-separated lab entries (such as `11:00-13:00 CN LAB / CF LAB`) appeared twice in the review grid (yielding 32 entries instead of 28). Both `PdfTimetableExtractor` and `OcrTimetableExtractor` already construct `ExtractedCell` instances for slash labs in `result.cells`. The secondary loop in `TimetableService.extract_timetable()` iterating over `result.slash_labs` was re-inserting them, duplicating every slash-lab session.
+
+### What changed
+- `backend/app/intelligence/services/timetable_service.py`:
+  - Removed redundant `result.slash_labs` entry creation loop in `extract_timetable()`.
+  - Cleaned up unused `ExtractedCell` import.
+
+### Verification
+- Extracted PDF fixture `5_6185777998969446650.pdf` and verified all 28 entries match one-to-one with the physical schedule.
+- Ran all 62 timetable tests — passed cleanly.
+- Reloaded live server with the fix.
+
+---
+
 ## 2026-09-29 — Fix MultipleResultsFound on timetable queries for students with multiple versions
 
 **Commit:** `77f9271`

@@ -18,7 +18,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.intelligence.services.timetable_extraction import (
-    ExtractedCell,
     cell_to_entry,
     create_timetable_extractor,
 )
@@ -188,20 +187,6 @@ class TimetableService:
                 entry.course_code = content_key
                 if course_info.get("faculty"):
                     entry.faculty = course_info["faculty"]
-            entries.append(entry)
-
-        # Handle slash labs - store as ambiguous for now, will resolve on confirmation
-        for slash_lab in result.slash_labs:
-            entry = cell_to_entry(
-                ExtractedCell(
-                    day_of_week=slash_lab.day_of_week,
-                    start_period=slash_lab.start_period,
-                    end_period=slash_lab.end_period,
-                    content=slash_lab.raw_content,
-                    confidence=slash_lab.confidence,
-                )
-            )
-            entry.timetable_id = timetable_id
             entries.append(entry)
 
         if entries:
