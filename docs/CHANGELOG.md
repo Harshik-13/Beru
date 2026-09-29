@@ -1,5 +1,39 @@
 # CHANGELOG.md — Beru
 
+## 2026-09-29 — Fix Groq 400 by stripping student_id from LLM tool schemas and add graceful error fallback
+
+**Commit:** `f765640`
+
+### Why
+When the user replied "Batch 1" to the lab batch prompt, Beru routed it through the Groq LLM for intent interpretation. The LLM attempted to call the `needs_lab_batch` tool and generated `"placeholder-uuid"` for the `student_id` parameter (since it has no way to know the real UUID). Groq's server-side tool validation rejected this with HTTP 400, causing an unhandled exception that silently dropped the message without sending any reply.
+
+This violated the non-negotiable security rule: "Resource ownership is derived from authenticated identity. Never trust client-supplied owner IDs."
+
+### What changed
+- `backend/app/intelligence/services/conversation.py`:
+  - `_tool_def_to_openai()`: Deep-copies tool schema and strips `student_id` from `properties` and `required` before sending to LLM. Backend injects student_id from authenticated context during tool execution.
+  - Tool description text in system prompt no longer dumps raw argument schemas.
+  - `_generate_response_from_tool_result()`: Improved prompt to acknowledge actions and explicitly instruct LLM not to ask for student IDs.
+- `backend/app/telegram/message_handler.py`:
+  - Wrapped conversation pipeline in try/except with graceful fallback message to user on any error.
+  - Added `session.commit()` after successful conversation turn to persist tool side-effects.
+- `backend/app/intelligence/tools/timetable_tools.py`:
+  - `set_lab_batch()`: Fixed lab_batch check to handle `None` (DB NULL) in addition to `LabBatch.UNKNOWN`.
+- `backend/app/intelligence/services/timetable_service.py`:
+  - `confirm_timetable()`: Same fix for `None` lab_batch entries.
+
+### Verification
+- 310 tests pass (2 deselected: flaky `test_get_next_class` variants).
+- Ruff clean on all modified files.
+- Reproduced exact Groq 400 error body, verified fix eliminates it.
+- LLM now correctly returns `set_lab_batch(batch='batch_1')` without `student_id`.
+
+### Security
+- Strengthens security posture: LLM never sees or needs to supply student UUIDs.
+- Backend remains the sole authority for identity injection.
+
+---
+
 ## 2026-09-29 — Implement hybrid timetable extractor with RapidOCR fallback for scanned/image PDFs and photos
 
 **Commit:** `de13925`

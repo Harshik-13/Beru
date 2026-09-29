@@ -3,7 +3,7 @@
 ## Current State
 
 - **Last updated:** 2026-09-29
-- **Current commit:** `de13925`
+- **Current commit:** `f765640`
 - **Current branch:** master
 
 ## Overall Project Status
@@ -50,7 +50,8 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 - Telegram /start flow creates challenge and sends onboarding message
 - Telegram message handler processes messages through conversation pipeline with request-scoped database sessions
 - Standard output logging configured via basicConfig with log_level from settings
-- Real Groq LLM provider operational (`openai/gpt-oss-120b`) with tool calls
+- Real Groq LLM provider operational with tool calls (student_id stripped from LLM-facing schemas)
+- Graceful error fallback: Telegram conversation errors send user-friendly message instead of silent drop
 - Briefing scheduler queries active students and checks briefing time
 - Database queries execute successfully (PostgreSQL)
 - TelegramLinkingChallengeRepository session factory pattern works correctly
@@ -106,7 +107,8 @@ None.
 
 | Commit | Description |
 |--------|-------------|
-| `HEAD` | Implement hybrid timetable extractor with RapidOCR fallback for scanned/image PDFs and photos |
+| `HEAD` | Fix Groq 400 by stripping student_id from LLM tool schemas and add graceful error fallback |
+| `de13925` | Implement hybrid timetable extractor with RapidOCR fallback for scanned/image PDFs and photos |
 | `f9ed817` | Fix timetable extraction state machine transition to REVIEW_REQUIRED before auto-confirmation and auto-increment version |
 | `ec4fad8` | Fill real-usage gaps: Telegram PDF/media ingestion, timetable proactive prompt, confirm_timetable tool, multi-turn conversation context |
 | `f256662` | Fix LLM tool parameter schema conversion in OpenAI-compatible provider |
@@ -128,4 +130,4 @@ None.
 
 ## CURRENT NEXT ACTION
 
-Test live timetable PDF upload and extraction on Telegram with the updated server.
+Server is running with the fix applied. User can now send "Batch 1" or similar messages and Beru will correctly call `set_lab_batch` and respond with confirmation.
