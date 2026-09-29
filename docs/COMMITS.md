@@ -6,6 +6,7 @@
 |--------|------|---------|-----------|--------------|
 | `e7622bb` | 2026-09-29 | Phase 1: disable auto-confirm, show weekday grid, photo upload | Timetable, Telegram | Code complete |
 | `c448e4e` | 2026-09-29 | Phase 2: correction tools, review context, explicit confirm | Timetable, Intelligence | Code complete |
+| `054488e` | 2026-09-29 | Phase 3: briefing time, week/weekday/metadata tools, course_metadata mapping | Timetable, Intelligence | Code complete |
 
 ## Infrastructure
 

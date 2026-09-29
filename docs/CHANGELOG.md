@@ -2,7 +2,7 @@
 
 ## 2026-09-29 — Phase 3: Briefing time + richer Q&A — set_briefing_time, week/weekday/metadata tools, course_metadata mapping
 
-**Commit:** pending
+**Commit:** `054488e`
 
 ### Why
 After confirmation, the student had no way to set their briefing time through conversation. The LLM had no tools to answer week-wide or weekday-specific questions, or to retrieve timetable metadata (section, branch, programme). Course metadata (course_code, faculty) was extracted but not stored on entries.
