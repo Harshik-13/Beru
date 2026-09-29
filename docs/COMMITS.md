@@ -5,6 +5,7 @@
 | Commit | Date | Purpose | Subsystem | Verification |
 |--------|------|---------|-----------|--------------|
 | `e7622bb` | 2026-09-29 | Phase 1: disable auto-confirm, show weekday grid, photo upload | Timetable, Telegram | Code complete |
+| `c448e4e` | 2026-09-29 | Phase 2: correction tools, review context, explicit confirm | Timetable, Intelligence | Code complete |
 
 ## Infrastructure
 

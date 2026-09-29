@@ -2,7 +2,7 @@
 
 ## 2026-09-29 — Phase 2: Corrections and confirm — review tools, explicit confirm, context builder review mode
 
-**Commit:** pending
+**Commit:** `c448e4e`
 
 ### Why
 After extraction, the student had no way to correct parsed entries through the conversation. The LLM had no tools to show the pending grid, update/add/delete entries, or handle the review flow naturally. The context builder did not distinguish review mode from confirmed mode.
