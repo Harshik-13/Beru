@@ -2,7 +2,7 @@
 
 ## 2026-09-29 — Phase 1: Timetable review surface — disable auto-confirm, show weekday grid, photo upload
 
-**Commit:** pending
+**Commit:** `e7622bb`
 
 ### Why
 After uploading a timetable, Beru was auto-confirming without showing the parsed classes to the student. The user had no way to verify or correct extracted data before it became active. Additionally, photo uploads were rejected with a "send PDF instead" dead-end instead of using the existing hybrid extractor.
