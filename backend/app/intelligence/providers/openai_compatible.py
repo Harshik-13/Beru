@@ -67,8 +67,10 @@ class OpenAICompatibleLLMProvider(LLMProvider):
         self._initialized = True
 
         # Parse provider-specific config from the generic config
-        provider_name = config.config.get("provider_name", "openai_compatible")
-        model = config.config.get("model")
+        provider_name = getattr(config, "provider_name", None) or config.config.get(
+            "provider_name", "openai_compatible"
+        )
+        model = getattr(config, "model", None) or config.config.get("model")
         api_key = config.config.get("api_key", "")
         base_url = config.config.get("base_url", "https://api.openai.com/v1")
         timeout_seconds = config.config.get("timeout_seconds", 60)
@@ -92,12 +94,15 @@ class OpenAICompatibleLLMProvider(LLMProvider):
         )
 
         # Create HTTP client
+        headers: dict[str, str] = {
+            "Content-Type": "application/json",
+        }
+        if self._config.api_key:
+            headers["Authorization"] = f"Bearer {self._config.api_key}"
+
         self._client = httpx.AsyncClient(
             base_url=self._config.base_url,
-            headers={
-                "Authorization": f"Bearer {self._config.api_key}",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             timeout=httpx.Timeout(self._config.timeout_seconds),
         )
 
@@ -106,10 +111,24 @@ class OpenAICompatibleLLMProvider(LLMProvider):
             await self._client.aclose()
             self._client = None
 
-    def _convert_messages(self, messages: list[LLMMessage]) -> list[dict[str, Any]]:
-        """Convert internal LLMMessage to OpenAI format."""
+    def _convert_messages(
+        self, messages: list[LLMMessage | dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Convert internal LLMMessage or raw dict to OpenAI format."""
         converted = []
         for msg in messages:
+            if isinstance(msg, dict):
+                msg_dict: dict[str, Any] = {
+                    "role": msg.get("role", "user"),
+                    "content": msg.get("content", ""),
+                }
+                if msg.get("tool_calls"):
+                    msg_dict["tool_calls"] = msg["tool_calls"]
+                if msg.get("tool_call_id"):
+                    msg_dict["tool_call_id"] = msg["tool_call_id"]
+                converted.append(msg_dict)
+                continue
+
             msg_dict = {"role": msg.role, "content": msg.content}
             if msg.tool_calls:
                 msg_dict["tool_calls"] = [
@@ -118,7 +137,11 @@ class OpenAICompatibleLLMProvider(LLMProvider):
                         "type": "function",
                         "function": {
                             "name": tc.name,
-                            "arguments": json.dumps(tc.arguments),
+                            "arguments": (
+                                json.dumps(tc.arguments)
+                                if isinstance(tc.arguments, dict)
+                                else str(tc.arguments)
+                            ),
                         },
                     }
                     for tc in msg.tool_calls
@@ -161,7 +184,7 @@ class OpenAICompatibleLLMProvider(LLMProvider):
 
     async def _make_request(
         self,
-        messages: list[LLMMessage],
+        messages: list[LLMMessage | dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
         temperature: float = 0.1,
@@ -220,7 +243,7 @@ class OpenAICompatibleLLMProvider(LLMProvider):
 
     async def chat_completion(
         self,
-        messages: list[LLMMessage],
+        messages: list[LLMMessage | dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
         temperature: float = 0.1,
@@ -248,12 +271,23 @@ class OpenAICompatibleLLMProvider(LLMProvider):
         tool_calls = []
         if message.get("tool_calls"):
             for tc in message["tool_calls"]:
-                func = tc["function"]
+                func = tc.get("function", {})
+                raw_args = func.get("arguments", "{}")
+                if isinstance(raw_args, str):
+                    try:
+                        parsed_args = json.loads(raw_args)
+                    except json.JSONDecodeError:
+                        parsed_args = {}
+                elif isinstance(raw_args, dict):
+                    parsed_args = raw_args
+                else:
+                    parsed_args = {}
+
                 tool_calls.append(
                     LLMToolCall(
-                        id=tc["id"],
-                        name=func["name"],
-                        arguments=json.loads(func["arguments"]),
+                        id=tc.get("id", ""),
+                        name=func.get("name", ""),
+                        arguments=parsed_args,
                     )
                 )
 
@@ -266,7 +300,7 @@ class OpenAICompatibleLLMProvider(LLMProvider):
 
     async def structured_completion(
         self,
-        messages: list[LLMMessage],
+        messages: list[LLMMessage | dict[str, Any]],
         response_schema: dict[str, Any],
         tools: list[dict[str, Any]] | None = None,
         temperature: float = 0.1,

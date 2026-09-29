@@ -528,5 +528,165 @@ class TestEndToEnd:
         )
 
 
+class TestOpenAICompatibleProviderAndRealLLMPipeline:
+    def test_convert_messages_with_dicts_and_objects(self):
+        from app.intelligence.providers.base import LLMMessage, LLMToolCall
+        from app.intelligence.providers.openai_compatible import (
+            OpenAICompatibleLLMProvider,
+        )
+
+        provider = OpenAICompatibleLLMProvider()
+        messages = [
+            {"role": "system", "content": "You are Beru."},
+            LLMMessage(role="user", content="Hi!"),
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "f", "arguments": "{}"},
+                    }
+                ],
+            },
+            LLMMessage(
+                role="assistant",
+                content="",
+                tool_calls=[LLMToolCall(id="c2", name="f2", arguments={"a": 1})],
+            ),
+        ]
+        converted = provider._convert_messages(messages)
+        assert len(converted) == 4
+        assert converted[0]["role"] == "system"
+        assert converted[0]["content"] == "You are Beru."
+        assert converted[1]["role"] == "user"
+        assert converted[1]["content"] == "Hi!"
+        assert converted[2]["tool_calls"][0]["id"] == "c1"
+        assert converted[3]["tool_calls"][0]["id"] == "c2"
+
+    @pytest.mark.asyncio
+    async def test_openai_compatible_chat_completion_with_tool_calls(
+        self, monkeypatch
+    ):
+        import httpx
+
+        from app.intelligence.providers.base import LLMProviderConfig
+        from app.intelligence.providers.openai_compatible import (
+            OpenAICompatibleLLMProvider,
+        )
+
+        provider = OpenAICompatibleLLMProvider()
+        await provider.initialize(
+            LLMProviderConfig(
+                provider_name="openrouter",
+                model="meta-llama/llama-3-8b",
+                config={
+                    "api_key": "test-key",
+                    "base_url": "https://openrouter.ai/api/v1",
+                },
+            )
+        )
+
+        mock_payload = {
+            "choices": [
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_123",
+                                "function": {
+                                    "name": "get_today_schedule",
+                                    "arguments": '{"student_id": "test"}',
+                                },
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"total_tokens": 42},
+        }
+
+        async def mock_post(url, json=None, **kwargs):
+            return httpx.Response(
+                200, json=mock_payload, request=httpx.Request("POST", url)
+            )
+
+        monkeypatch.setattr(provider._client, "post", mock_post)
+
+        response = await provider.chat_completion(
+            messages=[{"role": "user", "content": "Schedule?"}]
+        )
+        assert len(response.tool_calls) == 1
+        assert response.tool_calls[0].name == "get_today_schedule"
+        assert response.tool_calls[0].arguments == {"student_id": "test"}
+        await provider.close()
+
+    @pytest.mark.asyncio
+    async def test_create_llm_provider_aliases(self, monkeypatch):
+        from app.core.config import settings
+        from app.intelligence.providers import create_llm_provider
+
+        monkeypatch.setattr(settings, "llm_provider", "openrouter")
+        monkeypatch.setattr(settings, "llm_model", "meta-llama/llama-3-8b")
+        monkeypatch.setattr(settings, "llm_api_key", "sk-or-v1-test")
+        monkeypatch.setattr(settings, "llm_base_url", "")
+
+        provider = await create_llm_provider()
+        assert provider is not None
+        assert provider.provider_name == "openrouter"
+        assert provider._config.base_url == "https://openrouter.ai/api/v1"
+        assert provider._config.model == "meta-llama/llama-3-8b"
+        await provider.close()
+
+        # Test Groq alias
+        monkeypatch.setattr(settings, "llm_provider", "groq")
+        provider_groq = await create_llm_provider()
+        assert provider_groq is not None
+        assert provider_groq.provider_name == "groq"
+        assert provider_groq._config.base_url == "https://api.groq.com/openai/v1"
+        await provider_groq.close()
+
+    def test_builtin_tools_auto_registered(self):
+        from app.intelligence.tools.registry import tool_registry
+
+        # Timetable tools
+        assert tool_registry.is_registered("get_today_schedule")
+        assert tool_registry.is_registered("get_tomorrow_schedule")
+        assert tool_registry.is_registered("get_next_class")
+        assert tool_registry.is_registered("get_timetable_status")
+
+        # Attendance tools
+        assert tool_registry.is_registered("get_overall_attendance")
+        assert tool_registry.is_registered("get_subject_attendance")
+        assert tool_registry.is_registered("simulate_absence")
+        assert tool_registry.is_registered("calculate_classes_needed")
+
+    @pytest.mark.asyncio
+    async def test_conversation_service_rich_natural_language_response(self):
+        # Test that conversation service generates a warm, personalized response
+        provider = create_mock_llm(
+            response_text="Hey Harshik! You have 3 classes today starting with OS."
+        )
+        service = ConversationService(llm_provider=provider)
+
+        student_id = uuid4()
+        ctx = create_student_context(
+            student_id=student_id,
+            profile=StudentProfile(student_id=student_id, name="Harshik"),
+        )
+
+        response = await service._generate_response_from_tool_result(
+            ctx,
+            "get_today_schedule",
+            {"entries": [{"activity_name": "OS", "room": "302"}]},
+            user_message="what classes do I have today?",
+        )
+        assert "Harshik" in response
+        assert "OS" in response
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

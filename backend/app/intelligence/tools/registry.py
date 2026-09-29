@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
 
@@ -9,8 +10,8 @@ class ToolDefinition:
 
     name: str
     description: str
-    arguments_schema: dict  # JSON Schema for arguments
-    result_schema: dict  # JSON Schema for result
+    arguments_schema: dict[str, Any]  # JSON Schema for arguments
+    result_schema: dict[str, Any]  # JSON Schema for result
     requires_authorization: bool = True
     requires_confirmation: bool = False
     enabled: bool = True
@@ -22,7 +23,7 @@ class ToolRequest:
 
     id: str
     name: str
-    arguments: dict
+    arguments: dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,7 +33,7 @@ class ToolResult:
     tool_name: str
     request_id: str
     success: bool
-    result: dict
+    result: dict[str, Any]
     error: str | None = None
     user_facing_message: str | None = None
 
@@ -54,9 +55,9 @@ class ToolHandler(ABC):
     async def execute(
         self,
         student_id: UUID,
-        arguments: dict,
-        conversation_context: dict | None = None,
-    ) -> dict:
+        arguments: dict[str, Any],
+        conversation_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """
         Execute the tool.
 
@@ -74,7 +75,7 @@ class ToolHandler(ABC):
 class ToolRegistry:
     """Registry of available tools."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._tools: dict[str, ToolHandler] = {}
 
     def register(self, handler: ToolHandler) -> None:
@@ -106,5 +107,62 @@ class ToolRegistry:
         return name in self._tools
 
 
+class BuiltinToolHandler(ToolHandler):
+    """Tool handler for built-in tools."""
+
+    def __init__(self, definition: ToolDefinition):
+        self._definition = definition
+
+    @property
+    def definition(self) -> ToolDefinition:
+        return self._definition
+
+    async def execute(
+        self,
+        student_id: UUID,
+        arguments: dict[str, Any],
+        conversation_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {"student_id": str(student_id), **arguments}
+
+
+def register_builtin_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
+    """Register all built-in timetable and attendance tools into the registry."""
+    from app.intelligence.tools.attendance_tools import ATTENDANCE_TOOL_DEFINITIONS
+    from app.intelligence.tools.timetable_tools import TIMETABLE_TOOL_DEFINITIONS
+
+    reg = registry or tool_registry
+    for d in TIMETABLE_TOOL_DEFINITIONS:
+        if not reg.is_registered(d["name"]):
+            reg.register(
+                BuiltinToolHandler(
+                    ToolDefinition(
+                        name=d["name"],
+                        description=d["description"],
+                        arguments_schema=d.get("arguments_schema", {}),
+                        result_schema=d.get("result_schema", {}),
+                        requires_authorization=d.get("requires_authorization", True),
+                        requires_confirmation=d.get("requires_confirmation", False),
+                    )
+                )
+            )
+    for d in ATTENDANCE_TOOL_DEFINITIONS:
+        if not reg.is_registered(d["name"]):
+            reg.register(
+                BuiltinToolHandler(
+                    ToolDefinition(
+                        name=d["name"],
+                        description=d["description"],
+                        arguments_schema=d.get("arguments_schema", {}),
+                        result_schema=d.get("result_schema", {}),
+                        requires_authorization=d.get("requires_authorization", True),
+                        requires_confirmation=d.get("requires_confirmation", False),
+                    )
+                )
+            )
+    return reg
+
+
 # Global registry instance
 tool_registry = ToolRegistry()
+register_builtin_tools(tool_registry)

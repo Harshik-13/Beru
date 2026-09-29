@@ -96,18 +96,20 @@ TelegramMessageHandler._handle_message(message)
 
 - `LLMProvider` ABC in `app/intelligence/providers/base.py`
 - `LLMProviderRegistry` — global registry, providers self-register on import
-- `OpenAICompatibleLLMProvider` — works with OpenRouter, NVIDIA, OpenCode Zen, local models
+- `OpenAICompatibleLLMProvider` — works with OpenRouter, Groq, OpenAI, NVIDIA, Ollama, OpenCode Zen, and any OpenAI-compatible API
 - `MockLLMProvider` — deterministic test double
-- `create_llm_provider()` factory in `app/intelligence/providers/__init__.py` — creates provider from settings
+- `create_llm_provider()` factory in `app/intelligence/providers/__init__.py` — resolves provider aliases and default endpoints (`openrouter`, `groq`, `openai`, `nvidia`, `ollama`, `opencode_zen`, `openai_compatible`)
 - Provider/model configurable via `.env` (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, `LLM_BASE_URL`)
+- Supports message lists as either `LLMMessage` objects or raw dicts with tool-call roundtripping
 - Rate limiting per student via `RateLimiter`
 
 ### Tool Registry/Dispatch
 
 - `ToolRegistry` in `app/intelligence/tools/registry.py`
-- Tools: `get_today_schedule`, `get_tomorrow_schedule`, `get_next_class`, `get_first_class_tomorrow`, `get_timetable_status`, `needs_lab_batch`, `set_lab_batch`, `simulate_absence`
-- LLM selects tool via function calling; backend validates and executes
-- Tool results are deterministic; LLM only formats natural language response
+- All confirmed timetable tools and verified attendance tools auto-registered at startup via `register_builtin_tools()`
+- Tools: `get_today_schedule`, `get_tomorrow_schedule`, `get_next_class`, `get_first_class_tomorrow`, `get_timetable_status`, `needs_lab_batch`, `set_lab_batch`, `get_overall_attendance`, `get_subject_attendance`, `get_attendance_summary`, `get_subjects_below_target`, `simulate_absence`, `calculate_classes_needed`, `get_attendance_snapshot_info`, `get_subject_codes`, `sync_attendance`
+- LLM selects tool via standard OpenAI function calling schemas; backend validates and executes deterministically
+- Tool results are strictly deterministic; LLM receives backend output to synthesize a friendly, senior-copilot response in Beru's persona
 
 ### Domain Services
 

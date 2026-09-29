@@ -1,5 +1,51 @@
 # CHANGELOG.md — Beru
 
+## 2026-09-29 — Enable real LLM natural language understanding and function calling
+
+**Commit:** pending
+
+### Why
+1. `_mock_interpret_intent` was acting as a fallback keyword matcher when `llm_provider` was None, creating robotic keyword-triggered behavior.
+2. `OpenAICompatibleLLMProvider._convert_messages` assumed messages were `LLMMessage` dataclasses with `msg.role`, causing `AttributeError` when `ContextBuilder` passed `dict`s.
+3. Provider aliases (`openrouter`, `groq`, `openai`, `nvidia`, `ollama`) suggested in `.env` were not recognized by `create_llm_provider`, raising `ValueError: Provider not registered`.
+4. `ToolRegistry` had no tools registered at startup in production, meaning the LLM received empty tool schemas and could never call timetable or attendance tools.
+5. In `ConversationService._execute_tool`, if the LLM supplied a `student_id` in arguments, calling timetable/attendance functions raised `TypeError: multiple values for argument 'student_id'`.
+6. Tool result natural language generation used a generic system prompt without student context or original question, leading to robotic output.
+7. `ContextBuilder._build_messages` duplicated the user's current message if it had already been added to recent conversation messages.
+
+### What changed
+- `backend/app/intelligence/providers/openai_compatible.py`: Added support for both `dict` and `LLMMessage` in `_convert_messages`, `_make_request`, and `chat_completion`. Added safe parsing for tool call arguments. Allowed initialization without API key for local or mock endpoints.
+- `backend/app/intelligence/providers/base.py`: Updated interface annotations to support `dict` messages and typed dataclasses.
+- `backend/app/intelligence/providers/__init__.py`: Added provider aliases and default base URLs for `openrouter`, `groq`, `openai`, `nvidia`, `ollama`, and `opencode_zen`.
+- `backend/app/intelligence/tools/registry.py`: Added `BuiltinToolHandler` and `register_builtin_tools()`, auto-registering all timetable and attendance tools into `tool_registry` on import.
+- `backend/app/intelligence/services/conversation.py`: Expanded `attendance_tools` to include all attendance functions, sanitized arguments to prevent duplicate `student_id` errors, passed `user_message` to response synthesis, and enriched persona prompting to sound like a smart, warm college copilot.
+- `backend/app/intelligence/services/context_builder.py`: Prevented duplicate user message appending in `_build_messages`.
+- `backend/tests/test_intelligence.py`: Added comprehensive unit and integration tests covering message conversion, chat completion with tool calls, provider aliases, tool auto-registration, and persona response formatting.
+
+### Why this approach
+Preserves the architectural boundary where the LLM understands natural language and selects function calls while the backend executes all deterministic arithmetic and access controls.
+
+### Why these files
+- `providers/openai_compatible.py`, `providers/base.py`, `providers/__init__.py`: fix LLM adapter and alias resolution.
+- `tools/registry.py`: make tools available for LLM function calling.
+- `services/conversation.py`, `services/context_builder.py`: handle tool dispatch and human-like response generation.
+- `tests/test_intelligence.py`: verify real LLM pipeline.
+
+### Verification
+- 303 tests pass (`pytest backend/tests`)
+- `ruff check` clean on all touched files
+- `mypy` clean on touched provider and tool files
+
+### Security considerations
+- Backend continues to enforce deterministic calculations; LLM cannot invent attendance percentages.
+- Client/LLM-supplied `student_id` is stripped and replaced with authenticated student ID from session context.
+- Rate limiting per student remains active.
+
+### Remaining limitations/blockers
+- Real LLM requires valid API key and model in `.env` (e.g. OpenRouter, Groq, OpenAI).
+
+---
+
 ## 2026-09-29 — Decouple TelegramBotAdapter, scope DB session per message, and fix startup logging
 
 **Commit:** `cb61881`

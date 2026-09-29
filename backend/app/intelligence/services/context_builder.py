@@ -180,11 +180,21 @@ class ContextBuilder:
         messages.append({"role": "system", "content": system_prompt})
 
         # Conversation history
+        has_current = False
+        if student_context.conversation.recent_messages:
+            last_msg = student_context.conversation.recent_messages[-1]
+            if (
+                last_msg.get("role") == "user"
+                and last_msg.get("content") == current_message
+            ):
+                has_current = True
+
         for msg in student_context.conversation.recent_messages:
             messages.append({"role": msg["role"], "content": msg["content"]})
 
-        # Current message
-        messages.append({"role": "user", "content": current_message})
+        # Append current message if not already present as the last item
+        if not has_current:
+            messages.append({"role": "user", "content": current_message})
 
         return messages
 

@@ -19,10 +19,10 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 - Telegram Bot API adapter (long polling, message normalization, pure transport bridge, drop pending updates)
 - Telegram identity linking (challenge/verify flow with audit, HTML formatted token)
 - Telegram message handler (idempotency, request-scoped DB sessions, identity resolution, request-scoped domain services, conversation pipeline)
-- LLM provider abstraction (OpenAI-compatible + Mock; registry pattern)
-- Real LLM provider integration (wired in lifespan, configurable via .env)
-- Conversation service (intent interpretation → tool dispatch → response generation)
-- Tool registry (timetable tools, attendance tools)
+- LLM provider abstraction (OpenAI-compatible + Mock; aliases for OpenRouter, Groq, OpenAI, NVIDIA, Ollama)
+- Real LLM provider integration (wired in lifespan, dict/object message support, safe tool argument parsing)
+- Conversation service (intent interpretation → tool dispatch → personalized natural language response generation)
+- Tool registry (automatic registration of all timetable and attendance tools)
 - Timetable service (state machine, extraction, confirmation, queries)
 - Attendance service (deterministic calculations, simulations, recovery)
 - Briefing service (deterministic facts + natural language rendering)
@@ -37,8 +37,8 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 
 ## TESTED
 
-- 298 tests pass (1 pre-existing flaky: `test_get_next_class`, time-dependent)
-- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence, models, portal, student profile, telegram isolation, telegram message handler, telegram startup, timetable, whatsapp isolation
+- 303 tests pass (1 pre-existing flaky: `test_get_next_class`, time-dependent)
+- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence (real LLM provider, aliases, tool execution), models, portal, student profile, telegram isolation, telegram message handler, telegram startup, timetable, whatsapp isolation
 - Ruff: clean on all source files
 - Mypy: clean on all source files
 
@@ -104,6 +104,7 @@ None.
 
 | Commit | Description |
 |--------|-------------|
+| `pending` | Fix real LLM provider message conversion, auto-register tools, add provider aliases, enrich conversational response |
 | `cb61881` | Decouple TelegramBotAdapter, scope session per message in TelegramMessageHandler, fix startup logging |
 | `055bb09` | Fix TelegramLinkingChallengeRepository session lifetime and enum casting |
 | `635e5ff` | Integrate real LLM provider into Telegram conversation flow |

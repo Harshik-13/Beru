@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -8,7 +9,7 @@ class LLMMessage:
 
     role: str  # "system", "user", "assistant", "tool"
     content: str
-    tool_calls: list[dict] | None = None
+    tool_calls: list[dict[str, Any]] | None = None
     tool_call_id: str | None = None
 
 
@@ -18,7 +19,7 @@ class LLMToolCall:
 
     id: str
     name: str
-    arguments: dict
+    arguments: dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,9 +27,9 @@ class LLMResponse:
     """A response from the LLM."""
 
     content: str | None = None
-    tool_calls: tuple = ()
+    tool_calls: tuple[LLMToolCall, ...] = ()
     finish_reason: str = "stop"
-    usage: dict | None = None
+    usage: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,7 +38,7 @@ class LLMProviderConfig:
 
     provider_name: str
     model: str
-    config: dict
+    config: dict[str, Any]
 
 
 class LLMProvider(ABC):
@@ -68,8 +69,8 @@ class LLMProvider(ABC):
     @abstractmethod
     async def chat_completion(
         self,
-        messages: list[LLMMessage],
-        tools: list[dict] | None = None,
+        messages: list[LLMMessage | dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
         temperature: float = 0.1,
         max_tokens: int | None = None,
@@ -92,11 +93,11 @@ class LLMProvider(ABC):
     @abstractmethod
     async def structured_completion(
         self,
-        messages: list[LLMMessage],
-        response_schema: dict,
-        tools: list[dict] | None = None,
+        messages: list[LLMMessage | dict[str, Any]],
+        response_schema: dict[str, Any],
+        tools: list[dict[str, Any]] | None = None,
         temperature: float = 0.1,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """
         Generate a structured completion matching the given schema.
 
@@ -120,7 +121,7 @@ class LLMProvider(ABC):
 class LLMProviderRegistry:
     """Registry for LLM provider implementations."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._providers: dict[str, type] = {}
 
     def register(self, provider_class: type) -> None:

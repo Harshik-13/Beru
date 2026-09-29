@@ -124,7 +124,9 @@ class ConversationService:
             )
 
         if intent_result.tool_request:
-            return await self._execute_tool(student_context, intent_result)
+            return await self._execute_tool(
+                student_context, intent_result, user_message=message
+            )
 
         # No tool needed - direct response
         response = intent_result.raw_response or (
@@ -421,9 +423,13 @@ class ConversationService:
         self,
         student_context: "StudentContext",
         intent_result: "IntentResult",
+        user_message: str = "",
     ) -> tuple[str, "StudentContext"]:
         """Execute a tool and return the response."""
         tool_req = intent_result.tool_request
+        if not tool_req:
+            return "No tool requested.", student_context
+
         tool = self.tool_registry.get(tool_req["name"])
 
         if not tool:
@@ -444,9 +450,24 @@ class ConversationService:
                 "set_lab_batch",
             }
 
-            # Attendance tools that may need TimetableService
+            # Attendance tools that may need TimetableService or AttendanceService
             attendance_tools = {
                 "simulate_absence",
+                "get_overall_attendance",
+                "get_subject_attendance",
+                "get_attendance_summary",
+                "get_subjects_below_target",
+                "calculate_classes_needed",
+                "get_attendance_snapshot_info",
+                "get_subject_codes",
+                "sync_attendance",
+            }
+
+            # Sanitize arguments: remove student_id if supplied by LLM
+            clean_arguments = {
+                k: v
+                for k, v in tool_req.get("arguments", {}).items()
+                if k != "student_id"
             }
 
             if tool_req["name"] in timetable_tools and self.timetable_service:
@@ -458,9 +479,9 @@ class ConversationService:
                     self.timetable_service,
                     tool_req["name"],
                     str(student_context.student_id),
-                    **tool_req["arguments"],
+                    **clean_arguments,
                 )
-            elif tool_req["name"] in attendance_tools:
+            elif tool_req["name"] in attendance_tools and self.attendance_service:
                 from app.intelligence.tools.attendance_tools import (
                     execute_attendance_tool,
                 )
@@ -470,18 +491,18 @@ class ConversationService:
                     self.timetable_service,
                     tool_req["name"],
                     str(student_context.student_id),
-                    **tool_req["arguments"],
+                    **clean_arguments,
                 )
             else:
                 result = await tool.execute(
                     student_id=student_context.student_id,
-                    arguments=tool_req["arguments"],
+                    arguments=clean_arguments,
                 )
 
             # Format tool result
             tool_result = ToolResultRef(
                 tool_name=tool_req["name"],
-                arguments=tool_req["arguments"],
+                arguments=clean_arguments,
                 result_summary=str(result)[:200],
                 success=True,
             )
@@ -491,7 +512,7 @@ class ConversationService:
             if self.llm_provider:
                 # Use LLM to generate natural response
                 response = await self._generate_response_from_tool_result(
-                    student_context, tool_req["name"], result
+                    student_context, tool_req["name"], result, user_message=user_message
                 )
             else:
                 response = f"Done! {result}"
@@ -506,7 +527,7 @@ class ConversationService:
         except Exception as e:
             error_result = ToolResultRef(
                 tool_name=tool_req["name"],
-                arguments=tool_req["arguments"],
+                arguments=tool_req.get("arguments", {}),
                 result_summary=str(e),
                 success=False,
             )
@@ -520,24 +541,33 @@ class ConversationService:
         student_context: "StudentContext",
         tool_name: str,
         result: dict,
+        user_message: str = "",
     ) -> str:
         """Generate natural language response from tool result."""
         if not self.llm_provider:
             return str(result)
 
-        # Build context for response generation
+        student_name = student_context.profile.get_display_name() or "student"
         system = (
-            "Generate a natural, helpful response for a college student "
-            "based on the tool result."
+            f"You are {self.beru_identity.name}, a helpful and friendly "
+            f"AI college copilot talking directly to {student_name}.\n"
+            "You just retrieved verified information from the college system.\n"
+            "Present the information naturally, warmly, and concisely.\n"
+            "Be conversational and direct. Never read out raw JSON or technical keys. "
+            "If there is actionable advice, mention it smoothly."
         )
+        user_prompt = (
+            f"Student asked: {user_message}\n\n"
+            f"System Data (Tool: {tool_name}):\n{result}\n\n"
+            "Reply conversationally to the student:"
+        ) if user_message else (
+            f"System Data (Tool: {tool_name}):\n{result}\n\n"
+            "Summarize this conversationally for the student:"
+        )
+
         messages = [
             {"role": "system", "content": system},
-            {
-                "role": "user",
-                "content": (
-                    f"Tool: {tool_name}\nResult: {result}\nGenerate a natural response."
-                ),
-            },
+            {"role": "user", "content": user_prompt},
         ]
 
         response = await self.llm_provider.chat_completion(messages=messages)
