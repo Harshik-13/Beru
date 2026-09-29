@@ -2,7 +2,7 @@
 
 ## 2026-09-29 — Fix MultipleResultsFound on timetable queries for students with multiple versions
 
-**Commit:** Pending
+**Commit:** `77f9271`
 
 ### Why
 During live runtime verification of PDF upload on Telegram, `TimetableRepository.get_latest_for_student()` and `get_pending_for_student()` raised `MultipleResultsFound: Multiple rows were found when one or none was required`. When a student has multiple versions (e.g. Version 1 confirmed and Version 2 pending), ordering by `version.desc()` produces multiple rows. Calling `scalar_one_or_none()` without `.limit(1)` violated SQLAlchemy's single-row requirement.
