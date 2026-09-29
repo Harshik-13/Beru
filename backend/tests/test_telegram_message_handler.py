@@ -2,7 +2,7 @@
 
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -411,7 +411,8 @@ class TestTelegramMessageMediaAndContext:
 
     @pytest.mark.asyncio
     async def test_handle_media_photo_message(self):
-        """Test photo message returns prompt requesting official PDF."""
+        """Test photo message goes through hybrid extractor like PDFs."""
+        from app.models.timetable import Timetable, TimetableStatus
         from app.telegram.models import TelegramMessageAttachment
 
         student_id = uuid4()
@@ -439,6 +440,22 @@ class TestTelegramMessageMediaAndContext:
         mock_student_repo = MagicMock()
         mock_student = Student(id=student_id, name="Harshik")
         mock_student_repo.get_or_create = AsyncMock(return_value=mock_student)
+
+        mock_timetable = Timetable(
+            id=uuid4(),
+            student_id=student_id,
+            status=TimetableStatus.REVIEW_REQUIRED,
+            version=1,
+        )
+
+        mock_timetable_service = MagicMock()
+        mock_timetable_service.create_uploaded_timetable = AsyncMock(
+            return_value=mock_timetable
+        )
+        mock_timetable_service.needs_lab_batch = AsyncMock(return_value=False)
+        mock_timetable_service.get_pending_timetable_with_entries = AsyncMock(
+            return_value=(mock_timetable, [])
+        )
 
         handler = TelegramMessageHandler(
             adapter=adapter,
@@ -469,9 +486,12 @@ class TestTelegramMessageMediaAndContext:
             attachment=attachment,
         )
 
-        await handler._handle_message(photo_msg)
+        with patch(
+            "app.telegram.message_handler.TimetableService",
+            return_value=mock_timetable_service,
+        ):
+            await handler._handle_message(photo_msg)
 
         assert adapter.send_message.called
-        call_arg = adapter.send_message.call_args[0][0]
-        assert "Received your timetable photo" in call_arg.text
-        assert "PDF document" in call_arg.text
+        first_call_text = adapter.send_message.call_args_list[0][0][0].text
+        assert "Received your timetable image" in first_call_text

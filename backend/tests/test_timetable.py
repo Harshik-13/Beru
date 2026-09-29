@@ -161,10 +161,10 @@ class TestTimetableStateTransitions:
         assert timetable.status == TimetableStatus.REVIEW_REQUIRED
 
     @pytest.mark.asyncio
-    async def test_extract_timetable_auto_confirm_transitions_properly(
+    async def test_extract_timetable_stays_review_required(
         self, timetable_service, mock_timetable_repo, mock_student_repo
     ):
-        """extract_timetable must set REVIEW_REQUIRED before auto-confirming."""
+        """extract_timetable must always return REVIEW_REQUIRED (no auto-confirm)."""
         student_id = uuid4()
         timetable = Timetable(
             id=uuid4(),
@@ -192,11 +192,11 @@ class TestTimetableStateTransitions:
                 "app.intelligence.services.timetable_service.create_timetable_extractor",
                 lambda: mock_extractor,
             )
-            confirmed = await timetable_service.extract_timetable(
+            result = await timetable_service.extract_timetable(
                 timetable.id, "dummy.pdf"
             )
 
-        assert confirmed.status == TimetableStatus.CONFIRMED
+        assert result.status == TimetableStatus.REVIEW_REQUIRED
 
     @pytest.mark.asyncio
     async def test_review_required_to_confirmed(
