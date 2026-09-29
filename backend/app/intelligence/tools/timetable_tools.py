@@ -5,7 +5,7 @@ These tools provide deterministic access to confirmed timetable data.
 """
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -338,7 +338,7 @@ async def get_extracted_timetable(
     service: "TimetableService",
     student_id: str,
 ) -> dict:
-    """Get the pending extracted timetable for review (not a confirmed schedule query)."""
+    """Get the pending extracted timetable for review (not a schedule query)."""
     from uuid import UUID
 
     from app.intelligence.services.timetable_service import format_week_schedule
@@ -416,7 +416,7 @@ async def update_timetable_entry(
 
     updated = await service.update_entry(pending.id, entry_uuid, **updates)
     if not updated:
-        return {"success": False, "message": "Entry not found or not in pending timetable."}
+        return {"success": False, "message": "Entry not found in pending timetable."}
 
     return {
         "success": True,
@@ -600,7 +600,7 @@ async def get_timetable_metadata(
     service: "TimetableService",
     student_id: str,
 ) -> dict:
-    """Get timetable metadata (section, branch, programme, etc.) from confirmed timetable."""
+    """Get timetable metadata (section, branch, programme, etc.)."""
     from uuid import UUID
 
     student_uuid = UUID(student_id)
@@ -950,7 +950,10 @@ TIMETABLE_TOOL_DEFINITIONS = [
                 "activity_name": {"type": "string"},
                 "start_time": {"type": "string", "description": "HH:MM format"},
                 "end_time": {"type": "string", "description": "HH:MM format"},
-                "activity_type": {"type": "string", "enum": ["academic", "lab", "break", "activity"]},
+                "activity_type": {
+                    "type": "string",
+                    "enum": ["academic", "lab", "break", "activity"],
+                },
                 "room": {"type": "string"},
                 "day_of_week": {"type": "integer", "description": "0=Mon, 5=Sat"},
             },
@@ -978,7 +981,10 @@ TIMETABLE_TOOL_DEFINITIONS = [
                 "day_of_week": {"type": "integer", "description": "0=Mon, 5=Sat"},
                 "start_time": {"type": "string", "description": "HH:MM format"},
                 "end_time": {"type": "string", "description": "HH:MM format"},
-                "activity_type": {"type": "string", "enum": ["academic", "lab", "break", "activity"]},
+                "activity_type": {
+                    "type": "string",
+                    "enum": ["academic", "lab", "break", "activity"],
+                },
                 "room": {"type": "string"},
                 "course_code": {"type": "string"},
                 "faculty": {"type": "string"},
@@ -1173,7 +1179,9 @@ async def execute_timetable_tool(
     if tool_name == "get_week_schedule":
         return await get_week_schedule(service, student_id)
     if tool_name == "get_schedule_for_weekday":
-        return await get_schedule_for_weekday(service, student_id, kwargs["day_of_week"])
+        return await get_schedule_for_weekday(
+            service, student_id, kwargs["day_of_week"]
+        )
     if tool_name == "get_timetable_metadata":
         return await get_timetable_metadata(service, student_id)
     raise ValueError(f"Unknown timetable tool: {tool_name}")

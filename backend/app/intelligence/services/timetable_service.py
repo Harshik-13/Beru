@@ -74,7 +74,9 @@ def format_week_schedule(
 
         lines.append(f"<b>{day_name}</b>")
         for entry in sorted(day_entries, key=lambda e: e.start_time):
-            time_str = f"{entry.start_time.strftime('%H:%M')}-{entry.end_time.strftime('%H:%M')}"
+            start = entry.start_time.strftime("%H:%M")
+            end = entry.end_time.strftime("%H:%M")
+            time_str = f"{start}-{end}"
             type_label = ""
             if entry.activity_type == ActivityType.LAB:
                 type_label = " [LAB]"
@@ -179,7 +181,8 @@ class TimetableService:
             entry = cell_to_entry(cell)
             entry.timetable_id = timetable_id
             # Map course_metadata onto entry if available
-            content_key = cell.content.strip().split()[0] if cell.content.strip() else ""
+            stripped = cell.content.strip()
+            content_key = stripped.split()[0] if stripped else ""
             if content_key in meta.course_metadata:
                 course_info = meta.course_metadata[content_key]
                 entry.course_code = content_key
