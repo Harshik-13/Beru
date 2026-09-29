@@ -154,21 +154,28 @@ class OpenAICompatibleLLMProvider(LLMProvider):
     def _convert_tools(
         self, tools: list[dict[str, Any]] | None
     ) -> list[dict[str, Any]] | None:
-        """Convert internal tool definitions to OpenAI format."""
+        """Convert internal or OpenAI tool definitions to standard OpenAI format."""
         if not tools:
             return None
         converted = []
         for tool in tools:
-            converted.append(
-                {
-                    "type": "function",
-                    "function": {
-                        "name": tool["name"],
-                        "description": tool["description"],
-                        "parameters": tool["arguments_schema"],
-                    },
-                }
-            )
+            if "type" in tool and "function" in tool:
+                converted.append(tool)
+            elif "function" in tool:
+                converted.append({"type": "function", "function": tool["function"]})
+            else:
+                converted.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": tool.get("name", ""),
+                            "description": tool.get("description", ""),
+                            "parameters": tool.get(
+                                "arguments_schema", tool.get("parameters", {})
+                            ),
+                        },
+                    }
+                )
         return converted
 
     def _convert_tool_choice(

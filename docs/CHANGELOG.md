@@ -1,5 +1,20 @@
 # CHANGELOG.md — Beru
 
+## 2026-09-29 — Fix OpenAI-compatible tool converter to support pre-formatted OpenAI tool schemas
+
+**Commit:** Pending
+
+### Why
+When `ConversationService` formatted tool definitions via `_tool_def_to_openai()` into OpenAI `{"type": "function", "function": {...}}` schema, `OpenAICompatibleLLMProvider._convert_tools()` expected flat dictionaries with `tool["name"]`, raising `KeyError: 'name'` and dropping incoming conversational messages.
+
+### What changed
+- `backend/app/intelligence/providers/openai_compatible.py`: Updated `_convert_tools()` to check for existing `"type"` / `"function"` keys and pass pre-formatted OpenAI tool objects through cleanly.
+
+### Verification
+- Tested `ConversationService.process_message()` with user input "Hey beru" against live Groq model (`openai/gpt-oss-120b`).
+- Successfully returned conversational greeting with personal identity without error.
+- All 303 automated tests pass.
+
 ## 2026-09-29 — Fix PostgreSQL native enums for identity and briefing models, safe session commits, and link user profile
 
 **Commit:** `13fe634`
