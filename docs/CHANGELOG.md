@@ -2,7 +2,7 @@
 
 ## 2026-09-29 — Fix duplicate slash-lab entries during timetable extraction
 
-**Commit:** Pending
+**Commit:** `cdbfef3`
 
 ### Why
 During live runtime verification of PDF timetable extraction on Telegram, slash-separated lab entries (such as `11:00-13:00 CN LAB / CF LAB`) appeared twice in the review grid (yielding 32 entries instead of 28). Both `PdfTimetableExtractor` and `OcrTimetableExtractor` already construct `ExtractedCell` instances for slash labs in `result.cells`. The secondary loop in `TimetableService.extract_timetable()` iterating over `result.slash_labs` was re-inserting them, duplicating every slash-lab session.
