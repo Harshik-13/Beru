@@ -2,7 +2,7 @@
 
 ## 2026-09-29 — Complete real-usage gaps: Telegram media ingestion, timetable prompt, confirmation tool, and persistent conversation context
 
-**Commit:** Pending
+**Commit:** `ec4fad8`
 
 ### Why
 Following successful live Telegram conversation testing, several operational gaps remained for real-world academic assistance:

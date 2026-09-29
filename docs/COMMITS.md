@@ -85,6 +85,7 @@
 | `2c16e7d` | 2026-09-29 | Align enum values with DB | Telegram | RUNTIME VERIFIED |
 | `055bb09` | 2026-09-29 | Fix session lifetime and enum casting | Telegram | RUNTIME VERIFIED |
 | `3d11e42` | 2026-09-29 | Align TelegramLinkingChallenge status with PostgreSQL native enum | Telegram | RUNTIME VERIFIED |
+| `ec4fad8` | 2026-09-29 | Timetable media ingestion, proactive prompt, confirmation tool, multi-turn context | Telegram, Intelligence | 308 tests pass |
 | `13fe634` | 2026-09-29 | Fix PostgreSQL native enums, export models, and safe commits | Telegram, DB | RUNTIME VERIFIED |
 
 ## Briefing
