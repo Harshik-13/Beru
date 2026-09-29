@@ -1,5 +1,39 @@
 # CHANGELOG.md — Beru
 
+## 2026-09-29 — Add permanent documentation synchronization rule
+
+**Commit:** pending
+
+### Why
+Documentation synchronization must happen automatically after every task. User should never need to explicitly request documentation updates.
+
+### What changed
+- Added permanent documentation synchronization rule to AGENTS.md
+- Rule applies to every task, no matter how small
+- Defines mandatory post-task loop: IMPLEMENT → TEST → SECURITY CHECK → RECONCILE MARKDOWN → UPDATE STATE → UPDATE CHANGELOG → UPDATE COMMIT INDEX → VERIFY → COMMIT
+- Defines changelog entry requirements
+- Defines status vocabulary usage rules
+
+### Why this approach
+Documentation is shared persistent project memory between multiple AI agents (OpenCode, Antigravity). Must be kept in sync automatically.
+
+### Why these files
+- AGENTS.md: agent rulebook
+
+### Why other obvious areas were not changed
+- Other docs unaffected by this rule change
+
+### Verification
+- 292 tests pass (no code changes)
+
+### Runtime verification
+NOT RUNTIME VERIFIED — documentation only
+
+### Result
+Documentation synchronization is now part of Definition of Done.
+
+---
+
 ## 2026-09-29 — Fix TelegramLinkingChallengeRepository session lifetime and enum casting
 
 **Commit:** `055bb09`

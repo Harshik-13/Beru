@@ -1,5 +1,11 @@
 # COMMITS.md — Beru
 
+## Infrastructure
+
+| Commit | Date | Purpose | Subsystem | Verification |
+|--------|------|---------|-----------|--------------|
+| `3806fd4` | 2026-09-29 | Reconcile project documentation | Docs | 292 tests pass |
+
 ## Foundation
 
 | Commit | Date | Purpose | Subsystem | Verification |

@@ -57,6 +57,59 @@ Every implementation task must reconcile project documentation.
 
 Do not modify documentation unnecessarily when its information has not changed.
 
+## PERMANENT DOCUMENTATION SYNCHRONIZATION RULE
+
+Documentation synchronization is part of EVERY engineering task and must happen automatically. The user should NEVER have to explicitly tell the agent to update Markdown files.
+
+**AFTER EVERY TASK, NO MATTER HOW SMALL:**
+
+1. Reconcile the relevant Markdown documentation with the actual change.
+2. Update ALL canonical Markdown files whose information is affected.
+3. Update `STATE.md` to reflect the resulting current state.
+4. Update `CHANGELOG.md` with what changed and why.
+5. Update `COMMITS.md` when a commit was created.
+6. Update `ARCHITECTURE.md` if architecture/relationships/flows changed.
+7. Update `REQUIREMENTS.md` if requirements/scope/constraints changed.
+8. Update `PROJECT.md` if project identity, scope, or goals changed.
+9. Update `AGENTS.md` if an agent rule/workflow changed.
+10. Update `DOCUMENTATION_INDEX.md` if the documentation structure changed.
+
+**DO NOT blindly touch files.** "Every Markdown file should get updated" means every canonical file must be CHECKED for impact. If unaffected, leave unchanged. Do NOT fabricate updates.
+
+**SOURCE OF TRUTH priority:**
+1. Actual current source code
+2. Tests and verified runtime behavior
+3. Git history
+4. Canonical Markdown documentation
+5. Historical/archive documentation
+
+**STATUS VOCABULARY — never claim without evidence:**
+- IMPLEMENTED — code exists and is wired
+- TESTED — tests exist and pass
+- RUNTIME_VERIFIED — actually executed and observed
+- USER_VERIFIED — explicitly confirmed by user
+- BLOCKED — cannot proceed
+- PARTIAL — incomplete integration
+- NOT VERIFIED — no evidence
+
+**MANDATORY POST-TASK LOOP:**
+
+```
+IMPLEMENT → TEST → SECURITY CHECK → RECONCILE ALL AFFECTED MARKDOWN →
+UPDATE STATE → UPDATE CHANGELOG → UPDATE COMMIT INDEX IF COMMITTED →
+VERIFY DOCUMENTATION CONSISTENCY → COMMIT
+```
+
+Documentation reconciliation is NOT a separate optional task. It is part of the same task. The repository must leave every completed task internally consistent: CODE = DOCUMENTATION.
+
+**CHANGELOG ENTRY REQUIREMENT:**
+
+Every meaningful task must produce a CHANGELOG entry containing: date, task/change, why it changed, what changed, files changed, why those files, implementation approach, tests/verification, security considerations, commit hash, remaining limitations/blockers. For tiny changes, keep concise. Do not create fake detail.
+
+**NO EXCEPTIONS:**
+
+Do not skip documentation reconciliation because: "the change is tiny", "it is only a test", "the change is obvious", "the user didn't ask", "another agent will update it", "we can update docs later", "it doesn't need documentation". This rule is now part of the project's permanent Definition of Done.
+
 ## Project Identity
 
 - **Name:** Beru (College Copilot)
