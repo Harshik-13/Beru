@@ -1,174 +1,209 @@
-# Architecture — Beru
+# ARCHITECTURE.md — Beru
 
-## Current State (Implemented)
+## CURRENT IMPLEMENTATION
 
-- FastAPI application with health endpoint
-- Environment-based configuration via Pydantic Settings
-- Project structure with module boundaries
-- Linting (ruff) and type checking (mypy) configured
-- **Async SQLAlchemy 2.x database layer with PostgreSQL**
-- **Student, WhatsAppIdentity, AuditEvent models with UUID primary keys**
-- **Repository pattern for data access**
-- **Pydantic schemas for internal data validation**
-- **Alembic migration for initial schema**
-- **Ownership isolation tests**
-- **Authentication context and identity resolution**
-- **Authorization primitives and service**
-- **Audit logging foundation (AuditEvent model)**
-- **Provider-neutral WhatsApp identity abstraction**
-- **WhatsApp provider abstraction layer** (`app/whatsapp/provider.py`)
-- **Normalized WhatsApp event models** (`app/whatsapp/models.py`)
-- **WhatsApp authentication integration** (`app/whatsapp/auth.py`)
-- **Mock spike for Baileys adapter** (`app/whatsapp/spike.py`)
-- **Core isolation tests** (`backend/tests/test_whatsapp_isolation.py`)
+### High-Level Architecture
 
-## Planned Architecture
-
-### Modular Monolith
-
-Beru is a single-deployment application with clear module boundaries. Background workers run as isolated processes within the same deployment. Microservices are not planned unless there is a documented, unavoidable reason.
-
-### Trust Boundaries
+Beru is a modular monolith FastAPI application. All background workers run as asyncio tasks within the same process. The application is Telegram-first (Personal Alpha), with WhatsApp as a replaceable future adapter.
 
 ```
-WhatsApp ──→ [WhatsApp Adapter] ──→ [API Layer] ──→ [Security/Auth] ──→ [Service Layer] ──→ [Domain Logic]
-                                                                               │
-LLM ──→ [LLM Adapter] ──→ [Tool Dispatcher] ──→ [Backend Authorization] ──┘    │
-                                                                               │
-College Portal ──→ [Portal Adapter] ──→ [Validation] ──→ [Service Layer] ──────┘
-                                                                               │
-                                                                               ▼
-                                                                      [Database (PostgreSQL)]
+Telegram Bot API ←→ TelegramBotAdapter ←→ TelegramMessageHandler ←→ ConversationService ←→ LLM Provider
+                                                                    ↓
+                                                              ToolRegistry
+                                                                    ↓
+                                                    TimetableService / AttendanceService
+                                                                    ↓
+                                                              PostgreSQL (SQLAlchemy)
 ```
 
-- **Backend** is the security boundary. All operations pass through authorization.
-- **LLM** is NOT a security boundary. It can only request allowlisted, typed tools.
-- **External content** (WhatsApp, portal, OCR, LLM) is always untrusted.
+### Application Entry Point
 
-### Module Map
+- `backend/app/main.py` — FastAPI app with lifespan management
+- Lifespan initializes: rate limiter, Telegram adapter, LLM provider, message handler, briefing scheduler
+- Shutdown stops: briefing scheduler, message handler, Telegram adapter, LLM provider
 
-| Module | Purpose | Status |
-|---|---|---|
-| `app/api/` | HTTP endpoints, request routing | Scaffolded |
-| `app/core/` | Configuration, environment, database | Implemented |
-| `app/domain/` | Deterministic business logic | Empty (planned) |
-| `app/models/` | SQLAlchemy ORM models | **Implemented (Student, WhatsAppIdentity, AuditEvent)** |
-| `app/repositories/` | Database access | **Implemented (StudentRepository, WhatsAppIdentityRepository, AuditEventRepository)** |
-| `app/schemas/` | Pydantic request/response schemas | **Implemented (internal schemas)** |
-| `app/services/` | Application services | Empty (planned) |
-| `app/integrations/` | External adapters (portal, etc.) | Empty (planned) |
-| `app/workers/` | Background jobs | Empty (planned) |
-| `app/security/` | Auth, authorization, audit | **Implemented (context, auth, authz, audit)** |
-| `app/llm/` | LLM abstraction layer | Empty (planned) |
-| `app/whatsapp/` | WhatsApp abstraction layer | **Implemented (provider abstraction, models, auth, spike)** |
+### Module Boundaries
 
-### Data Ownership Model
+| Module | Purpose | Key Files |
+|--------|---------|-----------|
+| `app/api/` | HTTP endpoints | `health.py`, `dependencies.py` |
+| `app/core/` | Configuration, database | `config.py`, `database.py` |
+| `app/models/` | SQLAlchemy ORM models | `student.py`, `telegram_identity.py`, `telegram_linking_challenge.py`, `timetable.py`, `attendance.py`, `briefing_delivery.py`, `audit_event.py`, `whatsapp_identity.py`, `portal_credential.py` |
+| `app/repositories/` | Database access layer | One repo per model |
+| `app/schemas/` | Pydantic schemas | `student.py`, `whatsapp_identity.py` |
+| `app/security/` | Auth, authorization, audit | `context.py`, `authentication.py`, `authorization.py`, `authorization_service.py`, `student_resolver.py`, `audit.py` |
+| `app/intelligence/` | LLM + conversation + tools | `models/`, `providers/`, `services/`, `tools/` |
+| `app/telegram/` | Telegram adapter + linking | `bot_adapter.py`, `message_handler.py`, `linking_service.py`, `auth.py`, `models.py`, `provider.py` |
+| `app/whatsapp/` | WhatsApp abstraction (future) | `provider.py`, `models.py`, `auth.py`, `spike.py`, `baileys_adapter.py` |
+| `app/integrations/portal/` | Doctus portal adapter | `doctus.py`, `parser.py`, `sync_service.py`, `credential_store.py`, `credentials.py`, `dto.py` |
+| `app/workers/` | Background workers | `briefing_scheduler.py` |
+| `app/llm/` | LLM abstraction (empty, providers in intelligence/) | `__init__.py` |
 
-- Every resource has an `owner_id` derived from the authenticated user.
-- Client-supplied owner IDs are never trusted.
-- Multi-user isolation exists from day one.
-- **Student is the ownership root** — all student-owned resources resolve ownership through `Student.id`.
-- **WhatsAppIdentity links external identities to Student** — provider-neutral design allows multiple identity providers.
+### Telegram Adapter
 
-### Provider Abstraction Strategy
+- `TelegramBotAdapter` — Long polling via Bot API (`getUpdates`/`sendMessage`)
+- Normalizes updates to `IncomingTelegramMessage` / `OutgoingTelegramMessage`
+- Handles `/start` command for identity linking (challenge creation)
+- Challenge repository injected at startup (session-factory pattern)
+- Idempotency: in-memory `_processed_updates` set (last 10K IDs)
 
-External providers are behind Python abstract base classes (ABCs) or Protocols. The core application depends only on the interface, not the implementation. Concrete providers live in `integrations/`, `whatsapp/`, and `llm/`.
-
-### Database Transaction Convention
-
-- Services control transaction boundaries.
-- Repositories receive an `AsyncSession` and perform operations within it.
-- Repositories do not commit; they flush to generate IDs.
-- Services commit or rollback the transaction.
-
-### Authentication & Authorization Flow
+### Identity/Authentication Flow
 
 ```
-WhatsApp Bridge
-       ↓
-Raw IncomingIdentity (provider + external_id)
-       ↓
-AuthenticationResolver (DatabaseStudentResolver)
-       ↓
-WhatsAppIdentity lookup (provider, external_identity_id)
-       ↓
-If ACTIVE → AuthenticatedIdentity (student_id, provider, method)
-       ↓
-AuthorizationService.authorize_resource(student_id, resource_owner_id)
-       ↓
-If authorized → Service executes domain operation
-       ↓
-AuditService logs security event
+Telegram user sends message
+  → TelegramBotAdapter._process_update → _handle_message
+  → If /start: _handle_start_command (creates challenge, sends onboarding)
+  → Else: queued to _message_queue
+  → TelegramMessageHandler._process_messages consumes queue
+  → TelegramIdentityResolver.resolve(incoming_identity)
+  → DatabaseStudentResolver looks up TelegramIdentity by (provider, provider_user_id)
+  → If ACTIVE → AuthenticatedIdentity(student_id)
+  → If not found/inactive → UnauthenticatedIdentity
 ```
 
-- **No username/password authentication** — Beru is WhatsApp-first
-- **Identity resolution** — External WhatsApp identity → WhatsAppIdentity → Student
-- **Authorization** — Every resource access validated against authenticated student
-- **Audit logging** — All auth/authz events recorded immutably
+### Authorization/Ownership Boundary
 
-### WhatsApp Flow (Implemented Abstraction)
+- `Student` is the ownership root
+- `TelegramIdentity` links external identity to Student
+- `DatabaseStudentResolver` resolves external identity → Student
+- Every resource access scoped to authenticated `student_id`
+- Client-supplied owner IDs never trusted
 
-```
-Student sends WhatsApp message
-  → WhatsApp bridge receives webhook
-  → Adapter normalizes message to internal event
-  → API layer validates and authenticates
-  → LLM adapter extracts intent + entities
-  → Tool dispatcher selects typed tool
-  → Backend authorizes and executes
-  → Response flows back through adapter to WhatsApp
-```
-
-### Future: LLM/Tool Flow
+### Conversation/Intelligence Flow
 
 ```
-Natural language input
-  → LLM extracts intent and entities
-  → LLM selects typed tool from allowlist
-  → Backend validates tool request
-  → Backend authorizes against ownership
-  → Application service executes
-  → Domain logic computes deterministic result
-  → Structured result returned
-  → LLM generates natural language response
+TelegramMessageHandler._handle_message(message)
+  → Identity resolution (TelegramIdentityResolver)
+  → StudentRepository.get_or_create(student_id)
+  → StudentProfile built from persisted Student fields
+  → StudentContext created
+  → ConversationService.process_message(context, text)
+    → _interpret_intent (LLM or mock)
+    → If tool_request: _execute_tool
+      → ToolRegistry.get(tool_name)
+      → execute_timetable_tool / execute_attendance_tool
+      → Deterministic backend execution
+      → LLM generates natural response from tool result
+    → If clarification: _handle_clarification
+    → Else: direct LLM response
+  → Response sent via TelegramBotAdapter.send_message
 ```
 
-### Future: Attendance Domain
+### LLM Provider Abstraction
 
-Attendance calculation lives entirely in `app/domain/`. It is deterministic — no randomness, no LLM involvement in computation. The LLM provides the user's question; the domain service returns the answer.
+- `LLMProvider` ABC in `app/intelligence/providers/base.py`
+- `LLMProviderRegistry` — global registry, providers self-register on import
+- `OpenAICompatibleLLMProvider` — works with OpenRouter, NVIDIA, OpenCode Zen, local models
+- `MockLLMProvider` — deterministic test double
+- `create_llm_provider()` factory in `app/intelligence/providers/__init__.py` — creates provider from settings
+- Provider/model configurable via `.env` (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, `LLM_BASE_URL`)
+- Rate limiting per student via `RateLimiter`
 
-### Future: Timetable State Machine
+### Tool Registry/Dispatch
 
-```
-UPLOADED → EXTRACTING → REVIEW_REQUIRED → CONFIRMED → ARCHIVED
-                   ↓
-                 FAILED
-```
+- `ToolRegistry` in `app/intelligence/tools/registry.py`
+- Tools: `get_today_schedule`, `get_tomorrow_schedule`, `get_next_class`, `get_first_class_tomorrow`, `get_timetable_status`, `needs_lab_batch`, `set_lab_batch`, `simulate_absence`
+- LLM selects tool via function calling; backend validates and executes
+- Tool results are deterministic; LLM only formats natural language response
 
-Only `CONFIRMED` timetables are used for attendance projections.
+### Domain Services
 
-### Future: Background Workers
+**TimetableService** (`app/intelligence/services/timetable_service.py`):
+- State machine: `UPLOADED → EXTRACTING → REVIEW_REQUIRED → CONFIRMED → ARCHIVED` (FAILED possible)
+- Only CONFIRMED timetables used for queries
+- Slash labs resolved at confirm time based on student's `lab_batch`
+- Deterministic schedule queries: today, tomorrow, next class, first class
 
-Workers run as isolated processes. They consume from a job queue (to be determined). Workers must be idempotent and handle duplicate execution gracefully.
+**AttendanceService** (`app/intelligence/services/attendance_service.py`):
+- Deterministic calculations: percentage, simulation, recovery
+- Simulation formula: `((x + (N - m)) / (y + N)) * 100`
+- No LLM involvement in arithmetic
+- Snapshots with provenance (source, captured_at, semester_id)
 
-## Rollout Phases
+**BriefingService** (`app/intelligence/services/briefing.py`):
+- Transport-agnostic; no Telegram/WhatsApp imports
+- Uses TimetableService + AttendanceService for facts
+- Deterministic rendering (no LLM)
+- Staleness detection (>7 days)
 
-| Phase | Scope | Status |
-|---|---|---|
-| 1 | Foundation scaffolding | ✅ Complete |
-| 2 | Database, auth, multi-user ownership | ✅ **Complete** |
-| 3 | WhatsApp abstraction, message processing | ✅ **Complete** (abstraction + spike) |
-| 4 | LLM abstraction, tool dispatch | Not started |
-| 5 | Attendance domain engine | Not started |
-| 6 | Timetable ingestion and state machine | Not started |
-| 7 | Daily briefing worker | Not started |
-| 8 | College portal integration | Not started |
-| 9 | Invite-only pilot | Not started |
-| 10 | Broader college platform | Not started |
+### Database/Persistence
 
-## Open Questions
+- PostgreSQL via SQLAlchemy 2.x async
+- `async_session_factory` in `app/core/database.py`
+- Alembic migrations in `migrations/versions/`
+- Models: Student, TelegramIdentity, TelegramLinkingChallenge, Timetable, TimetableEntry, AttendanceSnapshot, SubjectAttendance, BriefingDelivery, AuditEvent, WhatsAppIdentity, PortalCredential
+- Repository pattern: one repo per model, session injected
 
-- LLM provider selection
-- Background job queue technology
-- Deployment target (VPS, Railway, Fly.io, local)
-- Production WhatsApp provider (Meta Cloud API migration path)
+### Background Workers
+
+**BriefingScheduler** (`app/workers/briefing_scheduler.py`):
+- Runs every 60 seconds (configurable)
+- Finds active students with active Telegram identities
+- Checks if briefing time has passed in student's local timezone
+- Creates BriefingDelivery record (idempotent via unique constraint on student_id + delivery_date)
+- Generates briefing via BriefingService
+- Sends via TelegramBotAdapter
+- Marks delivery as sent/failed
+
+### Configuration
+
+- Pydantic Settings in `app/core/config.py`
+- `.env` file (gitignored)
+- Key settings: `DATABASE_URL`, `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, `LLM_BASE_URL`, `TELEGRAM_ENABLED`, `TELEGRAM_BOT_TOKEN`, `BRIEFING_SCHEDULER_INTERVAL_SECONDS`
+
+### External Integrations
+
+- **Telegram Bot API** — Long polling, sendMessage
+- **Doctus Portal** — Login, semester retrieval, attendance HTML parsing
+- **OpenAI-compatible APIs** — Chat completions with function calling
+
+### Test Architecture
+
+- pytest with `asyncio_mode = "auto"`
+- `conftest.py` provides `client` fixture (AsyncClient for FastAPI app)
+- Test files: `test_attendance.py`, `test_auth.py`, `test_briefing.py`, `test_briefing_delivery.py`, `test_briefing_scheduler.py`, `test_health.py`, `test_intelligence.py`, `test_models.py`, `test_portal.py`, `test_student_profile.py`, `test_telegram_isolation.py`, `test_telegram_startup.py`, `test_timetable.py`, `test_whatsapp_isolation.py`
+- Mock-based unit tests; no live DB required for most tests
+- `MockLLMProvider` for testing without real LLM calls
+
+### Important Security Boundaries
+
+- Backend is the security boundary; LLM is NOT
+- LLM can only request allowlisted, typed tools
+- External content (Telegram, portal, LLM output) is always untrusted
+- Student ownership derived from authenticated identity, never from client input
+- Audit logging for security-sensitive operations
+- No credentials in logs or responses
+
+### Important Data Flows
+
+1. **Telegram message → Response:**
+   Telegram → BotAdapter → MessageQueue → MessageHandler → IdentityResolver → ConversationService → LLM → ToolRegistry → DomainService → DB → LLM (response formatting) → BotAdapter → Telegram
+
+2. **Briefing delivery:**
+   Scheduler → StudentRepository → TelegramIdentityRepository → BriefingDeliveryRepository → BriefingService → TimetableService + AttendanceService → BotAdapter → Telegram
+
+3. **Identity linking:**
+   /start → Challenge creation → Student enters challenge → LinkingService.verify → TelegramIdentity creation → Audit log
+
+---
+
+## FUTURE/PLANNED ARCHITECTURE
+
+### WhatsApp as Primary Interface
+
+- WhatsApp provider abstraction already exists (`app/whatsapp/provider.py`)
+- Baileys adapter spike complete (`app/whatsapp/baileys_adapter.py`)
+- Future: WhatsApp becomes primary interface; Telegram remains as alternative
+
+### Broader Platform
+
+- Multi-college tenancy
+- Controlled pilot with selected students
+- Broader college-wide deployment
+
+### Potential Future Enhancements
+
+- Webhook-based Telegram updates (instead of long polling)
+- Message queue for background jobs (currently in-process asyncio tasks)
+- Caching layer for frequently accessed data
+- More sophisticated conversation context persistence

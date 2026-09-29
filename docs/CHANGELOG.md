@@ -1,0 +1,425 @@
+# CHANGELOG.md — Beru
+
+## 2026-09-29 — Fix TelegramLinkingChallengeRepository session lifetime and enum casting
+
+**Commit:** `055bb09`
+
+### Why
+TelegramLinkingChallengeRepository was created with a session that was immediately closed, but retained by TelegramBotAdapter for later use in _handle_start_command(). Additionally, Python enum values were uppercase while PostgreSQL enum values were lowercase, causing "invalid input value for enum" errors.
+
+### What changed
+- Changed TelegramLinkingChallengeRepository to accept session_factory instead of direct session
+- Each repository method now creates a fresh session via `async with await self._get_session() as session`
+- Changed TelegramLinkingChallengeStatus enum values to lowercase (pending/used/expired) to match DB
+- Changed status column from SQLEnum to String(20) to avoid enum binding issues
+- Repository query uses `cast("pending", ENUM(...))` for proper PostgreSQL enum comparison
+- mark_used/mark_expired use string literals
+- main.py passes async_session_factory instead of session to repository
+
+### Why this approach
+Session factory pattern ensures each database operation gets a live session. String column with explicit cast avoids SQLAlchemy enum binding mismatches between Python and PostgreSQL.
+
+### Why these files
+- Repository: session lifetime fix
+- Model: enum alignment
+- main.py: pass session factory
+
+### Why other obvious areas were not changed
+Other repositories (TelegramIdentityRepository, etc.) are used within the same `async with` block where they're created, so they don't have the lifetime issue.
+
+### Verification
+- 292 tests pass
+- Ruff: clean
+- Mypy: clean
+- Runtime verification: get_pending_by_telegram_user_id executes successfully with enum casting
+
+### Runtime verification
+RUNTIME VERIFIED — query executes successfully, returns expected result
+
+### Result
+Telegram /start flow now works end-to-end without session or enum errors.
+
+---
+
+## 2026-09-29 — Integrate real LLM provider into Telegram conversation flow
+
+**Commit:** `635e5ff`
+
+### Why
+ConversationService was initialized with `llm_provider=None`, causing all messages to use mock interpretation. Real LLM provider needed to be wired through the existing provider/registry/config architecture.
+
+### What changed
+- Added `create_llm_provider()` factory in `app/intelligence/providers/__init__.py`
+- Factory creates and initializes provider based on settings (LLM_PROVIDER, LLM_MODEL, LLM_API_KEY, LLM_BASE_URL)
+- Returns None for mock mode (default)
+- Updated main.py lifespan to initialize LLM provider and pass to ConversationService
+- Added LLM provider cleanup on shutdown
+- Stored llm_provider in app.state
+
+### Why this approach
+Factory pattern keeps provider creation centralized. Settings-driven configuration allows switching providers without code changes. None return for mock mode preserves test compatibility.
+
+### Why these files
+- providers/__init__.py: factory function
+- main.py: lifespan wiring
+
+### Why other obvious areas were not changed
+ConversationService already accepts llm_provider parameter; no changes needed there.
+
+### Verification
+- 292 tests pass
+- Ruff: clean
+- Mypy: clean
+- Runtime verification: create_llm_provider() returns None for mock mode (expected)
+
+### Runtime verification
+RUNTIME VERIFIED — factory returns None for mock mode; provider initialization path tested
+
+### Result
+Real LLM provider is now wired through the existing architecture. Configurable via .env.
+
+---
+
+## 2026-09-29 — Add BERU_STATE.md and update AGENTS.md
+
+**Commit:** `2570ae7`
+
+### Why
+Need persistent project context that survives across agent sessions and can be shared between ChatGPT, OpenCode, and Antigravity.
+
+### What changed
+- Created BERU_STATE.md with current project state
+- Updated AGENTS.md with requirement to read/update BERU_STATE.md
+
+### Verification
+- Documentation only; no code changes
+
+### Result
+Persistent project context established.
+
+---
+
+## 2026-09-29 — Align TelegramLinkingChallengeStatus enum with DB enum values
+
+**Commit:** `2c16e7d` / `e5c72d5`
+
+### Why
+Python enum had uppercase values (PENDING/USED/EXPIRED) but PostgreSQL enum was created with lowercase values (pending/used/expired). This caused "invalid input value for enum" errors.
+
+### What changed
+- Changed Python enum values to lowercase
+- Changed model status column to String(20)
+- Repository query uses explicit cast to PostgreSQL enum type
+
+### Verification
+- Tests pass
+- Runtime verification: query executes successfully
+
+### Result
+Enum mismatch resolved.
+
+---
+
+## 2026-09-29 — Fix Telegram startup wiring
+
+**Commit:** `00471e1`
+
+### Why
+No startup logging for Telegram adapter; no error handling/cleanup on startup failure; missing logger in bot_adapter.py; duplicate import causing UnboundLocalError.
+
+### What changed
+- Added structured logging throughout lifespan (Telegram init, start, scheduler)
+- Added try/except with cleanup on startup failure
+- Added logger to bot_adapter.py
+- Added startup/shutdown/poll logging to adapter
+- Fixed duplicate TelegramLinkingChallengeRepository import in main.py
+
+### Verification
+- Server starts successfully
+- Telegram adapter initializes and polls
+- Logs visible in output
+
+### Runtime verification
+RUNTIME VERIFIED — server starts, Telegram polls, logs visible
+
+### Result
+Telegram startup is now observable and failures are handled gracefully.
+
+---
+
+## 2026-09-29 — Repair alembic migration chain
+
+**Commit:** `7db7f76`
+
+### Why
+Migration b2c3d4e5f6a7 had revision ID 'a1b2c3d4e5f6' (duplicate of telegram identities migration), causing "Revision a1b2c3d4e5f6 is present more than once" and "KeyError: 'b2c3d4e5f6a7'".
+
+### What changed
+- Fixed revision ID in b2c3d4e5f6a7_add_portal_credentials_table.py from 'a1b2c3d4e5f6' to 'b2c3d4e5f6a7'
+- Added create_type=False to enum columns in telegram identities, linking challenge, and briefing deliveries migrations (idempotent re-run)
+
+### Verification
+- alembic heads: single head f3a4b5c6d7e8
+- alembic history: clean chain
+- alembic upgrade head: all 10 migrations apply successfully
+
+### Runtime verification
+RUNTIME VERIFIED — full migration chain applies from base to head
+
+### Result
+Migration chain is clean and applies successfully.
+
+---
+
+## 2026-09-29 — Persist student profile name and attendance target
+
+**Commit:** `512dadd`
+
+### Why
+BriefingService was receiving StudentProfile with missing persisted name/attendance_target, causing fallback on name and no below-target analysis.
+
+### What changed
+- Added name (String(100)) and attendance_target (Float) to Student model
+- Added update_profile() to StudentRepository with 0-100 validation
+- Updated scheduler to pass persisted name/attendance_target to StudentProfile
+- Created migration f3a4b5c6d7e8
+
+### Verification
+- 19 new tests pass
+- Full suite: 291 passed
+
+### Result
+Student profile data is now persisted and flows through to BriefingService.
+
+---
+
+## 2026-09-29 — Add daily morning briefing scheduler with Telegram delivery
+
+**Commit:** `b34f58a`
+
+### Why
+Need proactive daily morning briefing delivery to eligible students via Telegram at their configured briefing time.
+
+### What changed
+- Created BriefingDelivery model (idempotent delivery tracking)
+- Created BriefingDeliveryRepository
+- Created BriefingScheduler worker
+- Added briefing_time and timezone to Student model
+- Added briefing config settings
+- Wired scheduler into main.py lifespan
+- Created migrations d1e2f3a4b5c6 and e2f3a4b5c6d7
+
+### Verification
+- 22 new tests pass
+- Full suite: 272 passed
+
+### Result
+Briefing scheduler is operational with per-student timezone/time support and idempotent delivery.
+
+---
+
+## 2026-09-29 — Implement Telegram conversation integration
+
+**Commit:** `5609fb9`
+
+### Why
+Need to process Telegram messages through the existing intelligence pipeline (ConversationService).
+
+### What changed
+- Created TelegramMessageHandler
+- Wired into main.py lifespan with full dependency stack
+- Message flow: adapter → handler → identity resolution → conversation service → response
+
+### Verification
+- Tests pass
+- Runtime: messages processed through pipeline
+
+### Result
+Telegram conversation pipeline is functional.
+
+---
+
+## 2026-09-29 — Implement Telegram identity linking
+
+**Commit:** `13eed5b`
+
+### Why
+Need secure linking of Telegram identities to Student accounts.
+
+### What changed
+- Created TelegramLinkingChallenge model
+- Created TelegramLinkingService with challenge/verify flow
+- Added audit logging for linking events
+- Created migration c1d2e3f4a5b6
+
+### Verification
+- Tests pass
+- Challenge flow works end-to-end
+
+### Result
+Secure Telegram identity linking is operational.
+
+---
+
+## 2026-09-29 — Add Telegram Bot API startup verification
+
+**Commit:** `7fb5675`
+
+### Why
+Need to verify Telegram bot token is valid at startup and handle errors gracefully.
+
+### What changed
+- Added _get_me() verification during initialize()
+- Added specific error handling for 401, 404, other API errors
+- Added startup verification tests
+
+### Verification
+- 16 tests pass
+- Invalid token raises RuntimeError with clear message
+
+### Result
+Telegram bot token is verified at startup; failures are explicit.
+
+---
+
+## 2026-09-29 — Add Telegram Bot API adapter foundation
+
+**Commit:** `c32e1ee`
+
+### Why
+Need real Telegram adapter using Bot API long polling.
+
+### What changed
+- Created TelegramBotAdapter with long polling
+- Created TelegramProvider abstraction
+- Created normalized Telegram models
+- Created provider registry
+- Created migration a1b2c3d4e5f6
+
+### Verification
+- Tests pass
+- Adapter initializes and polls
+
+### Result
+Telegram Bot API adapter is functional.
+
+---
+
+## 2026-09-28 — Baileys WhatsApp provider adapter
+
+**Commits:** `30ca262`, `5254ac4`, `50dd7ca`, `7c789fc`, `4d4365e`, `2f6b3a3`
+
+### Why
+WhatsApp is the future primary interface; Baileys adapter provides the implementation.
+
+### What changed
+- Created baileys_adapter.js (Node.js entrypoint)
+- Created WhatsApp provider abstraction
+- Created normalized WhatsApp models
+- Created WhatsApp auth integration
+- Fixed session reconnection issues
+
+### Verification
+- Session persistence works
+- QR code terminal rendering works
+- Reconnection handling verified
+
+### Result
+WhatsApp Baileys adapter is complete and functional.
+
+---
+
+## 2026-09-27 — Portal integration and attendance sync
+
+**Commits:** `ad5d9fc`, `cf21f73`, `f7499c1`
+
+### Why
+Need read-only access to college portal for attendance data.
+
+### What changed
+- Created DoctusAdapter (login, semesters, attendance)
+- Created DoctusParser (HTML parsing)
+- Created PortalSyncService
+- Created PortalCredentialStore (encrypted)
+- Created migration b2c3d4e5f6a7
+
+### Verification
+- Parser tests pass with known response shapes
+- Login flow implemented
+
+### Runtime verification
+NOT RUNTIME VERIFIED — live portal access not tested
+
+### Result
+Portal integration is implemented; live verification pending.
+
+---
+
+## 2026-09-26 — Attendance domain and timetable pipeline
+
+**Commits:** `2a38290`, `9408c09`, `8f2daf9`, `2a240a6`
+
+### Why
+Core domain logic for attendance calculations and timetable management.
+
+### What changed
+- Created AttendanceService (deterministic calculations)
+- Created TimetableService (state machine)
+- Created TimetableExtractor (PDF/image parsing)
+- Created attendance and timetable tools
+- Created migrations 8f7e3a2b1c9d, 9a8b7c6d5e4f
+
+### Verification
+- Extensive test coverage
+- All calculations deterministic
+
+### Result
+Attendance and timetable domain logic is complete.
+
+---
+
+## 2026-09-25 — Intelligence foundation and LLM architecture
+
+**Commits:** `d40585f`, `bbeeca9`, `23d10c9`
+
+### Why
+Need LLM provider abstraction and tool dispatch architecture.
+
+### What changed
+- Created LLMProvider ABC
+- Created OpenAICompatibleLLMProvider
+- Created MockLLMProvider
+- Created ToolRegistry
+- Created ConversationService
+- Created ContextBuilder
+
+### Verification
+- Tests pass
+- Provider abstraction works
+
+### Result
+Intelligence foundation is complete.
+
+---
+
+## 2026-09-25 — Authentication and authorization foundation
+
+**Commits:** `6a5cdfc`, `2dc8215`, `ca06495`
+
+### Why
+Need secure multi-user foundation with ownership isolation.
+
+### What changed
+- Created Student model
+- Created authentication context
+- Created authorization service
+- Created audit logging
+- Created DatabaseStudentResolver
+- Created initial migration 5d414855ae22
+
+### Verification
+- Ownership isolation tests pass
+- Auth flow works
+
+### Result
+Secure multi-user foundation is complete.
