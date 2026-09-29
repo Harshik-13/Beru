@@ -4,6 +4,7 @@
 
 | Commit | Date | Purpose | Subsystem | Verification |
 |--------|------|---------|-----------|--------------|
+| `fdaea24` | 2026-09-29 | Fix LLM async promise hallucination and normalize weekday tool arguments | Intelligence, Timetable | 62 timetable tests pass |
 | `cdbfef3` | 2026-09-29 | Fix duplicate slash-lab entries during timetable extraction | Timetable, Extraction | 62 timetable tests pass |
 | `77f9271` | 2026-09-29 | Fix MultipleResultsFound on timetable queries with limit(1) | Timetable, DB | 62 timetable tests pass |
 | `c2833d0` | 2026-09-29 | Phase 4C: full E2E pipeline, briefing scheduler integration & natural-language paraphrase simulation | Timetable, Intelligence, Briefing | 331 tests pass |

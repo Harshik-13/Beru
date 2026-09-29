@@ -2,7 +2,7 @@
 
 ## 2026-09-29 — Fix LLM async promise hallucination and normalize weekday tool argument parsing
 
-**Commit:** `pending`
+**Commit:** `fdaea24`
 
 ### Why
 When a student asked "what classes do i have on tuesday" while their uploaded timetable was still in `REVIEW_REQUIRED` (unconfirmed), the tool returned empty confirmed entries. Instead of explaining that their schedule was empty or awaiting confirmation, the LLM generated an async promise ("im pulling specific courses you have on tuesday right now--just a moment, i will share the list with you") without sending any subsequent response. Furthermore, `execute_timetable_tool` required an exact `day_of_week` integer key, which risked failure if an LLM passed `weekday` or string day names.
