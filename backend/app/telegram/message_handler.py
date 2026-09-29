@@ -521,7 +521,7 @@ class TelegramMessageHandler:
                 message_type=TelegramMessageType.TEXT,
                 text=text,
                 chat_id=chat_id,
-                parse_mode=parse_mode,
+                parse_mode=parse_mode or "HTML",
             )
 
             await self._adapter.send_message(outgoing)

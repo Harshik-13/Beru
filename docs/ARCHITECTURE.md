@@ -112,7 +112,21 @@ TelegramMessageHandler._handle_message(message)
 - Phase 2: Review tools (`get_extracted_timetable`, `update/add/delete_timetable_entry`) for corrections during REVIEW_REQUIRED; context builder blocks schedule queries from pending timetables
 - Phase 3: `set_briefing_time`, `get_week_schedule`, `get_schedule_for_weekday`, `get_timetable_metadata` tools; course_metadata mapped onto entries during extraction
 - LLM selects tool via standard OpenAI function calling schemas; backend validates and executes deterministically
-- Tool results are strictly deterministic; LLM receives backend output to synthesize a friendly, senior-copilot response in Beru's persona
+
+### Presentation Layer & Renderer Registry
+
+To eliminate presentation leakage into orchestrator logic (`conversation.py`), Beru uses a decoupled rendering pipeline:
+```
+Tool Result → RendererRegistry → Domain Renderer → Style Contract → Telegram
+```
+- **RendererRegistry** (`app/intelligence/rendering/registry.py`): Central dispatch point routing tool execution results to dedicated domain renderers (`ScheduleRenderer`, `AttendanceRenderer`, `BriefingRenderer`). Fallback to `DefaultRenderer` for generic tools.
+- **ScheduleRenderer** (`app/intelligence/rendering/schedule_renderer.py`):
+  - *Structural Period Merging*: Algorithmically merges consecutive period entries (`e1.end_time == e2.start_time` for same subject, lab batch, and room) based on underlying entry topology into single cohesive spans (e.g. `11:00 – 13:00 CM LAB`, `14:40 – 16:40 CF LAB`).
+  - *Dynamic Batch Resolution & Ambiguity Preservation*: Formats lab sessions according to the authenticated student's stored `lab_batch`. If unknown or unset, explicitly preserves slash ambiguity (`CF LAB / CN LAB [Batch 1 / Batch 2]`) and prompts for resolution rather than assuming Batch 1.
+- **AttendanceRenderer** (`app/intelligence/rendering/attendance_renderer.py`): Formats deterministic attendance summaries, subject breakdowns, deficit indicators (`⚠️`), met targets (`✅`), and simulation projections.
+- **BriefingRenderer** (`app/intelligence/rendering/briefing_renderer.py`): Formats structured morning briefings with greeting, merged schedule, room codes, and key metrics.
+- **Style Contract** (`app/intelligence/rendering/style_contract.py`): Enforces global Beru standards: concise hierarchy, bold labels (`<b>Time:</b>`, `<b>Room:</b>`), `Sir` honorific, minimal functional emojis, and stripping of repetitive greetings (`Hey Harsh!`).
+- **Telegram HTML Delivery & Fallback** (`app/telegram/formatting.py` & `app/telegram/bot_adapter.py`): Formats messages with Telegram HTML; automatic fallback to plain-text on 400 Bad Request entity parsing errors prevents dropped messages.
 
 ### Domain Services
 

@@ -88,6 +88,15 @@ class ContextBuilder:
                 status = "✓" if r.success else "✗"
                 parts.append(f"  {status} {r.tool_name}: {r.result_summary}")
 
+        # Response style guidelines
+        parts.append(
+            "Response Style & Persona:\n"
+            "- Always address the student respectfully as 'Sir'.\n"
+            "- Do NOT start messages with repetitive greetings like 'Hey [Name]!' or 'Hello!'.\n"
+            "- Maintain a concise, professional ChatGPT-style demeanor.\n"
+            "- Use bold labels (<b>Time:</b>, <b>Room:</b>) and keep emojis minimal (functional alerts only)."
+        )
+
         return "\n\n".join(parts)
 
     def _format_student_context(self, ctx: StudentContext) -> str:

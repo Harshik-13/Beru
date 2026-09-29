@@ -1,48 +1,34 @@
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
-from uuid import UUID
+from __future__ import annotations
 
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+from app.intelligence.models.context import (
+    StudentContext,
+    ToolResultRef,
+)
+from app.intelligence.models.identity import BERU_IDENTITY
+from app.intelligence.services.context_builder import (
+    ContextBuilder,
+    create_student_context,
+)
 from app.intelligence.services.rate_limiter import get_rate_limiter
+from app.intelligence.tools.registry import tool_registry
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
     from app.intelligence.models.context import (
         ConversationContext,
-        StudentContext,
         StudentProfile,
-        ToolResultRef,
     )
-    from app.intelligence.models.identity import BERU_IDENTITY, BeruIdentity
+    from app.intelligence.models.identity import BeruIdentity
     from app.intelligence.providers.base import LLMProvider, LLMResponse
     from app.intelligence.services.attendance_service import AttendanceService
-    from app.intelligence.services.context_builder import (
-        ContextBuilder,
-        create_student_context,
-    )
     from app.intelligence.services.timetable_service import TimetableService
     from app.intelligence.tools.registry import (
         ToolDefinition,
         ToolRegistry,
-        tool_registry,
-    )
-else:
-    from app.intelligence.models.context import (
-        ConversationContext,
-        StudentContext,
-        StudentProfile,
-        ToolResultRef,
-    )
-    from app.intelligence.models.identity import BERU_IDENTITY, BeruIdentity
-    from app.intelligence.providers.base import LLMProvider, LLMResponse
-    from app.intelligence.services.attendance_service import AttendanceService
-    from app.intelligence.services.context_builder import (
-        ContextBuilder,
-        create_student_context,
-    )
-    from app.intelligence.services.timetable_service import TimetableService
-    from app.intelligence.tools.registry import (
-        ToolDefinition,
-        ToolRegistry,
-        tool_registry,
     )
 
 
@@ -75,6 +61,7 @@ class ConversationService:
         beru_identity: BeruIdentity | None = None,
         timetable_service: TimetableService | None = None,
         attendance_service: AttendanceService | None = None,
+        renderer_registry: Any | None = None,
     ):
         self.tool_registry = tool_registry_instance or tool_registry
         self.context_builder = context_builder or ContextBuilder()
@@ -83,12 +70,21 @@ class ConversationService:
         self.timetable_service = timetable_service
         self.attendance_service = attendance_service
 
+        if renderer_registry is None:
+            from app.intelligence.rendering.registry import (
+                create_default_renderer_registry,
+            )
+
+            self.renderer_registry = create_default_renderer_registry()
+        else:
+            self.renderer_registry = renderer_registry
+
     def create_student_context(
         self,
         student_id: UUID,
         profile: StudentProfile | None = None,
-        conversation: "ConversationContext | None" = None,
-    ) -> "StudentContext":
+        conversation: ConversationContext | None = None,
+    ) -> StudentContext:
         """Create a new student context."""
         return create_student_context(
             student_id=student_id,
@@ -98,9 +94,9 @@ class ConversationService:
 
     async def process_message(
         self,
-        student_context: "StudentContext",
+        student_context: StudentContext,
         message: str,
-    ) -> tuple[str, "StudentContext"]:
+    ) -> tuple[str, StudentContext]:
         """
         Process a user message and return the response and updated context.
 
@@ -128,10 +124,15 @@ class ConversationService:
                 student_context, intent_result, user_message=message
             )
 
-        # No tool needed - direct response
-        response = intent_result.raw_response or (
-            "I understand. Is there anything specific you'd like help with?"
+        # No tool needed - direct response sanitized by style contract
+        from app.intelligence.rendering.style_contract import (
+            sanitize_conversational_response,
         )
+
+        raw_response = intent_result.raw_response or (
+            "I understand, Sir. Is there anything specific you'd like help with?"
+        )
+        response = sanitize_conversational_response(raw_response)
         new_conv = student_context.conversation.add_message("assistant", response)
         student_context = StudentContext(
             student_id=student_context.student_id,
@@ -142,9 +143,9 @@ class ConversationService:
 
     async def _interpret_intent(
         self,
-        student_context: "StudentContext",
+        student_context: StudentContext,
         message: str,
-    ) -> "IntentResult":
+    ) -> IntentResult:
         """Interpret the user's message to extract intent."""
         if not self.llm_provider:
             # Mock interpretation for testing
@@ -186,7 +187,7 @@ class ConversationService:
 
         return self._parse_intent_response(response)
 
-    def _tool_def_to_dict(self, tool: "ToolDefinition") -> dict:
+    def _tool_def_to_dict(self, tool: ToolDefinition) -> dict:
         return {
             "name": tool.name,
             "description": tool.description,
@@ -196,7 +197,7 @@ class ConversationService:
             "requires_confirmation": tool.requires_confirmation,
         }
 
-    def _tool_def_to_openai(self, tool: "ToolDefinition") -> dict:
+    def _tool_def_to_openai(self, tool: ToolDefinition) -> dict:
         import copy
 
         schema = copy.deepcopy(tool.arguments_schema)
@@ -219,7 +220,7 @@ class ConversationService:
             },
         }
 
-    def _parse_intent_response(self, response: "LLMResponse") -> "IntentResult":
+    def _parse_intent_response(self, response: LLMResponse) -> IntentResult:
         if response.tool_calls:
             tc = response.tool_calls[0]
             return IntentResult(
@@ -237,9 +238,9 @@ class ConversationService:
 
     async def _mock_interpret_intent(
         self,
-        student_context: "StudentContext",
+        student_context: StudentContext,
         message: str,
-    ) -> "IntentResult":
+    ) -> IntentResult:
         """Mock intent interpretation for testing without LLM."""
         msg_lower = message.lower()
 
@@ -365,10 +366,10 @@ class ConversationService:
 
     async def _handle_clarification(
         self,
-        student_context: "StudentContext",
-        intent_result: "IntentResult",
+        student_context: StudentContext,
+        intent_result: IntentResult,
         message: str,
-    ) -> tuple[str, "StudentContext"]:
+    ) -> tuple[str, StudentContext]:
         """Handle a pending clarification."""
         # Add user message
         new_conv = student_context.conversation.add_message("user", message)
@@ -434,10 +435,10 @@ class ConversationService:
 
     async def _execute_tool(
         self,
-        student_context: "StudentContext",
-        intent_result: "IntentResult",
+        student_context: StudentContext,
+        intent_result: IntentResult,
         user_message: str = "",
-    ) -> tuple[str, "StudentContext"]:
+    ) -> tuple[str, StudentContext]:
         """Execute a tool and return the response."""
         tool_req = intent_result.tool_request
         if not tool_req:
@@ -530,14 +531,13 @@ class ConversationService:
             )
             new_conv = student_context.conversation.add_tool_result(tool_result)
 
-            # Generate response from tool result
-            if self.llm_provider:
-                # Use LLM to generate natural response
-                response = await self._generate_response_from_tool_result(
-                    student_context, tool_req["name"], result, user_message=user_message
-                )
-            else:
-                response = f"Done! {result}"
+            # Render response deterministically via RendererRegistry
+            response = self.renderer_registry.render(
+                tool_name=tool_req["name"],
+                result=result,
+                student_context=student_context,
+                user_message=user_message,
+            )
 
             new_conv = new_conv.add_message("assistant", response)
             return response, StudentContext(
@@ -560,7 +560,7 @@ class ConversationService:
 
     async def _generate_response_from_tool_result(
         self,
-        student_context: "StudentContext",
+        student_context: StudentContext,
         tool_name: str,
         result: dict,
         user_message: str = "",
@@ -614,7 +614,7 @@ class ConversationService:
         response = await self.llm_provider.chat_completion(messages=messages)
         return response.content or str(result)
 
-    def get_conversation_summary(self, student_context: "StudentContext") -> str:
+    def get_conversation_summary(self, student_context: StudentContext) -> str:
         """Get a summary of the current conversation state."""
         conv = student_context.conversation
         return (

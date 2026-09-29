@@ -1,8 +1,44 @@
 # CHANGELOG.md — Beru
 
-## 2026-09-29 — Fix LLM async promise hallucination and normalize weekday tool argument parsing
+## 2026-09-29 — Deterministic Structured Renderers, Decoupled RendererRegistry, and Style Contract
 
-**Commit:** `fdaea24`
+**Commit:** Pending
+
+### Why
+Beru's conversational responses for schedules and attendance previously relied on unstructured LLM paraphrasing of raw tool dictionaries. This produced several user-facing flaws: repetitive greetings ("Hey Harsh!"), inconsistent layout hierarchy, hardcoded batch assumptions, failure to collapse contiguous periods (`11:00–12:00` and `12:00–13:00 CM LAB`), and unstructured emoji noise. The user directed that LLMs should decide intent, while deterministic renderers format verified data according to a strict Style Contract with 'Sir' honorific and zero presentation switches inside `ConversationService`.
+
+### What changed
+- `backend/app/intelligence/rendering/`:
+  - `registry.py`: Implemented `RendererRegistry` and `DomainRenderer` protocol. Maps tool execution results to dedicated domain renderers, keeping `ConversationService` strictly as an orchestrator without presentation switches.
+  - `schedule_renderer.py`: Implemented `ScheduleRenderer` with:
+    - *Structural Period Merging*: Collapses consecutive periods ($E_1.\text{end\_time} == E_2.\text{start\_time}$) with matching subject, batch, and room into unified session blocks (e.g. `11:00 – 13:00 CM LAB`, `14:40 – 16:40 CF LAB`).
+    - *Dynamic Batch Resolution & Ambiguity Preservation*: Formats lab sessions according to the authenticated student's stored `lab_batch`. When `lab_batch` is unknown or unset, preserves slash ambiguity (`CF LAB / CN LAB [Batch 1 / Batch 2]`) and prompts for resolution rather than assuming Batch 1.
+    - Day schedules, next class cards, week overviews, and confirmation status.
+  - `attendance_renderer.py`: Implemented `AttendanceRenderer` with deterministic summary cards, subject breakdowns, deficit alerts (`⚠️`), target achievement badges (`✅`), and absence simulations.
+  - `briefing_renderer.py`: Implemented `BriefingRenderer` for daily morning briefings with morning greeting, merged schedule, room codes, and key metrics.
+  - `style_contract.py`: Defined global typography contract (`Sir` honorific, bold labels like `<b>Time:</b>`, `<code>` badges, minimal emojis, and `clean_greetings` sanitizer stripping repetitive "Hey [Name]!" greetings).
+- `backend/app/telegram/formatting.py`:
+  - Implemented `telegram_format()` markdown-to-HTML normalizer and `strip_html_tags()` plain-text fallback utility.
+- `backend/app/telegram/bot_adapter.py`:
+  - Defaulted outgoing messages to `parse_mode="HTML"`. Added automatic fallback retry on HTTP 400 entity parsing errors that strips tags and delivers plain text, preventing dropped messages.
+- `backend/app/telegram/message_handler.py`:
+  - Defaulted outbound message response delivery to `parse_mode="HTML"`.
+- `backend/app/intelligence/services/conversation.py`:
+  - Injected `RendererRegistry` into `ConversationService`.
+  - Replaced LLM tool result paraphrasing in `_execute_tool` with deterministic `self.renderer_registry.render(...)`.
+  - Sanitized direct responses with `sanitize_conversational_response()`.
+- `backend/app/intelligence/services/context_builder.py`:
+  - Added Response Style & Persona guidelines to LLM system prompt instructing respectful 'Sir' address, professional demeanor, and no repetitive greetings.
+- `backend/tests/test_golden_outputs.py`:
+  - Added 10 golden tests validating: Batch 1 Tuesday schedule, Batch 2 Tuesday schedule, Unknown Batch ambiguity preservation, structural period merging, next class card, attendance summary with deficits/margins, morning briefing, greeting stripping, and decoupled `RendererRegistry` dispatch.
+
+### Verification
+- Ran `pytest backend/tests/test_golden_outputs.py` — 10/10 passed in 0.07s.
+- Ran full test suite `pytest` — all 341 tests in repository passed.
+- Ran `ruff check` on all modified files — 0 errors, 100% clean.
+- Hot-reloaded background uvicorn server daemon (task `task-3355`) connected to live Telegram `@BeruHK_bot`.
+
+---
 
 ### Why
 When a student asked "what classes do i have on tuesday" while their uploaded timetable was still in `REVIEW_REQUIRED` (unconfirmed), the tool returned empty confirmed entries. Instead of explaining that their schedule was empty or awaiting confirmation, the LLM generated an async promise ("im pulling specific courses you have on tuesday right now--just a moment, i will share the list with you") without sending any subsequent response. Furthermore, `execute_timetable_tool` required an exact `day_of_week` integer key, which risked failure if an LLM passed `weekday` or string day names.

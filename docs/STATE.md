@@ -3,12 +3,12 @@
 ## Current State
 
 - **Last updated:** 2026-09-29
-- **Current commit:** `fdaea24`
+- **Current commit:** `fe726e6`
 - **Current branch:** master
 
 ## Overall Project Status
 
-Personal Alpha phase. Telegram bot is live and functional. Core intelligence pipeline (LLM → tool dispatch → deterministic backend) is wired. Briefing scheduler is operational. Portal integration (Doctus) is implemented but not runtime-verified against live portal.
+Personal Alpha phase. Telegram bot is live and functional. Core intelligence pipeline (LLM → tool dispatch → deterministic backend) is wired. Presentation Layer with deterministic domain renderers and RendererRegistry is operational. Briefing scheduler is operational. Portal integration (Doctus) is implemented but not runtime-verified against live portal.
 
 ## IMPLEMENTED
 
@@ -16,13 +16,19 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 - PostgreSQL database with SQLAlchemy 2.x async ORM
 - Alembic migrations (10 migrations, chain verified)
 - Student model with profile fields (name, attendance_target, briefing_time, timezone, lab_batch)
-- Telegram Bot API adapter (long polling, message normalization, pure transport bridge, drop pending updates)
+- Telegram Bot API adapter (long polling, message normalization, pure transport bridge, drop pending updates, HTML formatting with plain-text fallback retry on 400 error)
 - Telegram identity linking (challenge/verify flow with audit, HTML formatted token)
-- Telegram message handler (idempotency, request-scoped DB sessions, identity resolution, request-scoped domain services, conversation pipeline)
+- Telegram message handler (idempotency, request-scoped DB sessions, identity resolution, request-scoped domain services, conversation pipeline, HTML parse mode default)
 - LLM provider abstraction (OpenAI-compatible + Mock; aliases for OpenRouter, Groq, OpenAI, NVIDIA, Ollama)
 - Real LLM provider integration (wired in lifespan, dict/object message support, safe tool argument parsing)
-- Conversation service (intent interpretation → tool dispatch → personalized natural language response generation, strict anti-async-hallucination instruction)
+- Conversation service (intent interpretation → tool dispatch → decoupled RendererRegistry dispatch, strict anti-async-hallucination instruction)
 - Tool registry (automatic registration of all timetable and attendance tools)
+- Deterministic presentation layer (`app/intelligence/rendering/`):
+  - `RendererRegistry` dispatches tool execution results cleanly to domain renderers (`conversation.py` free of presentation switches)
+  - `ScheduleRenderer`: structural period merging based on entry topology (`11:00 – 13:00 CM LAB`, `14:40 – 16:40 CF LAB`), dynamic batch resolution against student profile, faithful ambiguity preservation when batch is unknown
+  - `AttendanceRenderer`: attendance metrics with bold labels, code badges, status indicators (✅, ⚠️), and deficit projections
+  - `BriefingRenderer`: morning briefing cards with greeting, merged schedule, and key metrics
+  - `StyleContract`: global standard enforcing 'Sir' honorific, bold labels, minimal emojis, and stripping repetitive greetings ('Hey Harsh!')
 - Timetable service (state machine, extraction, confirmation, queries; no auto-confirm — explicit student confirmation required)
 - Hybrid timetable extractor (PDF vector table extraction + RapidOCR fallback for scanned/image PDFs and photos)
 - Timetable review surface (weekday grid formatter, photo upload through hybrid extractor, pending timetable with entries fetch)
@@ -43,8 +49,8 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 
 ## TESTED
 
-- 331 tests pass (3 warnings related to unawaited test mocks in telegram message handler)
-- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence (real LLM provider, aliases, tool execution), models, portal, student profile, telegram isolation, telegram message handler (media download, photo through extractor, multi-turn context), telegram startup, timetable (including confirm_timetable tool, extraction state machine transitions, no auto-confirm, and hybrid/OCR timetable extraction), whatsapp isolation, timetable end-to-end onboarding suite (`test_timetable_onboarding_e2e.py`: 19 tests covering cross-student isolation, boundary guards, duplicate upload versioning/archival, 12-step PDF onboarding pipeline, BriefingService generation, derived duration arithmetic, lab/theory classification, and natural language paraphrase routing without keyword menus)
+- 341 tests pass (3 warnings related to unawaited test mocks in telegram message handler)
+- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence (real LLM provider, aliases, tool execution), models, portal, student profile, telegram isolation, telegram message handler (media download, photo through extractor, multi-turn context), telegram startup, timetable, whatsapp isolation, timetable end-to-end onboarding suite (`test_timetable_onboarding_e2e.py`: 19 tests), and golden output test suite (`test_golden_outputs.py`: 10 tests covering Batch 1, Batch 2, Unknown Batch ambiguity, structural period merging, next class, attendance summary, daily briefing, style contract, and registry dispatch)
 - Flaky bug fixed: `test_get_next_class` clock flakiness resolved with deterministic `from_time`
 - Ruff: clean on all source files
 - Mypy: clean on all source files

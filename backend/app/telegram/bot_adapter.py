@@ -285,20 +285,24 @@ class TelegramBotAdapter(TelegramProvider):
             )
 
         url = f"https://api.telegram.org/bot{self._config.bot_token}/sendMessage"
+        parse_mode = message.parse_mode or "HTML"
+
+        from app.telegram.formatting import strip_html_tags, telegram_format
+        formatted_text = telegram_format(message.text or "")
+
         payload: dict[str, str | int] = {
             "chat_id": message.chat_id,
-            "text": message.text or "",
+            "text": formatted_text,
+            "parse_mode": parse_mode,
         }
-        if message.parse_mode:
-            payload["parse_mode"] = message.parse_mode
         if message.reply_to_message_id:
             payload["reply_to_message_id"] = int(message.reply_to_message_id)
 
-        short_text = (message.text or "")[:50]
+        short_text = formatted_text[:50]
         logger.info(
             "Sending Telegram message to chat_id=%s (parse_mode=%s): %r...",
             message.chat_id,
-            message.parse_mode,
+            parse_mode,
             short_text,
         )
 
@@ -306,8 +310,23 @@ class TelegramBotAdapter(TelegramProvider):
             data = await resp.json()
             if data.get("ok"):
                 return str(data["result"]["message_id"])
-            else:
-                raise RuntimeError(f"Telegram API error: {data}")
+
+            # Fallback retry without HTML formatting if Telegram entity parsing failed
+            is_parse_err = "parse" in str(data.get("description", "")).lower()
+            if resp.status == 400 and is_parse_err:
+                logger.warning(
+                    "Telegram HTML parsing failed (%s), retrying as plain text...",
+                    data.get("description"),
+                )
+                plain_payload = dict(payload)
+                plain_payload.pop("parse_mode", None)
+                plain_payload["text"] = strip_html_tags(formatted_text)
+                async with self._session.post(url, json=plain_payload) as retry_resp:
+                    retry_data = await retry_resp.json()
+                    if retry_data.get("ok"):
+                        return str(retry_data["result"]["message_id"])
+
+            raise RuntimeError(f"Telegram API error: {data}")
 
     async def download_file(self, file_id: str, destination_path: str) -> str:
         """Download a file from Telegram by file_id to destination_path.
