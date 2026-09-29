@@ -43,8 +43,8 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 
 ## TESTED
 
-- 312 tests pass (1 pre-existing flaky: `test_get_next_class`, time-dependent)
-- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence (real LLM provider, aliases, tool execution), models, portal, student profile, telegram isolation, telegram message handler (media download, multi-turn context), telegram startup, timetable (including confirm_timetable tool, extraction state machine transitions, and hybrid/OCR timetable extraction), whatsapp isolation
+- 283 tests pass (1 pre-existing flaky: `test_get_next_class`, time-dependent)
+- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence (real LLM provider, aliases, tool execution), models, portal, student profile, telegram isolation, telegram message handler (media download, photo through extractor, multi-turn context), telegram startup, timetable (including confirm_timetable tool, extraction state machine transitions, no auto-confirm, and hybrid/OCR timetable extraction), whatsapp isolation
 - Ruff: clean on all source files
 - Mypy: clean on all source files
 
