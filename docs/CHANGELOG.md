@@ -1,5 +1,30 @@
 # CHANGELOG.md — Beru
 
+## 2026-09-29 — Phase 4A: Enrich academic profile, college domain self-model, and semantic tool definitions
+
+**Commit:** `fabf9d2`
+
+### Why
+To make Beru a complete product in the timetable area without falling under keyword-driven heuristics, the agent must be equipped with rich domain context (college identity, period structure, theory vs lab distinctions), full academic student profile metadata (section, department, year, semester), and semantically expressive tool schemas that allow LLMs to naturally map varied phrasing.
+
+### What changed
+- `backend/app/telegram/message_handler.py`:
+  - `_create_student_profile()`: Enriched to safely map `section`, `year`, `course` (programme), `branch`, `semester`, and `academic_year` from the active timetable (`confirmed_tt` or `pending_tt`).
+- `backend/app/intelligence/models/identity.py`:
+  - Enriched `purpose` with explicit VNR VJIET college identity.
+  - Added operating principle explaining college domain structure: VNR VJIET campus, P1-P6 period layout, lunch break, single-period theory lectures (~50 mins), and multi-period laboratory practicals (~100-150 mins) divided by batches.
+- `backend/app/intelligence/tools/timetable_tools.py`:
+  - Enhanced descriptions for `get_week_schedule`, `get_schedule_for_weekday`, `get_timetable_metadata`, and `get_extracted_timetable` to guide LLM semantic intent mapping across diverse student phrasing.
+- `backend/tests/test_timetable.py`:
+  - Fixed pre-existing flaky clock dependency in `test_get_next_class` by passing explicit `from_time=time(10, 0)`.
+
+### Verification
+- 43/43 tests in `test_timetable.py` passed cleanly.
+- 9/9 tests in `test_telegram_message_handler.py` passed cleanly.
+- `ruff check` passed with zero errors across all modified files.
+
+---
+
 ## 2026-09-29 — Phase 3: Briefing time + richer Q&A — set_briefing_time, week/weekday/metadata tools, course_metadata mapping
 
 **Commit:** `054488e`

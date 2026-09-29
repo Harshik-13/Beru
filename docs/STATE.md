@@ -3,7 +3,7 @@
 ## Current State
 
 - **Last updated:** 2026-09-29
-- **Current commit:** `f765640`
+- **Current commit:** `fabf9d2`
 - **Current branch:** master
 
 ## Overall Project Status
@@ -112,7 +112,9 @@ None.
 
 | Commit | Description |
 |--------|-------------|
-| `HEAD` | Fix Groq 400 by stripping student_id from LLM tool schemas and add graceful error fallback |
+| `HEAD` | Phase 4A: Enrich academic profile, college domain self-model, and semantic tool definitions |
+| `054488e` | Phase 3: Briefing time, week/weekday/metadata tools, course_metadata mapping |
+| `f765640` | Fix Groq 400 by stripping student_id from LLM tool schemas and add graceful error fallback |
 | `de13925` | Implement hybrid timetable extractor with RapidOCR fallback for scanned/image PDFs and photos |
 | `f9ed817` | Fix timetable extraction state machine transition to REVIEW_REQUIRED before auto-confirmation and auto-increment version |
 | `ec4fad8` | Fill real-usage gaps: Telegram PDF/media ingestion, timetable proactive prompt, confirm_timetable tool, multi-turn conversation context |
@@ -135,4 +137,4 @@ None.
 
 ## CURRENT NEXT ACTION
 
-Server is running with the fix applied. User can now send "Batch 1" or similar messages and Beru will correctly call `set_lab_batch` and respond with confirmation.
+Phase 4A complete. Ready to proceed with Phase 4B: Security, Boundary, Failure-Path & Duplicate-Upload Hardening in backend/tests/test_timetable_onboarding_e2e.py.
