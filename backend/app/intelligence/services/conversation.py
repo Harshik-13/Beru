@@ -471,6 +471,10 @@ class ConversationService:
                 "get_week_schedule",
                 "get_schedule_for_weekday",
                 "get_timetable_metadata",
+                "find_activity_details",
+                "find_faculty_details",
+                "find_room_details",
+                "query_schedule_analytics",
             }
 
             # Attendance tools that may need TimetableService or AttendanceService

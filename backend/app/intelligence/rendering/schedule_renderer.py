@@ -164,6 +164,14 @@ class ScheduleRenderer:
             return self.render_confirmation(result, student_context)
         elif tool_name == "get_timetable_metadata":
             return self.render_timetable_metadata(result, student_context)
+        elif tool_name == "find_activity_details":
+            return self.render_activity_details(result, student_context)
+        elif tool_name == "find_faculty_details":
+            return self.render_faculty_details(result, student_context)
+        elif tool_name == "find_room_details":
+            return self.render_room_details(result, student_context)
+        elif tool_name == "query_schedule_analytics":
+            return self.render_schedule_analytics(result, student_context)
 
         return self.render_generic_timetable(result, student_context)
 
@@ -429,6 +437,206 @@ class ScheduleRenderer:
             lines.append(f"• <b>Academic Year:</b> {acad_year}")
 
         return "\n".join(lines).strip()
+
+    def render_activity_details(
+        self, result: dict[str, Any], student_context: StudentContext
+    ) -> str:
+        """Render course or lab search results."""
+        query = result.get("query", "Activity")
+        if not result.get("found", False) or not result.get("matches"):
+            return (
+                f"<b>Activity Details:</b>\n\n"
+                f"No scheduled sessions found for <b>{query}</b>."
+            )
+
+        matches = result.get("matches", [])
+        lines: list[str] = [f"<b>Activity Details — {query.upper()}:</b>", ""]
+
+        for idx, entry in enumerate(matches, 1):
+            act_name = entry.get("activity_name", query)
+            batch_tag = f" ({entry['batch_label']})" if entry.get("batch_label") else ""
+            day = entry.get("day", "")
+            start = entry.get("start_time", "")
+            end = entry.get("end_time", "")
+            act_type = entry.get("activity_type", "lecture").title()
+            room = entry.get("room")
+            faculty = entry.get("faculty")
+
+            lines.append(f"{idx}. <b>{act_name}</b>{batch_tag}")
+            if day:
+                lines.append(format_label_value("Day", day))
+            lines.append(format_label_value("Time", format_time_span(start, end)))
+            lines.append(format_label_value("Type", act_type))
+            if room:
+                lines.append(format_label_value("Room", f"<code>{room}</code>"))
+            if faculty:
+                lines.append(format_label_value("Faculty", faculty))
+            lines.append("")
+
+        if result.get("has_ambiguity"):
+            lines.append(
+                "Note: Lab batch is not yet set. Reply with <b>Batch 1</b> or "
+                "<b>Batch 2</b> to resolve your specific lab schedule."
+            )
+
+        return "\n".join(lines).strip()
+
+    def render_faculty_details(
+        self, result: dict[str, Any], student_context: StudentContext
+    ) -> str:
+        """Render faculty lookup and professor directory."""
+        res_type = result.get("type", "directory")
+
+        if res_type == "directory":
+            lines = ["<b>Faculty Directory:</b>", ""]
+            faculty_list = result.get("faculty_list", [])
+            if not faculty_list:
+                lines.append("No faculty details currently available in your timetable.")
+            else:
+                for item in faculty_list:
+                    lines.append(f"• <b>{item['subject']}:</b> {item['faculty']}")
+            return "\n".join(lines).strip()
+
+        elif res_type == "subject_faculty":
+            subject = result.get("subject", "Subject")
+            lines = [f"<b>Faculty — {subject}:</b>", ""]
+            faculty_names = result.get("faculty_names", [])
+            if not faculty_names:
+                lines.append(f"No faculty details listed for <b>{subject}</b>.")
+            else:
+                lines.append(f"• <b>Instructor:</b> {', '.join(faculty_names)}")
+                sessions = result.get("sessions", [])
+                if sessions:
+                    lines.append("")
+                    lines.append("<b>Scheduled Sessions:</b>")
+                    for s in sessions:
+                        room_str = f" (Room: <code>{s['room']}</code>)" if s.get("room") else ""
+                        lines.append(
+                            f"• {s.get('day')}: {format_time_span(s.get('start_time', ''), s.get('end_time', ''))}{room_str}"
+                        )
+            return "\n".join(lines).strip()
+
+        elif res_type == "faculty_schedule":
+            faculty_name = result.get("faculty_name", "Professor")
+            lines = [f"<b>Faculty Schedule — {faculty_name}:</b>", ""]
+            subjects = result.get("subjects", [])
+            if subjects:
+                lines.append(f"• <b>Courses:</b> {', '.join(subjects)}")
+            sessions = result.get("sessions", [])
+            if sessions:
+                lines.append("")
+                lines.append("<b>Scheduled Sessions:</b>")
+                for s in sessions:
+                    room_str = f" (Room: <code>{s['room']}</code>)" if s.get("room") else ""
+                    lines.append(
+                        f"• {s.get('day')} {format_time_span(s.get('start_time', ''), s.get('end_time', ''))}: <b>{s.get('subject')}</b>{room_str}"
+                    )
+            return "\n".join(lines).strip()
+
+        return self.render_generic_timetable(result, student_context)
+
+    def render_room_details(
+        self, result: dict[str, Any], student_context: StudentContext
+    ) -> str:
+        """Render room schedule and default classroom lookup."""
+        room = result.get("room", "")
+        lines = [f"<b>Room Details — <code>{room}</code>:</b>", ""]
+        is_default = result.get("is_default_classroom", False)
+        sessions = result.get("sessions", [])
+
+        if is_default:
+            lines.append(f"<code>{room}</code> is your default classroom for regular lectures.")
+            if sessions:
+                lines.append("")
+
+        if sessions:
+            lines.append("<b>Scheduled Sessions:</b>")
+            for s in sessions:
+                time_span = format_time_span(s.get("start_time", ""), s.get("end_time", ""))
+                lines.append(f"• {s.get('day')}: <b>{s.get('activity_name')}</b> ({time_span})")
+        elif not is_default:
+            lines.append(f"No scheduled sessions found in <code>{room}</code>.")
+
+        return "\n".join(lines).strip()
+
+    def render_schedule_analytics(
+        self, result: dict[str, Any], student_context: StudentContext
+    ) -> str:
+        """Render deterministic calculations: counts, workload, frequency, free slots."""
+        metric = result.get("metric")
+
+        if metric == "classes_vs_labs":
+            lines = ["<b>Schedule Breakdown:</b>", ""]
+            t_count = result.get("theory_count", 0)
+            t_hours = result.get("theory_hours", 0)
+            l_count = result.get("lab_count", 0)
+            l_hours = result.get("lab_hours", 0)
+            tot_count = result.get("total_count", 0)
+            tot_hours = result.get("total_hours", 0)
+
+            lines.append(f"• <b>Theory Classes:</b> <code>{t_count}</code> ({t_hours} hrs)")
+            lines.append(f"• <b>Lab Sessions:</b> <code>{l_count}</code> ({l_hours} hrs)")
+            lines.append(f"• <b>Total Workload:</b> <code>{tot_count}</code> sessions ({tot_hours} hrs/week)")
+            return "\n".join(lines).strip()
+
+        elif metric == "subject_count":
+            subject = result.get("subject", "Course")
+            lines = [f"<b>Course Frequency — {subject}:</b>", ""]
+            scope = result.get("scope")
+            tot = result.get("total_in_week", 0)
+            scoped = result.get("count_in_scope", 0)
+
+            if scope in {"remaining_days", "remaining"}:
+                lines.append(f"• <b>Remaining This Week:</b> <code>{scoped}</code> sessions")
+                lines.append(f"• <b>Total in Week:</b> <code>{tot}</code> sessions")
+            else:
+                lines.append(f"• <b>Total in Week:</b> <code>{tot}</code> sessions")
+
+            sessions = result.get("sessions", [])
+            if sessions:
+                lines.append("")
+                lines.append("<b>Scheduled Slots:</b>")
+                for s in sessions:
+                    day = s.get("day", "")
+                    start = s.get("start_time", "")
+                    end = s.get("end_time", "")
+                    lines.append(f"• {day}: {format_time_span(start, end)}")
+
+            return "\n".join(lines).strip()
+
+        elif metric == "daily_workload":
+            lines = ["<b>Weekly Workload Distribution:</b>", ""]
+            days = result.get("days", {})
+            for d_name, d_info in days.items():
+                if d_info.get("count", 0) > 0:
+                    lines.append(f"• <b>{d_name}:</b> <code>{d_info['count']}</code> sessions ({d_info['hours']} hrs)")
+                else:
+                    lines.append(f"• <b>{d_name}:</b> <i>No classes</i>")
+
+            heaviest = result.get("heaviest")
+            lightest = result.get("lightest")
+            if heaviest:
+                lines.append("")
+                lines.append(f"• <b>Busiest Day:</b> {heaviest[0]} ({heaviest[1]} hrs)")
+            if lightest:
+                lines.append(f"• <b>Lightest Day:</b> {lightest[0]} ({lightest[1]} hrs)")
+
+            return "\n".join(lines).strip()
+
+        elif metric == "free_slots":
+            day = result.get("day", "Requested Day")
+            lines = [f"<b>Free Slots — {day}:</b>", ""]
+            slots = result.get("free_slots", [])
+            if slots:
+                for slot in slots:
+                    lines.append(f"• {format_time_span(slot['start_time'], slot['end_time'])}")
+            else:
+                lines.append("No breaks between classes found for this day.")
+
+            return "\n".join(lines).strip()
+
+        msg = result.get("message", "Schedule analytics computed.")
+        return f"<b>Schedule Analytics:</b>\n\n{msg}"
 
     def render_generic_timetable(
         self, result: dict[str, Any], student_context: StudentContext

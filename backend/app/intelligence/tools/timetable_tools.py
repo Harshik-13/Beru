@@ -550,6 +550,7 @@ async def get_week_schedule(
                 "activity_type": e.activity_type.value,
                 "room": e.room,
                 "faculty": e.faculty,
+                "lab_batch": e.lab_batch.value if e.lab_batch else None,
             }
             for e in sorted(day_entries, key=lambda x: x.start_time)
         ]
@@ -590,6 +591,7 @@ async def get_schedule_for_weekday(
                 "activity_type": e.activity_type.value,
                 "room": e.room,
                 "faculty": e.faculty,
+                "lab_batch": e.lab_batch.value if e.lab_batch else None,
             }
             for e in sorted(day_entries, key=lambda x: x.start_time)
         ],
@@ -622,6 +624,410 @@ async def get_timetable_metadata(
             timetable.effective_from.isoformat() if timetable.effective_from else None
         ),
     }
+
+
+async def find_activity_details(
+    service: "TimetableService",
+    student_id: str,
+    query: str,
+    day: int | str | None = None,
+) -> dict:
+    """Find schedule, rooms, timings, and faculty for a specific course or lab."""
+    from uuid import UUID
+    from app.intelligence.rendering.schedule_renderer import (
+        _normalize_batch_str,
+        merge_contiguous_entries,
+        resolve_batch_and_filter,
+    )
+
+    student_uuid = UUID(student_id)
+    timetable = await service.get_confirmed_timetable(student_uuid)
+    if not timetable:
+        return {
+            "status": "none",
+            "message": "No confirmed timetable found.",
+            "found": False,
+            "matches": [],
+        }
+
+    student_batch = None
+    if service.student_repo:
+        student = await service.student_repo.get_by_id(student_uuid)
+        if student and student.lab_batch:
+            student_batch = _normalize_batch_str(
+                getattr(student.lab_batch, "value", str(student.lab_batch))
+            )
+
+    entries = await service.entry_repo.get_for_timetable(timetable.id)
+    q_clean = query.strip().lower()
+
+    # Normalize optional day filter
+    target_day: int | None = None
+    if day is not None:
+        if isinstance(day, int) and 0 <= day <= 6:
+            target_day = day
+        elif isinstance(day, str):
+            day_str = day.strip().lower()
+            for idx, d_name in enumerate(DAY_NAMES):
+                if d_name.lower().startswith(day_str):
+                    target_day = idx
+                    break
+
+    matching_raw = []
+    for e in entries:
+        if target_day is not None and e.day_of_week != target_day:
+            continue
+        act = e.activity_name.lower()
+        code = (e.course_code or "").lower()
+        if q_clean in act or q_clean in code:
+            matching_raw.append(
+                {
+                    "day_of_week": e.day_of_week,
+                    "day": (
+                        DAY_NAMES[e.day_of_week]
+                        if e.day_of_week < len(DAY_NAMES)
+                        else "Unknown"
+                    ),
+                    "start_time": e.start_time.strftime("%H:%M"),
+                    "end_time": e.end_time.strftime("%H:%M"),
+                    "activity_name": e.activity_name,
+                    "activity_type": e.activity_type.value,
+                    "room": e.room,
+                    "faculty": e.faculty,
+                    "lab_batch": e.lab_batch.value if e.lab_batch else None,
+                }
+            )
+
+    resolved, has_ambiguity = resolve_batch_and_filter(matching_raw, student_batch)
+    merged = merge_contiguous_entries(resolved)
+
+    return {
+        "status": "confirmed",
+        "query": query,
+        "found": len(merged) > 0,
+        "count": len(merged),
+        "has_ambiguity": has_ambiguity,
+        "matches": merged,
+    }
+
+
+async def find_faculty_details(
+    service: "TimetableService",
+    student_id: str,
+    subject: str | None = None,
+    faculty_name: str | None = None,
+    list_all: bool = False,
+) -> dict:
+    """Find professors and faculty members teaching the student."""
+    from uuid import UUID
+
+    student_uuid = UUID(student_id)
+    timetable = await service.get_confirmed_timetable(student_uuid)
+    if not timetable:
+        return {
+            "status": "none",
+            "message": "No confirmed timetable found.",
+            "found": False,
+        }
+
+    entries = await service.entry_repo.get_for_timetable(timetable.id)
+
+    # Mode A: list all faculty directory
+    if list_all or (not subject and not faculty_name):
+        directory: dict[str, str] = {}
+        for e in entries:
+            if e.faculty:
+                act = e.activity_name
+                directory[act] = e.faculty
+        items = [{"subject": k, "faculty": v} for k, v in sorted(directory.items())]
+        return {
+            "status": "confirmed",
+            "type": "directory",
+            "found": len(items) > 0,
+            "faculty_list": items,
+        }
+
+    # Mode B: find by subject
+    if subject:
+        s_clean = subject.strip().lower()
+        sub_entries = [
+            e
+            for e in entries
+            if s_clean in e.activity_name.lower()
+            or s_clean in (e.course_code or "").lower()
+        ]
+        faculty_map: dict[str, bool] = {}
+        sessions = []
+        for e in sorted(sub_entries, key=lambda x: (x.day_of_week, x.start_time)):
+            if e.faculty:
+                faculty_map[e.faculty] = True
+            sessions.append(
+                {
+                    "day": (
+                        DAY_NAMES[e.day_of_week]
+                        if e.day_of_week < len(DAY_NAMES)
+                        else "Unknown"
+                    ),
+                    "start_time": e.start_time.strftime("%H:%M"),
+                    "end_time": e.end_time.strftime("%H:%M"),
+                    "room": e.room,
+                    "faculty": e.faculty,
+                }
+            )
+        return {
+            "status": "confirmed",
+            "type": "subject_faculty",
+            "subject": subject,
+            "found": len(sub_entries) > 0,
+            "faculty_names": list(faculty_map.keys()),
+            "sessions": sessions,
+        }
+
+    # Mode C: find by faculty name
+    if faculty_name:
+        f_clean = faculty_name.strip().lower()
+        fac_entries = [e for e in entries if e.faculty and f_clean in e.faculty.lower()]
+        subjects_taught = sorted(list({e.activity_name for e in fac_entries}))
+        sessions = [
+            {
+                "subject": e.activity_name,
+                "day": (
+                    DAY_NAMES[e.day_of_week]
+                    if e.day_of_week < len(DAY_NAMES)
+                    else "Unknown"
+                ),
+                "start_time": e.start_time.strftime("%H:%M"),
+                "end_time": e.end_time.strftime("%H:%M"),
+                "room": e.room,
+            }
+            for e in sorted(fac_entries, key=lambda x: (x.day_of_week, x.start_time))
+        ]
+        return {
+            "status": "confirmed",
+            "type": "faculty_schedule",
+            "faculty_name": faculty_name,
+            "found": len(fac_entries) > 0,
+            "subjects": subjects_taught,
+            "sessions": sessions,
+        }
+
+    return {"status": "none", "found": False}
+
+
+async def find_room_details(
+    service: "TimetableService",
+    student_id: str,
+    room: str,
+) -> dict:
+    """Find schedule and activities for a specific classroom or lab room."""
+    from uuid import UUID
+
+    student_uuid = UUID(student_id)
+    timetable = await service.get_confirmed_timetable(student_uuid)
+    if not timetable:
+        return {
+            "status": "none",
+            "message": "No confirmed timetable found.",
+            "found": False,
+        }
+
+    r_clean = room.strip().lower()
+    is_default = bool(
+        timetable.default_classroom
+        and r_clean in timetable.default_classroom.lower()
+    )
+
+    entries = await service.entry_repo.get_for_timetable(timetable.id)
+    room_entries = [
+        e
+        for e in entries
+        if (e.room and r_clean in e.room.lower())
+        or (is_default and not e.room)
+    ]
+
+    sessions = [
+        {
+            "activity_name": e.activity_name,
+            "day": (
+                DAY_NAMES[e.day_of_week]
+                if e.day_of_week < len(DAY_NAMES)
+                else "Unknown"
+            ),
+            "start_time": e.start_time.strftime("%H:%M"),
+            "end_time": e.end_time.strftime("%H:%M"),
+            "activity_type": e.activity_type.value,
+        }
+        for e in sorted(room_entries, key=lambda x: (x.day_of_week, x.start_time))
+    ]
+
+    return {
+        "status": "confirmed",
+        "room": room,
+        "is_default_classroom": is_default,
+        "default_classroom": timetable.default_classroom,
+        "found": len(sessions) > 0 or is_default,
+        "sessions": sessions,
+    }
+
+
+async def query_schedule_analytics(
+    service: "TimetableService",
+    student_id: str,
+    metric: str,
+    subject: str | None = None,
+    day: int | str | None = None,
+    scope: str = "entire_week",
+) -> dict:
+    """Deterministic schedule analytics: classes vs labs, frequencies, workload, free slots."""
+    from datetime import date
+    from uuid import UUID
+    from app.intelligence.rendering.schedule_renderer import (
+        _normalize_batch_str,
+        merge_contiguous_entries,
+        resolve_batch_and_filter,
+    )
+
+    student_uuid = UUID(student_id)
+    timetable = await service.get_confirmed_timetable(student_uuid)
+    if not timetable:
+        return {"status": "none", "message": "No confirmed timetable found."}
+
+    student_batch = None
+    if service.student_repo:
+        student = await service.student_repo.get_by_id(student_uuid)
+        if student and student.lab_batch:
+            student_batch = _normalize_batch_str(
+                getattr(student.lab_batch, "value", str(student.lab_batch))
+            )
+
+    entries = await service.entry_repo.get_for_timetable(timetable.id)
+    raw_dicts = [
+        {
+            "day_of_week": e.day_of_week,
+            "day": (
+                DAY_NAMES[e.day_of_week]
+                if e.day_of_week < len(DAY_NAMES)
+                else "Unknown"
+            ),
+            "start_time": e.start_time.strftime("%H:%M"),
+            "end_time": e.end_time.strftime("%H:%M"),
+            "activity_name": e.activity_name,
+            "activity_type": e.activity_type.value,
+            "room": e.room,
+            "faculty": e.faculty,
+            "lab_batch": e.lab_batch.value if e.lab_batch else None,
+        }
+        for e in entries
+    ]
+
+    resolved, _ = resolve_batch_and_filter(raw_dicts, student_batch)
+    merged = merge_contiguous_entries(resolved)
+
+    def duration_hours(start_str: str, end_str: str) -> float:
+        sh, sm = map(int, start_str.split(":"))
+        eh, em = map(int, end_str.split(":"))
+        return round(((eh * 60 + em) - (sh * 60 + sm)) / 60.0, 1)
+
+    # 1. Classes vs Labs
+    if metric in {"classes_vs_labs", "counts", "breakdown"}:
+        lectures = [
+            e
+            for e in merged
+            if "lab" not in e.get("activity_type", "").lower()
+            and "lab" not in e.get("activity_name", "").lower()
+        ]
+        labs = [
+            e
+            for e in merged
+            if "lab" in e.get("activity_type", "").lower()
+            or "lab" in e.get("activity_name", "").lower()
+        ]
+
+        lec_hours = sum(duration_hours(e["start_time"], e["end_time"]) for e in lectures)
+        lab_hours = sum(duration_hours(e["start_time"], e["end_time"]) for e in labs)
+
+        return {
+            "status": "confirmed",
+            "metric": "classes_vs_labs",
+            "theory_count": len(lectures),
+            "theory_hours": lec_hours,
+            "lab_count": len(labs),
+            "lab_hours": lab_hours,
+            "total_count": len(merged),
+            "total_hours": round(lec_hours + lab_hours, 1),
+        }
+
+    # 2. Subject Count / Frequency (Entire Week or Remaining Days)
+    if metric in {"subject_count", "frequency"} or subject:
+        sub_name = subject or ""
+        s_clean = sub_name.strip().lower()
+
+        # Check scope
+        today_idx = date.today().weekday()
+        if scope in {"remaining_days", "remaining"}:
+            scoped_entries = [e for e in merged if e.get("day_of_week", 0) >= today_idx]
+        else:
+            scoped_entries = merged
+
+        matched_all = [e for e in merged if s_clean in e["activity_name"].lower()]
+        matched_scoped = [e for e in scoped_entries if s_clean in e["activity_name"].lower()]
+
+        return {
+            "status": "confirmed",
+            "metric": "subject_count",
+            "subject": subject or "Target Course",
+            "scope": scope,
+            "total_in_week": len(matched_all),
+            "count_in_scope": len(matched_scoped),
+            "sessions": matched_scoped,
+        }
+
+    # 3. Daily Workload & Extremes
+    if metric in {"daily_workload", "workload", "extremes"}:
+        day_counts: dict[str, dict[str, Any]] = {}
+        for d_idx, d_name in enumerate(DAY_NAMES[:6]):
+            d_entries = [e for e in merged if e.get("day_of_week") == d_idx]
+            d_hours = sum(duration_hours(e["start_time"], e["end_time"]) for e in d_entries)
+            day_counts[d_name] = {"count": len(d_entries), "hours": d_hours}
+
+        sorted_days = sorted(
+            [(k, v["hours"], v["count"]) for k, v in day_counts.items() if v["count"] > 0],
+            key=lambda x: x[1],
+            reverse=True,
+        )
+        heaviest = sorted_days[0] if sorted_days else None
+        lightest = sorted_days[-1] if sorted_days else None
+
+        return {
+            "status": "confirmed",
+            "metric": "daily_workload",
+            "days": day_counts,
+            "heaviest": heaviest,
+            "lightest": lightest,
+        }
+
+    # 4. Free slots / Breaks
+    if metric in {"free_slots", "breaks"}:
+        target_d = day if isinstance(day, int) else date.today().weekday()
+        d_entries = sorted(
+            [e for e in merged if e.get("day_of_week") == target_d],
+            key=lambda x: x["start_time"],
+        )
+        gaps = []
+        for i in range(len(d_entries) - 1):
+            curr_end = d_entries[i]["end_time"]
+            next_start = d_entries[i + 1]["start_time"]
+            if curr_end < next_start:
+                gaps.append({"start_time": curr_end, "end_time": next_start})
+
+        return {
+            "status": "confirmed",
+            "metric": "free_slots",
+            "day": DAY_NAMES[target_d] if target_d < len(DAY_NAMES) else "Requested Day",
+            "free_slots": gaps,
+        }
+
+    return {"status": "none", "message": f"Unsupported metric: {metric}"}
 
 
 # Tool definitions for registry
@@ -1151,6 +1557,143 @@ TIMETABLE_TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "name": "find_activity_details",
+        "description": (
+            "Find the schedule, room location, timings, and faculty for a "
+            "specific course, subject, or laboratory session (e.g. 'Where is "
+            "DV lab?', 'When do I have OS?', 'Where is OOPJ?')."
+        ),
+        "arguments_schema": {
+            "type": "object",
+            "properties": {
+                "student_id": {"type": "string", "format": "uuid"},
+                "query": {
+                    "type": "string",
+                    "description": "Name or acronym of the course, subject, or lab",
+                },
+                "day": {
+                    "type": ["integer", "string", "null"],
+                    "description": "Optional weekday filter (0=Mon, 5=Sat or day name)",
+                },
+            },
+            "required": ["student_id", "query"],
+        },
+        "result_schema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string"},
+                "query": {"type": "string"},
+                "found": {"type": "boolean"},
+                "count": {"type": "integer"},
+                "matches": {"type": "array"},
+            },
+        },
+    },
+    {
+        "name": "find_faculty_details",
+        "description": (
+            "Find professor and faculty details for courses: look up who teaches "
+            "a specific subject, find a professor's schedule, or list the entire "
+            "faculty directory for the student's timetable."
+        ),
+        "arguments_schema": {
+            "type": "object",
+            "properties": {
+                "student_id": {"type": "string", "format": "uuid"},
+                "subject": {
+                    "type": ["string", "null"],
+                    "description": "Subject name to find assigned professor for",
+                },
+                "faculty_name": {
+                    "type": ["string", "null"],
+                    "description": "Professor name to find schedule and subjects for",
+                },
+                "list_all": {
+                    "type": "boolean",
+                    "description": "Set to true to list all professors across the timetable",
+                },
+            },
+            "required": ["student_id"],
+        },
+        "result_schema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string"},
+                "found": {"type": "boolean"},
+            },
+        },
+    },
+    {
+        "name": "find_room_details",
+        "description": (
+            "Find schedule and activities held in a specific classroom or lab room "
+            "(e.g. 'What classes are in room E-505?', 'What is my default classroom?')."
+        ),
+        "arguments_schema": {
+            "type": "object",
+            "properties": {
+                "student_id": {"type": "string", "format": "uuid"},
+                "room": {
+                    "type": "string",
+                    "description": "Room or lab code (e.g. 'E-505')",
+                },
+            },
+            "required": ["student_id", "room"],
+        },
+        "result_schema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string"},
+                "room": {"type": "string"},
+                "is_default_classroom": {"type": "boolean"},
+                "found": {"type": "boolean"},
+                "sessions": {"type": "array"},
+            },
+        },
+    },
+    {
+        "name": "query_schedule_analytics",
+        "description": (
+            "Calculate deterministic schedule statistics and counts from the "
+            "confirmed timetable: 'classes_vs_labs' (total lectures vs practicals and "
+            "hours), 'subject_count' (count of a course across the week or remaining "
+            "days of this week), 'daily_workload' (hours and session count per day, "
+            "heaviest/lightest day), or 'free_slots' (breaks and free periods between classes)."
+        ),
+        "arguments_schema": {
+            "type": "object",
+            "properties": {
+                "student_id": {"type": "string", "format": "uuid"},
+                "metric": {
+                    "type": "string",
+                    "description": "Metric to calculate: 'classes_vs_labs', 'subject_count', 'daily_workload', 'free_slots'",
+                    "enum": ["classes_vs_labs", "subject_count", "daily_workload", "free_slots"],
+                },
+                "subject": {
+                    "type": ["string", "null"],
+                    "description": "Target subject for subject_count (e.g. 'OS', 'PSA')",
+                },
+                "scope": {
+                    "type": ["string", "null"],
+                    "description": "'entire_week' or 'remaining_days' (from current day forward)",
+                    "enum": ["entire_week", "remaining_days"],
+                },
+                "day": {
+                    "type": ["integer", "string", "null"],
+                    "description": "Target day (0=Mon, 5=Sat) for daily_workload or free_slots",
+                },
+            },
+            "required": ["student_id", "metric"],
+        },
+        "result_schema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string"},
+                "metric": {"type": "string"},
+            },
+        },
+    },
 ]
 
 
@@ -1216,4 +1759,12 @@ async def execute_timetable_tool(
         )
     if tool_name == "get_timetable_metadata":
         return await get_timetable_metadata(service, student_id)
+    if tool_name == "find_activity_details":
+        return await find_activity_details(service, student_id, **kwargs)
+    if tool_name == "find_faculty_details":
+        return await find_faculty_details(service, student_id, **kwargs)
+    if tool_name == "find_room_details":
+        return await find_room_details(service, student_id, **kwargs)
+    if tool_name == "query_schedule_analytics":
+        return await query_schedule_analytics(service, student_id, **kwargs)
     raise ValueError(f"Unknown timetable tool: {tool_name}")

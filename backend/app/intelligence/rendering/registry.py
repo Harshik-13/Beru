@@ -159,6 +159,10 @@ def create_default_renderer_registry() -> ResponseRendererRegistry:
         "confirm_timetable",
         "needs_lab_batch",
         "get_timetable_metadata",
+        "find_activity_details",
+        "find_faculty_details",
+        "find_room_details",
+        "query_schedule_analytics",
     }
     registry.register_many(timetable_tools, schedule_renderer)
 

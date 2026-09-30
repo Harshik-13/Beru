@@ -1,5 +1,51 @@
 # CHANGELOG.md — Beru
 
+## 2026-09-30 — Encyclopedic Timetable Intelligence, Deterministic Schedule Analytics & Semantic-Invariance (Phase 2)
+
+### Why
+Students ask open-ended, complex, and calculating questions about their confirmed timetable (e.g. "Where is DV lab?", "Who is my OS professor?", "What classes are in room E-505?", "How many labs do I have in a week?", "Classes vs labs", "What are my free slots on Tuesday?"). Previous tools only supported whole-day or week slices, leading the LLM to either guess arithmetic or dump raw responses. Furthermore, varying user phrasing for the same request ("What do I have on Tuesday?" vs "Tuesday schedule") required semantic-invariance verification to guarantee equivalent verified responses.
+
+### What changed
+- `backend/app/intelligence/tools/timetable_tools.py`:
+  - Implemented 4 new encyclopedic backend tools:
+    1. `find_activity_details`: Searches courses/labs, merges contiguous periods (e.g. 2-hour lab blocks), resolves student `lab_batch`, and returns matched sessions.
+    2. `find_faculty_details`: Supports faculty directory mode, subject-to-instructor lookup, and professor teaching schedules.
+    3. `find_room_details`: Looks up room schedules and identifies regular lectures in the student's `default_classroom`.
+    4. `query_schedule_analytics`: Calculates deterministic timetable metrics:
+       - `classes_vs_labs`: Total lectures vs practicals and hours breakdown.
+       - `subject_count`: Course frequency across the week and remaining sessions from current weekday forward.
+       - `daily_workload`: Workload distribution (session count and hours per day) identifying busiest and lightest days.
+       - `free_slots`: Gap analysis calculating free periods between scheduled classes.
+  - Added schemas to `TIMETABLE_TOOL_DEFINITIONS` and wired dispatch in `execute_timetable_tool`.
+  - Added `lab_batch` to `get_week_schedule` and `get_schedule_for_weekday`.
+- `backend/app/intelligence/services/conversation.py`:
+  - Added the 4 new tool names to the active timetable tool dispatch set.
+- `backend/app/intelligence/rendering/`:
+  - `registry.py`: Registered the 4 new tools in `ResponseRendererRegistry`.
+  - `schedule_renderer.py`: Implemented `render_activity_details`, `render_faculty_details`, `render_room_details`, and `render_schedule_analytics` with bold labels, code badges, and strict omission of missing room/faculty fields.
+- `backend/tests/test_semantic_invariance.py` [NEW]:
+  - Added 10 tests verifying:
+    - Semantic invariance across 5 natural language phrasing variations of Tuesday schedule.
+    - Contiguous lab merging and room lookup for `find_activity_details`.
+    - Deterministic omission of missing room/faculty fields.
+    - Faculty directory and subject lookup.
+    - Default classroom and room schedule lookup.
+    - Classes vs labs mathematical breakdown (theory vs lab count and hours).
+    - Subject frequency (total vs remaining scope).
+    - Daily workload calculation (heaviest/lightest days).
+    - Free slots / breaks calculation.
+- `backend/tests/test_intelligence.py`:
+  - Updated tool count assertion from 20 to 24 (3 original + 21 timetable tools).
+- `.gitignore`:
+  - Added `storage/` directory.
+
+### Verification
+- `pytest backend/tests/test_semantic_invariance.py`: 10/10 tests passing.
+- `pytest backend/tests/test_golden_outputs.py`: 14/14 tests passing.
+- Full test suite `pytest backend/tests/`: 353/353 tests passing.
+
+---
+
 ## 2026-09-30 — Presentation Decoupling, ResponseStyleLayer, Missing-Field Omission & Rate Limit Resilience (Phase 1)
 
 ### Why
