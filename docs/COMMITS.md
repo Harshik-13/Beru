@@ -4,7 +4,8 @@
 
 | Commit | Date | Purpose | Subsystem | Verification |
 |--------|------|---------|-----------|--------------|
-| `44f2694` | 2026-09-29 | Update USER_VERIFIED status for live timetable domain on Telegram | Docs, State | User verified on Telegram |
+| `68d36f7` | 2026-09-30 | Encyclopedic timetable tools, schedule analytics & semantic-invariance tests | Timetable, Intelligence, Rendering | 353 tests pass |
+| `2c585b3` | 2026-09-30 | Presentation decoupling, ResponseStyleLayer, missing-field omission & 429 resilience | Intelligence, Rendering, Telegram | 345 tests pass |
 | `fdaea24` | 2026-09-29 | Fix LLM async promise hallucination and normalize weekday tool arguments | Intelligence, Timetable | 62 timetable tests pass |
 | `cdbfef3` | 2026-09-29 | Fix duplicate slash-lab entries during timetable extraction | Timetable, Extraction | 62 timetable tests pass |
 | `77f9271` | 2026-09-29 | Fix MultipleResultsFound on timetable queries with limit(1) | Timetable, DB | 62 timetable tests pass |
