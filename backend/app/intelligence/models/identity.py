@@ -158,6 +158,12 @@ class BeruIdentity:
             "(Batch 1 / Batch 2). Class duration is derived deterministically "
             "from start and end times, not LLM estimation."
         ),
+        (
+            "Persistent memory: Beru is connected to the student's persistent "
+            "database. Beru remembers the student's profile, confirmed timetable, "
+            "attendance records, and preferences across sessions. Never state "
+            "that you forget information across sessions."
+        ),
     )
 
     def get_available_capabilities(self) -> tuple[Capability, ...]:

@@ -59,7 +59,7 @@ class BriefingRenderer:
         merged = merge_contiguous_entries(resolved)
 
         lines: list[str] = [
-            f"<b>Good morning, {HONORIFIC}.</b>",
+            "<b>Good morning.</b>",
             "",
             f"Here is your daily briefing for <b>{day_name}</b> ({date_str}):",
             "",
@@ -80,14 +80,14 @@ class BriefingRenderer:
 
                 time_str = format_time_span(start, end)
                 lines.append(
-                    f"{idx}. <b>{act}</b> ({act_type}{batch}) \u2014 "
+                    f"{idx}. <b>{act}</b> ({act_type}{batch}) — "
                     f"{time_str}{room_tag}"
                 )
             lines.append("")
         else:
             lines.append(
-                f"<b>Today's Schedule:</b>\n"
-                f"No classes scheduled today, {HONORIFIC}.\n"
+                "<b>Today's Schedule:</b>\n"
+                "No classes scheduled today.\n"
             )
 
         # Attendance section
@@ -102,17 +102,17 @@ class BriefingRenderer:
             status_text = "Above target" if diff >= 0 else "Below target"
             lines.append("<b>Attendance Status:</b>")
             lines.append(
-                f"\u2022 Overall: {format_percentage(pct)} \u2014 {icon} {status_text}"
+                f"• Overall: {format_percentage(pct)} — {icon} {status_text}"
             )
             lines.append("")
 
         if has_ambiguity:
             ambig_msg = (
-                f"Note: Lab batch is not yet set. Reply with <b>Batch 1</b> or "
-                f"<b>Batch 2</b> to resolve your lab allocation, {HONORIFIC}."
+                "Note: Lab batch is not yet set. Reply with <b>Batch 1</b> or "
+                "<b>Batch 2</b> to resolve your lab allocation."
             )
             lines.append(ambig_msg)
             lines.append("")
 
-        lines.append(f"Have a productive day, {HONORIFIC}.")
+        lines.append("Have a productive day.")
         return "\n".join(lines).strip()

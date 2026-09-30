@@ -68,14 +68,14 @@ class AttendanceRenderer:
             status_text = f"{WARNING_SIGN} Below target ({diff:.1f}% deficit)"
 
         lines: list[str] = [
-            f"<b>Attendance Summary, {HONORIFIC}:</b>",
+            "<b>Attendance Summary:</b>",
             "",
             (
-                f"\u2022 <b>Overall:</b> {format_percentage(cum_pct)} "
+                f"• <b>Overall:</b> {format_percentage(cum_pct)} "
                 f"({attended}/{conducted} classes attended)"
             ),
-            f"\u2022 <b>Target:</b> {format_percentage(target)}",
-            f"\u2022 <b>Status:</b> {status_text}",
+            f"• <b>Target:</b> {format_percentage(target)}",
+            f"• <b>Status:</b> {status_text}",
             "",
         ]
 
@@ -120,14 +120,14 @@ class AttendanceRenderer:
         status_icon = CHECK_MARK if diff >= 0 else WARNING_SIGN
 
         lines: list[str] = [
-            f"<b>Overall Attendance, {HONORIFIC}:</b>",
+            "<b>Overall Attendance:</b>",
             "",
             (
-                f"\u2022 <b>Current:</b> {format_percentage(cum_pct)} "
+                f"• <b>Current:</b> {format_percentage(cum_pct)} "
                 f"({attended}/{conducted} attended)"
             ),
-            f"\u2022 <b>Target:</b> {format_percentage(target)}",
-            f"\u2022 <b>Margin:</b> {status_icon} {diff:+.1f}%",
+            f"• <b>Target:</b> {format_percentage(target)}",
+            f"• <b>Margin:</b> {status_icon} {diff:+.1f}%",
         ]
         return "\n".join(lines).strip()
 
@@ -146,14 +146,14 @@ class AttendanceRenderer:
         status_label = "Meeting target" if cum_pct >= target else "Below target"
 
         lines: list[str] = [
-            f"<b>Subject Attendance: {name}, {HONORIFIC}:</b>",
+            f"<b>Subject Attendance: {name}:</b>",
             "",
-            f"\u2022 <b>Code:</b> <code>{code}</code>",
+            f"• <b>Code:</b> <code>{code}</code>",
             (
-                f"\u2022 <b>Attendance:</b> {format_percentage(cum_pct)} "
+                f"• <b>Attendance:</b> {format_percentage(cum_pct)} "
                 f"({attended}/{conducted})"
             ),
-            f"\u2022 <b>Status:</b> {status_icon} {status_label}",
+            f"• <b>Status:</b> {status_icon} {status_label}",
         ]
         return "\n".join(lines).strip()
 
@@ -172,15 +172,15 @@ class AttendanceRenderer:
         )
 
         lines: list[str] = [
-            f"<b>Absence Simulation Projection, {HONORIFIC}:</b>",
+            "<b>Absence Simulation Projection:</b>",
             "",
-            f"\u2022 <b>Classes Skipped:</b> <code>{missed}</code>",
-            f"\u2022 <b>Current Attendance:</b> {format_percentage(curr_pct)}",
+            f"• <b>Classes Skipped:</b> <code>{missed}</code>",
+            f"• <b>Current Attendance:</b> {format_percentage(curr_pct)}",
             (
-                f"\u2022 <b>Projected Attendance:</b> {format_percentage(proj_pct)} "
+                f"• <b>Projected Attendance:</b> {format_percentage(proj_pct)} "
                 f"({proj_pct - curr_pct:+.1f}%)"
             ),
-            f"\u2022 <b>Target Safety:</b> {alert} {safety_text}",
+            f"• <b>Target Safety:</b> {alert} {safety_text}",
         ]
         return "\n".join(lines).strip()
 
@@ -189,13 +189,10 @@ class AttendanceRenderer:
     ) -> str:
         """Render list of subjects falling below target."""
         subjects = result.get("subjects_below_target", [])
-        lines: list[str] = [f"<b>Subjects Below Target, {HONORIFIC}:</b>", ""]
+        lines: list[str] = ["<b>Subjects Below Target:</b>", ""]
 
         if not subjects:
-            msg = (
-                f"{CHECK_MARK} All subjects currently meet or exceed "
-                f"your target, {HONORIFIC}."
-            )
+            msg = f"{CHECK_MARK} All subjects currently meet or exceed your target."
             lines.append(msg)
             return "\n".join(lines).strip()
 
@@ -204,7 +201,7 @@ class AttendanceRenderer:
             pct = float(sub.get("cumulative_percentage", 0.0))
             defic = float(sub.get("deficit", 0.0))
             lines.append(
-                f"{idx}. <b>{name}:</b> {format_percentage(pct)} \u2014 "
+                f"{idx}. <b>{name}:</b> {format_percentage(pct)} — "
                 f"{WARNING_SIGN} {defic:.1f}% deficit"
             )
 
@@ -220,11 +217,11 @@ class AttendanceRenderer:
         feasibility = "Achievable" if achieved else "Exceeds remaining schedule"
 
         lines: list[str] = [
-            f"<b>Attendance Recovery Plan, {HONORIFIC}:</b>",
+            "<b>Attendance Recovery Plan:</b>",
             "",
-            f"\u2022 <b>Consecutive Classes Needed:</b> <code>{needed}</code>",
-            f"\u2022 <b>Projected Outcome:</b> {format_percentage(proj_pct)}",
-            f"\u2022 <b>Feasibility:</b> {feasibility}",
+            f"• <b>Consecutive Classes Needed:</b> <code>{needed}</code>",
+            f"• <b>Projected Outcome:</b> {format_percentage(proj_pct)}",
+            f"• <b>Feasibility:</b> {feasibility}",
         ]
         return "\n".join(lines).strip()
 
@@ -233,4 +230,4 @@ class AttendanceRenderer:
     ) -> str:
         """Fallback for generic attendance tool results."""
         msg = result.get("message", str(result))
-        return f"<b>Attendance Update, {HONORIFIC}:</b>\n\n{msg}"
+        return f"<b>Attendance Update:</b>\n\n{msg}"

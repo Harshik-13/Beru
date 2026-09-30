@@ -232,9 +232,26 @@ class OpenAICompatibleLLMProvider(LLMProvider):
                 if e.response.status_code >= 500 or e.response.status_code == 429:
                     last_error = e
                     if attempt < self._config.max_retries:
-                        await asyncio.sleep(
-                            self._config.retry_base_delay * (2**attempt)
+                        delay = self._config.retry_base_delay * (2**attempt)
+                        # Check Retry-After header
+                        retry_after = e.response.headers.get("retry-after")
+                        if retry_after:
+                            try:
+                                delay = max(delay, float(retry_after))
+                            except ValueError:
+                                pass
+                        elif e.response.status_code == 429:
+                            # Groq 429 rate limits typically need at least 2.5s window
+                            delay = max(delay, 2.5 * (attempt + 1))
+                        logger.warning(
+                            "HTTP %s from %s. Retrying in %.2fs (attempt %d/%d)...",
+                            e.response.status_code,
+                            self.provider_name,
+                            delay,
+                            attempt + 1,
+                            self._config.max_retries,
                         )
+                        await asyncio.sleep(delay)
                         continue
                 # Client errors (4xx except 429) - don't retry
                 raise

@@ -29,6 +29,7 @@ class StudentProfile:
     lab_batch: str | None = None
     needs_lab_batch: bool = False
     academic_year: str | None = None
+    graduation_year: int | None = None
 
     def has_academic_info(self) -> bool:
         return all(

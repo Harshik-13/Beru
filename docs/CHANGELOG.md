@@ -1,6 +1,35 @@
 # CHANGELOG.md — Beru
 
-## 2026-09-29 — Deterministic Structured Renderers, Decoupled RendererRegistry, and Style Contract
+## 2026-09-30 — Presentation Decoupling, ResponseStyleLayer, Missing-Field Omission & Rate Limit Resilience (Phase 1)
+
+### Why
+Analysis of live user transcripts revealed key gaps in Beru's responses:
+1. `ScheduleRenderer.render_week_schedule` looked for `"days"` while `get_week_schedule` returned `"week"`, triggering the fallback "No schedule data available for this week, Sir." on all weekly queries.
+2. Domain renderers were directly coupled to Beru's personality by hardcoding `"Sir"` in headings, preventing clean reuse and violating the separation between presentation of verified data and personality.
+3. Missing fields (e.g. absent room or faculty) needed deterministic omission rather than placeholder strings.
+4. Groq HTTP 429 rate limit spikes during rapid student messages caused transient conversation failures.
+5. Beru lacked persistent database memory directives in its self-model, causing the LLM to emit canned session-amnesia disclaimers.
+
+### What changed
+- `backend/app/intelligence/rendering/`:
+  - `style_layer.py` [NEW]: Implemented `ResponseStyleLayer`, which cleanly wraps rendered domain outputs to inject Beru's persona (`"Sir"` honorific, consistent ChatGPT-style spacing, polite closings, greeting cleanup) without coupling domain renderers.
+  - `registry.py`: Evolved `RendererRegistry` into `ResponseRendererRegistry` supporting typed result dispatch, pipeline execution (`result -> domain_renderer.render() -> style_layer.apply()`), and registered `get_timetable_metadata`.
+  - `schedule_renderer.py`: Decoupled `"Sir"` from domain headings; added deterministic missing-field omission (omits `Room:` and `Faculty:` lines completely when values are None); fixed weekly schedule dictionary key lookup (`result.get("week") or result.get("days", {})`); implemented `render_timetable_metadata`.
+  - `attendance_renderer.py` & `briefing_renderer.py`: Decoupled hardcoded honorifics from headings, delegating persona wrapping to `ResponseStyleLayer`.
+- `backend/app/intelligence/providers/openai_compatible.py`:
+  - Enhanced HTTP 429 error handling with `Retry-After` header parsing and adaptive backoff (up to 3 attempts with 2.5s base window) to prevent rate spikes from dropping user turns.
+- `backend/app/intelligence/models/`:
+  - `identity.py`: Added persistent database memory operating principle to `BeruIdentity`.
+  - `context.py`: Added `graduation_year` field to `StudentProfile`.
+- `backend/app/intelligence/services/context_builder.py`:
+  - Injected `Graduation Year` into student context prompt when available.
+- `backend/tests/test_golden_outputs.py`:
+  - Expanded test suite from 10 to 14 tests: added tests for decoupled data formatting without "Sir", deterministic missing room/faculty omission, empty schedule rendering, and week schedule key handling.
+
+### Verification
+- `pytest backend/tests/test_golden_outputs.py`: 14/14 tests passing.
+- Full test suite `pytest backend/tests/`: 345/345 tests passing.
+- Verified presentation decoupling: direct domain renderer output is 100% free of hardcoded persona; `ResponseStyleLayer` injects `"Sir"` and normalizes typography.
 
 **Commit:** `2c585b3`
 

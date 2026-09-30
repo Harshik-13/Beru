@@ -1,8 +1,10 @@
-"""Renderer Registry for Beru.
+"""Response Renderer Registry for Beru.
 
-Maps tool names to deterministic domain renderers:
-Tool Result -> RendererRegistry -> DomainRenderer -> Style Contract -> Telegram
-Keeps ConversationService free of presentation logic.
+Maps tool execution results and typed domain objects to deterministic domain renderers,
+then passes the rendered content through ResponseStyleLayer to inject Beru's persona:
+Tool Result -> ResponseRendererRegistry -> DomainRenderer -> ResponseStyleLayer -> Telegram
+
+Keeps ConversationService free of presentation logic and domain renderers free of persona.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from app.intelligence.rendering.style_contract import (
     HONORIFIC,
     sanitize_conversational_response,
 )
+from app.intelligence.rendering.style_layer import ResponseStyleLayer
 
 if TYPE_CHECKING:
     from app.intelligence.models.context import StudentContext
@@ -60,57 +63,82 @@ class DefaultRenderer:
         return cleaned
 
 
-class RendererRegistry:
+class ResponseRendererRegistry:
     """Central registry mapping tool execution results to dedicated domain renderers."""
 
-    def __init__(self, default_renderer: DomainRenderer | None = None) -> None:
-        self._renderers: dict[str, DomainRenderer] = {}
+    def __init__(
+        self,
+        default_renderer: DomainRenderer | None = None,
+        style_layer: ResponseStyleLayer | None = None,
+    ) -> None:
+        self._type_renderers: dict[type, DomainRenderer] = {}
+        self._tool_renderers: dict[str, DomainRenderer] = {}
         self._default_renderer = default_renderer or DefaultRenderer()
+        self._style_layer = style_layer or ResponseStyleLayer()
 
     def register(self, tool_name: str, renderer: DomainRenderer) -> None:
         """Register a domain renderer for a specific tool name."""
-        self._renderers[tool_name] = renderer
+        self._tool_renderers[tool_name] = renderer
+
+    def register_type(self, result_type: type, renderer: DomainRenderer) -> None:
+        """Register a domain renderer for a typed result class."""
+        self._type_renderers[result_type] = renderer
 
     def register_many(
         self, tool_names: set[str] | list[str], renderer: DomainRenderer
     ) -> None:
         """Register a domain renderer for multiple tool names."""
         for name in tool_names:
-            self._renderers[name] = renderer
+            self._tool_renderers[name] = renderer
 
-    def get_renderer(self, tool_name: str) -> DomainRenderer:
-        """Get the renderer registered for tool_name, or default fallback."""
-        return self._renderers.get(tool_name, self._default_renderer)
+    def get_renderer(self, tool_name: str = "", result: Any = None) -> DomainRenderer:
+        """Get the renderer registered for a result type or tool_name, or default fallback."""
+        if result is not None:
+            r_type = type(result)
+            if r_type in self._type_renderers:
+                return self._type_renderers[r_type]
+
+        if tool_name and tool_name in self._tool_renderers:
+            return self._tool_renderers[tool_name]
+
+        return self._default_renderer
 
     def render(
         self,
-        tool_name: str,
-        result: dict[str, Any],
-        student_context: StudentContext,
+        tool_name: str = "",
+        result: Any = None,
+        student_context: StudentContext | None = None,
         user_message: str = "",
     ) -> str:
-        """Dispatch rendering to appropriate domain renderer."""
-        renderer = self.get_renderer(tool_name)
+        """Dispatch rendering to domain renderer, then apply ResponseStyleLayer."""
+        renderer = self.get_renderer(tool_name=tool_name, result=result)
         try:
-            return renderer.render(
+            rendered = renderer.render(
                 tool_name=tool_name,
                 result=result,
-                student_context=student_context,
+                student_context=student_context,  # type: ignore[arg-type]
                 user_message=user_message,
             )
         except Exception as e:
             logger.exception("Error rendering response for tool %s: %s", tool_name, e)
-            return self._default_renderer.render(
+            rendered = self._default_renderer.render(
                 tool_name=tool_name,
                 result=result,
-                student_context=student_context,
+                student_context=student_context,  # type: ignore[arg-type]
                 user_message=user_message,
             )
 
+        # Apply ResponseStyleLayer (personality, honorific 'Sir', layout normalization)
+        return self._style_layer.apply(rendered, student_context)
 
-def create_default_renderer_registry() -> RendererRegistry:
-    """Create default RendererRegistry populated with domain renderers."""
-    registry = RendererRegistry()
+
+# Alias for backward compatibility
+RendererRegistry = ResponseRendererRegistry
+
+
+def create_default_renderer_registry() -> ResponseRendererRegistry:
+    """Create default ResponseRendererRegistry populated with domain renderers."""
+    registry = ResponseRendererRegistry()
 
     schedule_renderer = ScheduleRenderer()
     attendance_renderer = AttendanceRenderer()
@@ -130,6 +158,7 @@ def create_default_renderer_registry() -> RendererRegistry:
         "set_lab_batch",
         "confirm_timetable",
         "needs_lab_batch",
+        "get_timetable_metadata",
     }
     registry.register_many(timetable_tools, schedule_renderer)
 

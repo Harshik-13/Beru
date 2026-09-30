@@ -121,6 +121,9 @@ class ContextBuilder:
         if academic_parts:
             lines.append(f"  Academic: {' | '.join(academic_parts)}")
 
+        if profile.graduation_year:
+            lines.append(f"  Graduation Year: {profile.graduation_year}")
+
         if profile.subjects:
             lines.append(f"  Subjects: {', '.join(profile.subjects)}")
 

@@ -190,6 +190,41 @@ def test_structural_period_merging():
 def test_golden_tuesday_schedule_batch_1():
     """Verify Tuesday schedule rendered for an authenticated Batch 1 student."""
     context = _make_context(lab_batch="Batch 1")
+    from app.intelligence.rendering.registry import create_default_renderer_registry
+
+    registry = create_default_renderer_registry()
+
+    result = {
+        "day": "Tuesday",
+        "date": "2026-09-29",
+        "entries": TUESDAY_RAW_ENTRIES,
+    }
+
+    output = registry.render("get_schedule", result, context)
+
+    # Assertions
+    assert "<b>Schedule for Tuesday, Sir:</b>" in output
+    assert "1. <b>OS</b>" in output
+    assert "<code>10:00 – 11:00</code>" in output
+    assert "<code>E-505</code>" in output
+    # Merged CM LAB
+    assert "2. <b>CM LAB</b>" in output
+    assert "<code>11:00 – 13:00</code>" in output
+    # CN Lecture
+    assert "3. <b>CN</b>" in output
+    assert "<code>13:40 – 14:40</code>" in output
+    # Resolved Batch 1 CF LAB
+    assert "4. <b>CF LAB</b> (Batch 1)" in output
+    assert "<code>14:40 – 16:40</code>" in output
+    assert "4 sessions scheduled." in output
+    assert "Sir" in output
+    # Ensure no ambiguity warning because Batch 1 is set
+    assert "Note: Lab batch is not yet set" not in output
+
+
+def test_presentation_decoupled_from_personality():
+    """Verify ScheduleRenderer formats pure data without hardcoding 'Sir'."""
+    context = _make_context(lab_batch="Batch 1")
     renderer = ScheduleRenderer()
 
     result = {
@@ -200,30 +235,17 @@ def test_golden_tuesday_schedule_batch_1():
 
     output = renderer.render("get_schedule", result, context)
 
-    # Assertions
-    assert "<b>Schedule for Tuesday, Sir:</b>" in output
-    assert "1. <b>OS</b>" in output
-    assert "<code>10:00 \u2013 11:00</code>" in output
-    assert "<code>E-505</code>" in output
-    # Merged CM LAB
-    assert "2. <b>CM LAB</b>" in output
-    assert "<code>11:00 \u2013 13:00</code>" in output
-    # CN Lecture
-    assert "3. <b>CN</b>" in output
-    assert "<code>13:40 \u2013 14:40</code>" in output
-    # Resolved Batch 1 CF LAB
-    assert "4. <b>CF LAB</b> (Batch 1)" in output
-    assert "<code>14:40 \u2013 16:40</code>" in output
-    assert "4 sessions scheduled." in output
-    assert "Sir." in output
-    # Ensure no ambiguity warning because Batch 1 is set
-    assert "Note: Lab batch is not yet set" not in output
+    # Pure data header has no honorific
+    assert "<b>Schedule for Tuesday:</b>" in output
+    assert "Sir" not in output
 
 
 def test_golden_tuesday_schedule_batch_2():
     """Verify Tuesday schedule rendered for an authenticated Batch 2 student."""
     context = _make_context(lab_batch="Batch 2")
-    renderer = ScheduleRenderer()
+    from app.intelligence.rendering.registry import create_default_renderer_registry
+
+    registry = create_default_renderer_registry()
 
     result = {
         "day": "Tuesday",
@@ -231,12 +253,12 @@ def test_golden_tuesday_schedule_batch_2():
         "entries": TUESDAY_RAW_ENTRIES,
     }
 
-    output = renderer.render("get_schedule", result, context)
+    output = registry.render("get_schedule", result, context)
 
     assert "<b>Schedule for Tuesday, Sir:</b>" in output
     # Batch 2 resolves to CN LAB
     assert "4. <b>CN LAB</b> (Batch 2)" in output
-    assert "<code>14:40 \u2013 16:40</code>" in output
+    assert "<code>14:40 – 16:40</code>" in output
     assert "CF LAB" not in output
     assert "4 sessions scheduled." in output
 
@@ -244,7 +266,9 @@ def test_golden_tuesday_schedule_batch_2():
 def test_golden_tuesday_schedule_unknown_batch():
     """Verify Tuesday schedule when lab_batch is UNKNOWN: preserves ambiguity."""
     context = _make_context(lab_batch=None)
-    renderer = ScheduleRenderer()
+    from app.intelligence.rendering.registry import create_default_renderer_registry
+
+    registry = create_default_renderer_registry()
 
     result = {
         "day": "Tuesday",
@@ -252,25 +276,95 @@ def test_golden_tuesday_schedule_unknown_batch():
         "entries": TUESDAY_RAW_ENTRIES,
     }
 
-    output = renderer.render("get_schedule", result, context)
+    output = registry.render("get_schedule", result, context)
 
     assert "<b>Schedule for Tuesday, Sir:</b>" in output
     # Must preserve slash notation and show both batches
     assert "4. <b>CF LAB / CN LAB</b> (Batch 1 / Batch 2)" in output
-    assert "<code>14:40 \u2013 16:40</code>" in output
+    assert "<code>14:40 – 16:40</code>" in output
     # Must explicitly guide student to choose batch
     assert "Note: Lab batch is not yet set." in output
-    msg = (
-        "Reply with <b>Batch 1</b> or <b>Batch 2</b> to resolve "
-        "your lab allocation, Sir."
-    )
+    msg = "Reply with <b>Batch 1</b> or <b>Batch 2</b> to resolve your lab allocation."
     assert msg in output
+
+
+def test_golden_missing_room_and_faculty_omitted():
+    """Verify that missing room and missing faculty fields are completely omitted."""
+    context = _make_context(lab_batch="Batch 1")
+    renderer = ScheduleRenderer()
+
+    entries_without_room_faculty = [
+        {
+            "day": "Monday",
+            "start_time": "10:00",
+            "end_time": "11:00",
+            "activity_name": "SPORTS",
+            "activity_type": "activity",
+            "room": None,
+            "faculty": None,
+            "lab_batch": None,
+        }
+    ]
+
+    result = {
+        "day": "Monday",
+        "date": "2026-09-28",
+        "entries": entries_without_room_faculty,
+    }
+
+    output = renderer.render("get_schedule", result, context)
+
+    assert "1. <b>SPORTS</b>" in output
+    assert "<b>Time:</b>" in output
+    assert "<b>Type:</b>" in output
+    # Missing room and faculty MUST BE completely omitted without placeholders
+    assert "Room" not in output
+    assert "Faculty" not in output
+    assert "Not specified" not in output
+
+
+def test_golden_empty_schedule():
+    """Verify clean rendering when no classes are scheduled."""
+    context = _make_context(lab_batch="Batch 1")
+    from app.intelligence.rendering.registry import create_default_renderer_registry
+
+    registry = create_default_renderer_registry()
+    result = {"day": "Sunday", "entries": []}
+
+    output = registry.render("get_schedule", result, context)
+
+    assert "<b>Schedule for Sunday, Sir:</b>" in output
+    assert "No classes are scheduled for this day." in output
+
+
+def test_golden_week_schedule_key_handling():
+    """Verify week schedule handles 'week' key and 'days' key identically."""
+    context = _make_context(lab_batch="Batch 1")
+    from app.intelligence.rendering.registry import create_default_renderer_registry
+
+    registry = create_default_renderer_registry()
+
+    result_with_week = {
+        "status": "confirmed",
+        "week": {
+            "Tuesday": TUESDAY_RAW_ENTRIES,
+        },
+    }
+
+    output = registry.render("get_week_schedule", result_with_week, context)
+
+    assert "<b>Weekly Schedule Overview, Sir:</b>" in output
+    assert "<b>Tuesday</b>" in output
+    assert "<b>OS</b>" in output
+    assert "No schedule data available for this week" not in output
 
 
 def test_golden_next_class():
     """Verify single card format for upcoming next class."""
     context = _make_context(lab_batch="Batch 1")
-    renderer = ScheduleRenderer()
+    from app.intelligence.rendering.registry import create_default_renderer_registry
+
+    registry = create_default_renderer_registry()
 
     result = {
         "has_class": True,
@@ -285,11 +379,11 @@ def test_golden_next_class():
         },
     }
 
-    output = renderer.render("get_next_class", result, context)
+    output = registry.render("get_next_class", result, context)
 
     assert "<b>Next Upcoming Class, Sir:</b>" in output
     assert "• <b>Subject:</b> <b>OS</b>" in output
-    assert "• <b>Time:</b> <code>10:00 \u2013 11:00</code>" in output
+    assert "• <b>Time:</b> <code>10:00 – 11:00</code>" in output
     assert "• <b>Day:</b> Tuesday" in output
     assert "• <b>Type:</b> Lecture" in output
     assert "• <b>Room:</b> <code>E-505</code>" in output
@@ -298,10 +392,12 @@ def test_golden_next_class():
 def test_golden_next_class_none():
     """Verify next class when no classes remain."""
     context = _make_context()
-    renderer = ScheduleRenderer()
+    from app.intelligence.rendering.registry import create_default_renderer_registry
+
+    registry = create_default_renderer_registry()
 
     result = {"has_class": False, "message": "No more classes today or tomorrow."}
-    output = renderer.render("get_next_class", result, context)
+    output = registry.render("get_next_class", result, context)
 
     assert "<b>Next Upcoming Class, Sir:</b>" in output
     assert "No more classes today or tomorrow." in output
@@ -310,7 +406,9 @@ def test_golden_next_class_none():
 def test_golden_attendance_summary():
     """Verify attendance summary with badges and deficits."""
     context = _make_context()
-    renderer = AttendanceRenderer()
+    from app.intelligence.rendering.registry import create_default_renderer_registry
+
+    registry = create_default_renderer_registry()
 
     result = {
         "overall": {
@@ -341,27 +439,29 @@ def test_golden_attendance_summary():
         ],
     }
 
-    output = renderer.render("get_attendance_summary", result, context)
+    output = registry.render("get_attendance_summary", result, context)
 
     assert "<b>Attendance Summary, Sir:</b>" in output
     assert "• <b>Overall:</b> <code>82.5%</code> (66/80 classes attended)" in output
     assert "• <b>Target:</b> <code>75.0%</code>" in output
     assert f"• <b>Status:</b> {CHECK_MARK} Above target (+7.5% margin)" in output
     assert "<b>Subject Breakdown:</b>" in output
-    assert f"1. <b>OS:</b> <code>85.0%</code> (17/20) \u2014 {CHECK_MARK} Met" in output
+    assert f"1. <b>OS:</b> <code>85.0%</code> (17/20) — {CHECK_MARK} Met" in output
     warning_str = (
-        f"2. <b>CN:</b> <code>70.0%</code> (14/20) \u2014 "
+        f"2. <b>CN:</b> <code>70.0%</code> (14/20) — "
         f"{WARNING_SIGN} 1 class needed to reach 75%"
     )
     assert warning_str in output
-    s3_str = f"3. <b>PSA:</b> <code>90.0%</code> (18/20) \u2014 {CHECK_MARK} Met"
+    s3_str = f"3. <b>PSA:</b> <code>90.0%</code> (18/20) — {CHECK_MARK} Met"
     assert s3_str in output
 
 
 def test_golden_daily_briefing():
     """Verify daily briefing output."""
     context = _make_context(lab_batch="Batch 1")
-    renderer = BriefingRenderer()
+    from app.intelligence.rendering.registry import create_default_renderer_registry
+
+    registry = create_default_renderer_registry()
 
     result = {
         "date": "September 29",
@@ -370,26 +470,26 @@ def test_golden_daily_briefing():
         "attendance": {"percentage": 82.5},
     }
 
-    output = renderer.render("get_daily_briefing", result, context)
+    output = registry.render("get_daily_briefing", result, context)
 
     assert "<b>Good morning, Sir.</b>" in output
     assert "Here is your daily briefing for <b>Tuesday</b> (September 29):" in output
     assert "<b>Today's Schedule (4 sessions):</b>" in output
     s1 = (
-        "1. <b>OS</b> (Lecture) \u2014 "
-        "<code>10:00 \u2013 11:00</code> [Room: <code>E-505</code>]"
+        "1. <b>OS</b> (Lecture) — "
+        "<code>10:00 – 11:00</code> [Room: <code>E-505</code>]"
     )
     assert s1 in output
-    assert "2. <b>CM LAB</b> (Lab) \u2014 <code>11:00 \u2013 13:00</code>" in output
+    assert "2. <b>CM LAB</b> (Lab) — <code>11:00 – 13:00</code>" in output
     s3 = (
-        "3. <b>CN</b> (Lecture) \u2014 "
-        "<code>13:40 \u2013 14:40</code> [Room: <code>E-505</code>]"
+        "3. <b>CN</b> (Lecture) — "
+        "<code>13:40 – 14:40</code> [Room: <code>E-505</code>]"
     )
     assert s3 in output
-    s4 = "4. <b>CF LAB</b> (Lab, Batch 1) \u2014 <code>14:40 \u2013 16:40</code>"
+    s4 = "4. <b>CF LAB</b> (Lab, Batch 1) — <code>14:40 – 16:40</code>"
     assert s4 in output
-    assert f"• Overall: <code>82.5%</code> \u2014 {CHECK_MARK} Above target" in output
-    assert "Have a productive day, Sir." in output
+    assert f"• Overall: <code>82.5%</code> — {CHECK_MARK} Above target" in output
+    assert "Have a productive day." in output
 
 
 def test_style_contract_greeting_removal():

@@ -162,6 +162,8 @@ class ScheduleRenderer:
             return self.render_batch_set(result, student_context)
         elif tool_name == "confirm_timetable":
             return self.render_confirmation(result, student_context)
+        elif tool_name == "get_timetable_metadata":
+            return self.render_timetable_metadata(result, student_context)
 
         return self.render_generic_timetable(result, student_context)
 
@@ -190,10 +192,10 @@ class ScheduleRenderer:
         # 2. Structurally merge contiguous entries
         merged_entries = merge_contiguous_entries(resolved_entries)
 
-        lines: list[str] = [f"<b>Schedule for {day}, {HONORIFIC}:</b>", ""]
+        lines: list[str] = [f"<b>Schedule for {day}:</b>", ""]
 
         if not merged_entries:
-            lines.append(f"No classes are scheduled for this day, {HONORIFIC}.")
+            lines.append("No classes are scheduled for this day.")
             return "\n".join(lines)
 
         for idx, entry in enumerate(merged_entries, 1):
@@ -201,6 +203,7 @@ class ScheduleRenderer:
             batch_tag = f" ({entry['batch_label']})" if entry.get("batch_label") else ""
             act_type = entry.get("activity_type", "lecture").title()
             room = entry.get("room")
+            faculty = entry.get("faculty")
             start = entry.get("start_time", "")
             end = entry.get("end_time", "")
 
@@ -209,6 +212,8 @@ class ScheduleRenderer:
             lines.append(format_label_value("Type", act_type))
             if room:
                 lines.append(format_label_value("Room", f"<code>{room}</code>"))
+            if faculty:
+                lines.append(format_label_value("Faculty", faculty))
             lines.append("")
 
         count = len(merged_entries)
@@ -217,13 +222,13 @@ class ScheduleRenderer:
         if has_ambiguity:
             footer = (
                 f"{count} {session_str} scheduled. Note: Lab batch is not yet set. "
-                f"Reply with <b>Batch 1</b> or <b>Batch 2</b> to resolve "
-                f"your lab allocation, {HONORIFIC}."
+                "Reply with <b>Batch 1</b> or <b>Batch 2</b> to resolve "
+                "your lab allocation."
             )
         else:
             footer = (
                 f"{count} {session_str} scheduled. Let me know if you need "
-                f"room details or further assistance, {HONORIFIC}."
+                "room details or further assistance."
             )
 
         lines.append(footer)
@@ -242,10 +247,10 @@ class ScheduleRenderer:
             if tool_name == "get_first_class_tomorrow"
             else "Next Upcoming Class"
         )
-        lines: list[str] = [f"<b>{title}, {HONORIFIC}:</b>", ""]
+        lines: list[str] = [f"<b>{title}:</b>", ""]
 
         if not has_class or not result.get("entry"):
-            msg = result.get("message", f"No upcoming classes scheduled, {HONORIFIC}.")
+            msg = result.get("message", "No upcoming classes scheduled.")
             lines.append(f"{msg}")
             return "\n".join(lines).strip()
 
@@ -258,16 +263,19 @@ class ScheduleRenderer:
         batch_tag = f" ({batch})" if batch else ""
         act_type = entry.get("activity_type", "lecture").title()
         room = entry.get("room")
+        faculty = entry.get("faculty")
         day = entry.get("day", "Today")
         start = entry.get("start_time", "")
         end = entry.get("end_time", "")
 
-        lines.append(f"\u2022 <b>Subject:</b> <b>{act_name}</b>{batch_tag}")
-        lines.append(f"\u2022 <b>Time:</b> {format_time_span(start, end)}")
-        lines.append(f"\u2022 <b>Day:</b> {day}")
-        lines.append(f"\u2022 <b>Type:</b> {act_type}")
+        lines.append(f"• <b>Subject:</b> <b>{act_name}</b>{batch_tag}")
+        lines.append(f"• <b>Time:</b> {format_time_span(start, end)}")
+        lines.append(f"• <b>Day:</b> {day}")
+        lines.append(f"• <b>Type:</b> {act_type}")
         if room:
-            lines.append(f"\u2022 <b>Room:</b> <code>{room}</code>")
+            lines.append(f"• <b>Room:</b> <code>{room}</code>")
+        if faculty:
+            lines.append(f"• <b>Faculty:</b> {faculty}")
 
         return "\n".join(lines).strip()
 
@@ -275,11 +283,11 @@ class ScheduleRenderer:
         self, result: dict[str, Any], student_context: StudentContext
     ) -> str:
         """Render the complete week schedule organized by day."""
-        days_data = result.get("days", {})
-        lines: list[str] = [f"<b>Weekly Schedule Overview, {HONORIFIC}:</b>", ""]
+        days_data = result.get("week") or result.get("days", {})
+        lines: list[str] = ["<b>Weekly Schedule Overview:</b>", ""]
 
         if not days_data:
-            lines.append(f"No schedule data available for this week, {HONORIFIC}.")
+            lines.append("No schedule data available for this week.")
             return "\n".join(lines).strip()
 
         student_batch = _normalize_batch_str(student_context.profile.lab_batch)
@@ -302,7 +310,7 @@ class ScheduleRenderer:
                 act = e.get("activity_name", "")
                 batch = f" ({e['batch_label']})" if e.get("batch_label") else ""
                 lines.append(
-                    f"   \u2022 {format_time_span(start, end)}: <b>{act}</b>{batch}"
+                    f"   • {format_time_span(start, end)}: <b>{act}</b>{batch}"
                 )
             lines.append("")
 
@@ -319,12 +327,12 @@ class ScheduleRenderer:
         year = result.get("academic_year", "N/A")
 
         lines: list[str] = [
-            f"<b>Timetable Status, {HONORIFIC}:</b>",
+            "<b>Timetable Status:</b>",
             "",
-            f"\u2022 <b>Status:</b> <code>{status}</code>",
-            f"\u2022 <b>Version:</b> <code>v{ver}</code>",
-            f"\u2022 <b>Semester / Section:</b> Sem {sem}, Sec {sec}",
-            f"\u2022 <b>Academic Year:</b> {year}",
+            f"• <b>Status:</b> <code>{status}</code>",
+            f"• <b>Version:</b> <code>v{ver}</code>",
+            f"• <b>Semester / Section:</b> Sem {sem}, Sec {sec}",
+            f"• <b>Academic Year:</b> {year}",
         ]
         return "\n".join(lines).strip()
 
@@ -338,16 +346,15 @@ class ScheduleRenderer:
         branch = result.get("branch", "N/A")
 
         lines: list[str] = [
-            f"<b>Extracted Timetable Preview, {HONORIFIC}:</b>",
+            "<b>Extracted Timetable Preview:</b>",
             "",
-            f"\u2022 <b>Classroom:</b> <code>{classroom}</code>",
-            f"\u2022 <b>Branch / Section:</b> {branch} (Sec {sec})",
-            f"\u2022 <b>Total Entries:</b> <code>{count}</code>",
+            f"• <b>Classroom:</b> <code>{classroom}</code>",
+            f"• <b>Branch / Section:</b> {branch} (Sec {sec})",
+            f"• <b>Total Entries:</b> <code>{count}</code>",
             "",
             (
                 "Please review the extracted classes. Reply <b>Confirm</b> to "
-                "activate this timetable, or specify any edits required, "
-                f"{HONORIFIC}."
+                "activate this timetable, or specify any edits required."
             ),
         ]
         return "\n".join(lines).strip()
@@ -359,7 +366,7 @@ class ScheduleRenderer:
         batch_val = result.get("lab_batch", "")
         formatted_batch = _normalize_batch_str(batch_val) or batch_val
         lines: list[str] = [
-            f"<b>Lab Batch Confirmed, {HONORIFIC}:</b>",
+            "<b>Lab Batch Confirmed:</b>",
             "",
             f"Your allocation has been updated to <b>{formatted_batch}</b>.",
             (
@@ -368,7 +375,7 @@ class ScheduleRenderer:
             ),
             (
                 "Please reply <b>Confirm</b> when ready to activate "
-                f"your timetable, {HONORIFIC}."
+                "your timetable."
             ),
         ]
         return "\n".join(lines).strip()
@@ -378,14 +385,49 @@ class ScheduleRenderer:
     ) -> str:
         """Render timetable confirmation activation notice."""
         lines: list[str] = [
-            f"<b>Timetable Confirmed, {HONORIFIC}:</b>",
+            "<b>Timetable Confirmed:</b>",
             "",
             "Your timetable is now officially confirmed and active.",
             (
                 "You will receive your daily morning briefing and "
-                f"proactive class alerts, {HONORIFIC}."
+                "proactive class alerts."
             ),
         ]
+        return "\n".join(lines).strip()
+
+    def render_timetable_metadata(
+        self, result: dict[str, Any], student_context: StudentContext
+    ) -> str:
+        """Render academic profile and timetable metadata."""
+        lines: list[str] = ["<b>Academic Profile & Timetable:</b>", ""]
+
+        branch = result.get("branch")
+        section = result.get("section")
+        semester = result.get("semester")
+        year = result.get("year")
+        programme = result.get("programme")
+        regulation = result.get("regulation")
+        classroom = result.get("default_classroom")
+        acad_year = result.get("academic_year")
+
+        if branch:
+            lines.append(f"• <b>Branch:</b> {branch}")
+        if section:
+            lines.append(f"• <b>Section:</b> <code>{section}</code>")
+        if semester or year:
+            sem_str = f"Semester {semester}" if semester else ""
+            yr_str = f"Year {year}" if year else ""
+            combined = ", ".join(filter(None, [sem_str, yr_str]))
+            lines.append(f"• <b>Semester:</b> <code>{combined}</code>")
+        if programme:
+            lines.append(f"• <b>Programme:</b> {programme}")
+        if regulation:
+            lines.append(f"• <b>Regulation:</b> <code>{regulation}</code>")
+        if classroom:
+            lines.append(f"• <b>Default Classroom:</b> <code>{classroom}</code>")
+        if acad_year:
+            lines.append(f"• <b>Academic Year:</b> {acad_year}")
+
         return "\n".join(lines).strip()
 
     def render_generic_timetable(
@@ -393,4 +435,4 @@ class ScheduleRenderer:
     ) -> str:
         """Fallback renderer for other timetable tools."""
         msg = result.get("message") or str(result)
-        return f"<b>Timetable Update, {HONORIFIC}:</b>\n\n{msg}"
+        return f"<b>Timetable Update:</b>\n\n{msg}"
