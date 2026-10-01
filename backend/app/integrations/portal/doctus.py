@@ -419,10 +419,38 @@ class DoctusAdapter:
             raise DoctusAdapterError(f"Attendance request failed: {e}") from e
 
         logger.info(
-            "GetStdAttPer response status: %s, content-type: %s",
+            "GetStdAttPer response status: %s, content-type: %s, url: %s",
             response.status_code,
             response.headers.get("content-type"),
+            response.url,
         )
+
+        # Detect redirects indicating unauthenticated session challenge
+        if response.history and any(
+            r.status_code in (301, 302, 303, 307, 308) for r in response.history
+        ):
+            first_redirect = response.history[0]
+            loc = first_redirect.headers.get("location", str(response.url))
+            logger.warning(
+                "GetStdAttPer request was redirected (status %s) to %s (final url: %s)",
+                first_redirect.status_code,
+                loc,
+                response.url,
+            )
+            raise DoctusSessionError(
+                f"College portal session was redirected to {loc}; checking authentication."
+            )
+
+        if response.status_code in (301, 302, 303, 307, 308):
+            loc = response.headers.get("location", "/")
+            logger.warning(
+                "GetStdAttPer received direct redirect %s to %s",
+                response.status_code,
+                loc,
+            )
+            raise DoctusSessionError(
+                f"College portal session was redirected to {loc}; checking authentication."
+            )
 
         if response.status_code == 401:
             raise DoctusSessionError("Session expired or invalid")
@@ -436,6 +464,12 @@ class DoctusAdapter:
             data = response.json()
         except ValueError as e:
             raise DoctusAdapterError("Invalid attendance response format") from e
+
+        logger.info(
+            "GetStdAttPer JSON response Status: %s, keys: %s",
+            data.get("Status"),
+            list(data.keys()) if isinstance(data, dict) else [],
+        )
 
         if data.get("Status") != 1:
             raise DoctusAdapterError(

@@ -71,37 +71,34 @@ class DoctusParser:
         soup = BeautifulSoup(html, "html.parser")
 
         # Find the main attendance table
-        # Doctus typically uses a table with subject codes and attendance data
         tables = soup.find_all("table")
-        if not tables:
-            raise DoctusParserError("No attendance table found in HTML")
-
-        # Look for the table containing attendance data
-        # Usually the largest table with subject codes
         attendance_table = None
-        for table in tables:
-            rows = table.find_all("tr")
-            if len(rows) > 2:  # Header + at least one data row
-                # Check if this looks like an attendance table
-                text = table.get_text().lower()
-                if any(
-                    kw in text
-                    for kw in ["attended", "conducted", "cumulative", "monthly"]
-                ):
-                    attendance_table = table
-                    break
+        if tables:
+            for table in tables:
+                rows = table.find_all("tr")
+                if len(rows) > 2:  # Header + at least one data row
+                    text = table.get_text().lower()
+                    if any(
+                        kw in text
+                        for kw in ["attended", "conducted", "cumulative", "monthly"]
+                    ):
+                        attendance_table = table
+                        break
 
-        if not attendance_table:
-            # Fallback: use the largest table
-            attendance_table = max(tables, key=lambda t: len(t.find_all("tr")))
+            if not attendance_table and tables:
+                # Fallback: use the largest table
+                attendance_table = max(tables, key=lambda t: len(t.find_all("tr")))
 
         # Parse overall attendance
         overall_attended, overall_conducted, portal_pct = (
             DoctusParser._parse_overall_attendance(soup)
         )
 
-        # Parse subject-wise attendance
-        subjects = DoctusParser._parse_subjects(attendance_table)
+        if not attendance_table and overall_conducted == 0 and portal_pct is None:
+            raise DoctusParserError("No attendance table or metrics found in HTML")
+
+        # Parse subject-wise attendance (lenient)
+        subjects = DoctusParser._parse_subjects(attendance_table) if attendance_table else []
 
         return PortalAttendance(
             source="doctus",

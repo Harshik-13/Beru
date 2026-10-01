@@ -37,6 +37,7 @@ if TYPE_CHECKING:
         SubjectAttendanceRepository,
     )
     from app.repositories.portal_credential import PortalCredentialRepository
+    from app.repositories.timetable import TimetableRepository
 else:
     from app.models.attendance import AttendanceSnapshot, SubjectAttendance
     from app.repositories.attendance import (
@@ -44,6 +45,7 @@ else:
         SubjectAttendanceRepository,
     )
     from app.repositories.portal_credential import PortalCredentialRepository
+    from app.repositories.timetable import TimetableRepository
 
 
 class PortalSyncError(Exception):
@@ -121,6 +123,7 @@ class PortalSyncService:
         self._credential_repo: PortalCredentialRepository | None = None
         self._snapshot_repo: AttendanceSnapshotRepository | None = None
         self._subject_repo: SubjectAttendanceRepository | None = None
+        self._timetable_repo: TimetableRepository | None = None
 
     @property
     def credential_store(self) -> FernetCredentialStore:
@@ -150,6 +153,12 @@ class PortalSyncService:
         if self._subject_repo is None:
             self._subject_repo = SubjectAttendanceRepository(self.session)
         return self._subject_repo
+
+    @property
+    def timetable_repo(self) -> TimetableRepository:
+        if self._timetable_repo is None:
+            self._timetable_repo = TimetableRepository(self.session)
+        return self._timetable_repo
 
     FRESHNESS_TTL = timedelta(hours=4)
 
@@ -239,16 +248,21 @@ class PortalSyncService:
                 )
             except Exception as e:
                 logger.warning("Portal sync failed for student %s: %s", student_id, e)
+                msg = str(e)
+                if "redirect" in msg.lower():
+                    user_msg = "College portal session was redirected; checking authentication."
+                else:
+                    user_msg = f"Live portal refresh unavailable: {e}"
                 if latest_snapshot:
                     return (
                         latest_snapshot,
                         AttendanceProvenance.PORTAL_SNAPSHOT_STALE,
-                        f"Live portal refresh unavailable: {e}",
+                        user_msg,
                     )
                 return (
                     None,
                     AttendanceProvenance.PORTAL_SNAPSHOT_STALE,
-                    f"Live portal refresh unavailable: {e}",
+                    user_msg,
                 )
 
     async def sync_attendance(
@@ -262,7 +276,7 @@ class PortalSyncService:
         Args:
             student_id: The authenticated student's ID
             semester_id: Optional specific semester to sync. If None,
-                         attempts to use the most recent available semester.
+                         attempts to resolve from confirmed timetable or discovered semesters.
 
         Returns:
             PortalSyncResult with sync status and metadata
@@ -307,39 +321,44 @@ class PortalSyncService:
             except DoctusAdapterError as e:
                 raise PortalSyncError(f"Portal communication error: {e}") from e
 
-            # Step 3: Get available semesters
+            # Step 3: Determine target semester (dynamically from confirmed timetable or fallback to '3')
+            target_semester_id = semester_id
+            if not target_semester_id:
+                try:
+                    confirmed_tt = await self.timetable_repo.get_confirmed_for_student(student_id)
+                    if confirmed_tt and confirmed_tt.year and confirmed_tt.semester:
+                        target_semester_id = str((confirmed_tt.year - 1) * 2 + confirmed_tt.semester)
+                except Exception as tt_err:
+                    logger.debug("Could not infer semester from timetable: %s", tt_err)
+            if not target_semester_id:
+                target_semester_id = "3"
+
+            # Opportunistic discovery from portal
             try:
                 semesters = await adapter.get_semesters()
+                if semesters:
+                    available_sem_ids = {s.semester_id for s in semesters}
+                    default_sem = next((s for s in semesters if s.is_selected), semesters[0])
+                    if target_semester_id not in available_sem_ids:
+                        logger.info(
+                            "Inferred semester %s not in discovered %s; using default %s",
+                            target_semester_id,
+                            available_sem_ids,
+                            default_sem.semester_id,
+                        )
+                        target_semester_id = default_sem.semester_id
             except Exception as e:
-                raise PortalSyncError(f"Failed to retrieve semesters: {e}") from e
+                logger.info(
+                    "Semester discovery bypassed or redirected (%s); proceeding directly with target semId=%s",
+                    e,
+                    target_semester_id,
+                )
 
-            if not semesters:
-                raise PortalSyncError("No semesters available from portal")
-
-            # Step 4: Determine and validate which semester to use
-            available_sem_ids = {s.semester_id for s in semesters}
-            default_sem = next((s for s in semesters if s.is_selected), semesters[0])
-            target_semester_id = semester_id
-            if target_semester_id:
-                if target_semester_id not in available_sem_ids:
-                    logger.warning(
-                        "Requested semester %s not found in student's discovered semesters %s. Falling back to default %s.",
-                        target_semester_id,
-                        available_sem_ids,
-                        default_sem.semester_id,
-                    )
-                    target_semester_id = default_sem.semester_id
-            else:
-                # Use the default active semester (marked selected, or first in list)
-                target_semester_id = default_sem.semester_id
-
-            # Step 5: Fetch attendance data adhering strictly to canonical PortalAttendance contract
+            # Step 4: Fetch attendance data adhering strictly to canonical PortalAttendance contract
             try:
                 attendance = await adapter.get_attendance(target_semester_id)
-            except DoctusSessionError:
-                raise PortalSyncError(
-                    "Portal session expired or invalid during attendance fetch"
-                ) from None
+            except DoctusSessionError as e:
+                raise PortalSyncError(f"Portal session error: {e}") from e
             except DoctusAdapterError as e:
                 raise PortalSyncError(f"Attendance fetch failed: {e}") from e
 

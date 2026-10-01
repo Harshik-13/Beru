@@ -241,6 +241,29 @@ class TestPortalFreshnessAndSync:
         assert provenance == AttendanceProvenance.PORTAL_SNAPSHOT_STALE
         assert "login failed" in notice.lower()
 
+    @pytest.mark.asyncio
+    async def test_redirect_notice_in_get_or_sync_attendance(self, mock_session, student_id):
+        """When portal redirect occurs during sync, clear diagnostic notice is returned."""
+        service = PortalSyncService(mock_session)
+        mock_cred = PortalCredential(
+            student_id=student_id,
+            portal="doctus",
+            roll_number="25MIS0001",
+            encrypted_password="encrypted_blob",
+            status=PortalCredentialStatus.CONNECTED,
+        )
+        service.credential_repo.get_by_student_and_portal = AsyncMock(return_value=mock_cred)
+        service.snapshot_repo.get_latest_for_student_with_subjects = AsyncMock(return_value=None)
+        service.sync_attendance = AsyncMock(
+            side_effect=Exception("College portal session was redirected to /Login; checking authentication.")
+        )
+
+        snapshot, provenance, notice = await service.get_or_sync_attendance(student_id)
+
+        assert snapshot is None
+        assert provenance == AttendanceProvenance.PORTAL_SNAPSHOT_STALE
+        assert notice == "College portal session was redirected; checking authentication."
+
 
 class TestAttendanceProvenanceRendering:
     """Verify AttendanceRenderer renders provenance badges appropriately."""

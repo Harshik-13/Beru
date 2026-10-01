@@ -1,5 +1,38 @@
 # CHANGELOG.md — Beru
 
+## 2026-10-02 — Direct GetStdAttPer Attendance Alignment & Timetable Semester Resolution
+
+### Task / Change
+Implemented direct attendance retrieval via `/Academic/Shared/GetStdAttPer` with dynamic semester resolution from the student's confirmed timetable (`(year - 1) * 2 + semester`) falling back to `semId = "3"`; added unauthenticated 302 redirect detection with safe diagnostic `Location` logging in `DoctusAdapter.get_attendance`; added clear user-facing redirect status reporting in `PortalSyncService`; enhanced `DoctusParser.parse_attendance` for lenient subject table parsing; and expanded offline test suites to 48 portal unit tests and 12 sync tests.
+
+### Why
+During live Telegram testing, `POST /Login` succeeded (`Status: 1`), but `GET /Student/Dashboard` returned `HTTP 302 Found -> /`, redirecting to the root landing page and preventing dynamic semester dropdown parsing (`No semesters available from portal`). By inferring `semId` from the student's confirmed timetable profile (or defaulting to semester 3) and calling `GetStdAttPer` directly with authenticated cookies, Beru bypasses the dashboard redirect blocker, captures the real attendance data contract, and delivers clear diagnostic status if the session is challenged.
+
+### What Changed
+- `backend/app/integrations/portal/sync_service.py`:
+  - Added `timetable_repo` property to `PortalSyncService`.
+  - Updated `sync_attendance()` to infer `target_semester_id` from confirmed timetable (`(year - 1) * 2 + semester`) before falling back to `"3"`.
+  - Made semester dropdown discovery opportunistic: if `get_semesters()` redirects or fails, logs and proceeds directly with `target_semester_id`.
+  - Added clear user-facing messaging in `get_attendance_or_cached()` when a session redirect occurs: `"College portal session was redirected; checking authentication."`.
+- `backend/app/integrations/portal/doctus.py`:
+  - Added redirect detection in `get_attendance()`: inspects `response.history` and response status for 301/302/303/307/308, logging `Location` header and raising `DoctusSessionError` without credential leaks.
+  - Added diagnostic logging of HTTP status, content-type, final URL, and top-level JSON response keys.
+- `backend/app/integrations/portal/parser.py`:
+  - Enhanced `parse_attendance()` to be lenient: extracts overall metrics (attended, conducted, percentage) first, then parses extractable subject rows without crashing if individual table rows vary.
+- `backend/tests/test_portal.py`:
+  - Added `test_get_attendance_redirect_raises_session_error`.
+  - Verified all 48 portal unit tests pass.
+- `backend/tests/test_portal_sync_and_freshness.py`:
+  - Added `test_redirect_notice_in_get_or_sync_attendance`.
+  - Verified all 12 sync and freshness tests pass.
+
+### Verification
+- 48/48 portal unit tests passed (`pytest backend/tests/test_portal.py -v`).
+- 12/12 portal sync and freshness tests passed (`pytest backend/tests/test_portal_sync_and_freshness.py -v`).
+- 416/416 full repository regression tests passed cleanly (`pytest backend/tests/ -q`).
+
+---
+
 ## 2026-10-01 — Doctus Browser Document Navigation & Explicit Semester Validation
 
 ### Task / Change

@@ -14,6 +14,7 @@ from app.integrations.portal.doctus import (
     DoctusAdapter,
     DoctusLoginError,
     DoctusSession,
+    DoctusSessionError,
     _extract_antiforgery_token,
 )
 from app.integrations.portal.dto import PortalSubjectAttendance, SemesterOption
@@ -893,4 +894,36 @@ class TestAuthenticatedSessionContinuity:
         assert captured_requests[-1].url.params.get("semId") == "99"
         assert captured_requests[-1].headers.get("x-requested-with") == "XMLHttpRequest"
         assert "/Student/Dashboard" in captured_requests[-1].headers.get("referer", "")
+
+    @pytest.mark.asyncio
+    async def test_get_attendance_redirect_raises_session_error(self):
+        """Verify that a 302 redirect on GetStdAttPer raises DoctusSessionError with redirect location."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and request.url.path == "/Login":
+                return httpx.Response(
+                    200,
+                    text='<input name="__RequestVerificationToken" type="hidden" value="tok" />',
+                )
+            if request.method == "POST" and request.url.path == "/Login":
+                return httpx.Response(
+                    200,
+                    json={"Status": 1, "Data": "/Student/Dashboard"},
+                )
+            if request.method == "GET" and request.url.path == "/Academic/Shared/GetStdAttPer":
+                return httpx.Response(
+                    302,
+                    headers={"Location": "https://automation.vnrvjiet.ac.in/Login?ReturnUrl=%2F"},
+                )
+            return httpx.Response(404)
+
+        adapter = DoctusAdapter()
+        adapter._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=adapter.BASE_URL,
+            follow_redirects=False,
+        )
+
+        await adapter.login("25071a6231", "pass")
+        with pytest.raises(DoctusSessionError, match="redirected"):
+            await adapter.get_attendance("3")
 
