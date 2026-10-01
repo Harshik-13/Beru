@@ -1,5 +1,48 @@
 # CHANGELOG.md — Beru
 
+## 2026-10-01 — Doctus Live Authentication & Session Alignment (ASP.NET Core / Anti-CSRF)
+
+### Task / Change
+Aligned `DoctusAdapter.login` with the live VNRVJIET EduPrime portal's ASP.NET Core protocol: implemented pre-flight `GET /Login` anti-forgery token extraction, paired `OM5.Antiforgery` cookie preservation, application/x-www-form-urlencoded form POST with `xPassword`, required verification headers, authoritative `self._client.cookies` session continuity without legacy `relic_VNRVJIET` dependency, strict account lockout and zero-retry protection, and 15 isolated unit tests.
+
+### Why
+During initial live Telegram testing, the onboarding boundary and sensitive message deletion performed cleanly, but `POST /Login` was rejected with `HTTP 400 Bad Request`. Live DOM inspection revealed the portal uses ASP.NET Core which strictly requires:
+1. Pre-flight `GET /Login` to acquire the anti-forgery cookie and hidden `__RequestVerificationToken`.
+2. Password form field named `xPassword` (not legacy `Password`).
+3. Outbound request headers `RequestVerificationToken` and `Referer`.
+4. Storing the entire cookie jar (`self._client.cookies`) across requests rather than expecting a legacy `relic_VNRVJIET` cookie.
+Furthermore, student accounts must be strictly safeguarded against automated retry loops or account lockout triggers.
+
+### What Changed
+- `backend/app/integrations/portal/doctus.py`:
+  - Added `_extract_antiforgery_token(html)` supporting flexible HTML attribute ordering and casing without logging or leaking tokens.
+  - Implemented two-step `login(roll_number, password)`:
+    - Step 1: Pre-flight `GET /Login` to seed anti-forgery cookie in client cookie jar and extract `__RequestVerificationToken`.
+    - Step 2: Form POST with `__RequestVerificationToken`, `UserName`, `xPassword` and headers (`Content-Type`, `X-Requested-With`, `RequestVerificationToken`, `Referer`).
+  - Implemented categorized safe error handling for timeouts, missing CSRF token, HTTP 400, HTTP 5xx, `Status == 0` (extracting safe user message and `BlockedUntil`), and malformed JSON.
+  - Replaced legacy `relic_VNRVJIET` cookie requirement with authoritative `self._client.cookies` session construction.
+  - Required extraction of protected student ID from response (`UserId`), failing safely if missing.
+  - Downstream methods (`get_semesters`, `get_attendance`) seamlessly reuse authenticated session cookies.
+- `backend/tests/test_portal.py`:
+  - Added `TestDoctusTokenExtraction` testing standard, reversed, and mixed-case attribute orderings.
+  - Added `TestDoctusAdapterLogin` with 15 isolated offline tests covering:
+    - Successful login, GET-before-POST ordering, `xPassword` field usage, antiforgery token transmission in body & header, referer header, cookie jar preservation, zero dependency on legacy relic cookie, missing token handling, invalid credentials handling, blocked/captcha message propagation, HTTP 400/500 safe handling, malformed JSON handling, and leak prevention for passwords, tokens, and cookies.
+  - Added `TestAuthenticatedSessionContinuity` verifying downstream calls (`get_semesters`) transmit authenticated session cookies.
+
+### Files Changed & Why
+- `backend/app/integrations/portal/doctus.py`: Core portal adapter alignment with ASP.NET Core protocol and safe session handling.
+- `backend/tests/test_portal.py`: Unit and integration test coverage for authentication, error cases, leak prevention, and session continuity.
+- `docs/STATE.md`: Documented implementation status and security invariants.
+- `docs/CHANGELOG.md`: Detailed engineering history of the change.
+
+### Verification
+- 38/38 portal integration tests passed in 0.19s (`pytest backend/tests/test_portal.py -v`).
+- 21/21 portal security and sync tests passed in 0.36s.
+- 405/405 project regression tests passed (`pytest backend/tests/ -q`).
+- Offline mock transport ensures 0 requests touch live portal during automated test execution.
+
+---
+
 ## 2026-10-01 — Live Doctus Portal Integration, Zero-Leak Credential Boundary & 4-Hour Freshness Sync
 
 ### Task / Change

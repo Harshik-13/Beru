@@ -5,10 +5,17 @@ Tests for Doctus portal integration.
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import httpx
 import pytest
 
 from app.integrations.portal.credential_store import FernetCredentialStore
 from app.integrations.portal.credentials import FernetCredentialConfig
+from app.integrations.portal.doctus import (
+    DoctusAdapter,
+    DoctusLoginError,
+    DoctusSession,
+    _extract_antiforgery_token,
+)
 from app.integrations.portal.dto import PortalSubjectAttendance, SemesterOption
 from app.integrations.portal.parser import DoctusParser, DoctusParserError
 
@@ -243,3 +250,455 @@ class TestPortalSubjectAttendanceDTO:
         assert subj.monthly_conducted == 7
         assert subj.cumulative_attended == 16
         assert subj.cumulative_conducted == 34
+
+
+class TestDoctusTokenExtraction:
+    """Test anti-forgery token extraction logic."""
+
+    def test_extract_token_standard_attributes(self):
+        html = '<input name="__RequestVerificationToken" type="hidden" value="token_val_123" />'
+        assert _extract_antiforgery_token(html) == "token_val_123"
+
+    def test_extract_token_reversed_attributes(self):
+        html = '<input type="hidden" value="token_val_reversed" name="__RequestVerificationToken" />'
+        assert _extract_antiforgery_token(html) == "token_val_reversed"
+
+    def test_extract_token_mixed_casing(self):
+        html = '<INPUT NAME="__RequestVerificationToken" TYPE="HIDDEN" VALUE="TOKEN_CASE" />'
+        assert _extract_antiforgery_token(html) == "TOKEN_CASE"
+
+    def test_extract_token_missing(self):
+        html = '<div><input name="Other" value="123" /></div>'
+        assert _extract_antiforgery_token(html) == ""
+
+
+class TestDoctusAdapterLogin:
+    """Test suite for DoctusAdapter login and session management."""
+
+    @pytest.mark.asyncio
+    async def test_login_success(self):
+        """1. Verify standard successful login with token and session."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and request.url.path == "/Login":
+                return httpx.Response(
+                    200,
+                    text='<input name="__RequestVerificationToken" type="hidden" value="csrf_test_token" />',
+                    headers={"Set-Cookie": "OM5.Antiforgery=csrf_cookie_val; path=/"},
+                )
+            if request.method == "POST" and request.url.path == "/Login":
+                return httpx.Response(
+                    200,
+                    json={"Status": 1, "Data": {"UserId": "std_12345", "xMessage": "Welcome"}},
+                    headers={"Set-Cookie": ".AspNetCore.Cookies=auth_cookie_val; path=/"},
+                )
+            return httpx.Response(404)
+
+        adapter = DoctusAdapter()
+        adapter._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=adapter.BASE_URL,
+        )
+
+        session = await adapter.login("25071A6231", "test_pass_123")
+        assert isinstance(session, DoctusSession)
+        assert session.protected_student_id == "std_12345"
+        assert session.cookies.get("OM5.Antiforgery") == "csrf_cookie_val"
+        assert session.cookies.get(".AspNetCore.Cookies") == "auth_cookie_val"
+
+    @pytest.mark.asyncio
+    async def test_login_get_happens_before_post(self):
+        """2. Verify GET happens before POST."""
+        calls = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append((request.method, request.url.path))
+            if request.method == "GET":
+                return httpx.Response(
+                    200,
+                    text='<input name="__RequestVerificationToken" type="hidden" value="token1" />',
+                )
+            return httpx.Response(200, json={"Status": 1, "Data": {"UserId": "u1"}})
+
+        adapter = DoctusAdapter()
+        adapter._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=adapter.BASE_URL,
+        )
+
+        await adapter.login("25071A6231", "pass")
+        assert calls == [("GET", "/Login"), ("POST", "/Login")]
+
+    @pytest.mark.asyncio
+    async def test_login_uses_correct_password_field(self):
+        """3. Verify POST contains xPassword and NOT Password."""
+        captured_data = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return httpx.Response(
+                    200,
+                    text='<input name="__RequestVerificationToken" type="hidden" value="tok" />',
+                )
+            if request.method == "POST":
+                # Parse form content
+                body = request.content.decode()
+                for part in body.split("&"):
+                    if "=" in part:
+                        k, v = part.split("=", 1)
+                        captured_data[k] = v
+                return httpx.Response(200, json={"Status": 1, "Data": {"UserId": "u1"}})
+            return httpx.Response(404)
+
+        adapter = DoctusAdapter()
+        adapter._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=adapter.BASE_URL,
+        )
+
+        await adapter.login("25071A6231", "my_secret_pass")
+        assert "xPassword" in captured_data
+        assert captured_data["xPassword"] == "my_secret_pass"
+        assert "Password" not in captured_data
+
+    @pytest.mark.asyncio
+    async def test_login_sends_antiforgery_token(self):
+        """4. Verify token in form data and RequestVerificationToken header."""
+        captured_headers = {}
+        captured_data = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return httpx.Response(
+                    200,
+                    text='<input name="__RequestVerificationToken" type="hidden" value="token_xyz_999" />',
+                )
+            if request.method == "POST":
+                captured_headers.update(dict(request.headers))
+                for part in request.content.decode().split("&"):
+                    if "=" in part:
+                        k, v = part.split("=", 1)
+                        captured_data[k] = v
+                return httpx.Response(200, json={"Status": 1, "Data": {"UserId": "u1"}})
+            return httpx.Response(404)
+
+        adapter = DoctusAdapter()
+        adapter._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=adapter.BASE_URL,
+        )
+
+        await adapter.login("25071A6231", "pass")
+        assert captured_data.get("__RequestVerificationToken") == "token_xyz_999"
+        assert captured_headers.get("requestverificationtoken") == "token_xyz_999"
+
+    @pytest.mark.asyncio
+    async def test_login_sends_referer(self):
+        """5. Verify Referer header in POST."""
+        captured_headers = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return httpx.Response(
+                    200,
+                    text='<input name="__RequestVerificationToken" type="hidden" value="tok" />',
+                )
+            if request.method == "POST":
+                captured_headers.update(dict(request.headers))
+                return httpx.Response(200, json={"Status": 1, "Data": {"UserId": "u1"}})
+            return httpx.Response(404)
+
+        adapter = DoctusAdapter()
+        adapter._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=adapter.BASE_URL,
+        )
+
+        await adapter.login("25071A6231", "pass")
+        assert captured_headers.get("referer") == f"{adapter.BASE_URL}/Login"
+
+    @pytest.mark.asyncio
+    async def test_login_preserves_get_cookie(self):
+        """6. Seed antiforgery cookie on GET and verify session preserves it."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return httpx.Response(
+                    200,
+                    text='<input name="__RequestVerificationToken" type="hidden" value="tok" />',
+                    headers={"Set-Cookie": "OM5.Antiforgery=csrf_seed_cookie; path=/"},
+                )
+            return httpx.Response(200, json={"Status": 1, "Data": {"UserId": "u1"}})
+
+        adapter = DoctusAdapter()
+        adapter._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=adapter.BASE_URL,
+        )
+
+        session = await adapter.login("25071A6231", "pass")
+        assert session.cookies.get("OM5.Antiforgery") == "csrf_seed_cookie"
+
+    @pytest.mark.asyncio
+    async def test_login_does_not_require_legacy_relic_cookie(self):
+        """7. Successful login without relic_VNRVJIET cookie still succeeds."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return httpx.Response(
+                    200,
+                    text='<input name="__RequestVerificationToken" type="hidden" value="tok" />',
+                )
+            return httpx.Response(
+                200,
+                json={"Status": 1, "Data": {"UserId": "u1"}},
+                headers={"Set-Cookie": ".AspNetCore.Session=session_val; path=/"},
+            )
+
+        adapter = DoctusAdapter()
+        adapter._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=adapter.BASE_URL,
+        )
+
+        session = await adapter.login("25071A6231", "pass")
+        assert session.protected_student_id == "u1"
+        assert "relic_VNRVJIET" not in session.cookies
+
+    @pytest.mark.asyncio
+    async def test_login_missing_antiforgery_token(self):
+        """8. Missing token in GET HTML fails safely."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, text="<html><body>No token here</body></html>")
+
+        adapter = DoctusAdapter()
+        adapter._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=adapter.BASE_URL,
+        )
+
+        with pytest.raises(DoctusLoginError) as exc_info:
+            await adapter.login("25071A6231", "pass")
+        assert "Failed to acquire anti-forgery token from portal" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_login_invalid_credentials(self):
+        """9. Status == 0 raises DoctusLoginError with portal message."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return httpx.Response(
+                    200,
+                    text='<input name="__RequestVerificationToken" type="hidden" value="tok" />',
+                )
+            return httpx.Response(
+                200,
+                json={"Status": 0, "Data": {"Message": "Invalid username or password."}},
+            )
+
+        adapter = DoctusAdapter()
+        adapter._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=adapter.BASE_URL,
+        )
+
+        with pytest.raises(DoctusLoginError) as exc_info:
+            await adapter.login("25071A6231", "wrong_pass")
+        assert "Invalid username or password." in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_login_blocked_or_captcha_message(self):
+        """10. Preserves blocked/CAPTCHA information safely."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return httpx.Response(
+                    200,
+                    text='<input name="__RequestVerificationToken" type="hidden" value="tok" />',
+                )
+            return httpx.Response(
+                200,
+                json={"Status": 0, "Data": {"BlockedUntil": "2026-10-01 23:59:59"}},
+            )
+
+        adapter = DoctusAdapter()
+        adapter._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=adapter.BASE_URL,
+        )
+
+        with pytest.raises(DoctusLoginError) as exc_info:
+            await adapter.login("25071A6231", "pass")
+        assert "Account temporarily blocked until 2026-10-01 23:59:59." in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_login_http_400(self):
+        """11. Verify HTTP 400 produces safe DoctusLoginError without body leakage."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return httpx.Response(
+                    200,
+                    text='<input name="__RequestVerificationToken" type="hidden" value="tok" />',
+                )
+            return httpx.Response(400, text="ASP.NET Bad Request Internal Trace")
+
+        adapter = DoctusAdapter()
+        adapter._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=adapter.BASE_URL,
+        )
+
+        with pytest.raises(DoctusLoginError) as exc_info:
+            await adapter.login("25071A6231", "pass")
+        assert "Portal rejected authentication request (HTTP 400)" in str(exc_info.value)
+        assert "Internal Trace" not in str(exc_info.value)
+        assert exc_info.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_login_http_500(self):
+        """12. Verify HTTP 500 produces safe DoctusLoginError."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return httpx.Response(
+                    200,
+                    text='<input name="__RequestVerificationToken" type="hidden" value="tok" />',
+                )
+            return httpx.Response(500, text="Server Error")
+
+        adapter = DoctusAdapter()
+        adapter._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=adapter.BASE_URL,
+        )
+
+        with pytest.raises(DoctusLoginError) as exc_info:
+            await adapter.login("25071A6231", "pass")
+        assert "Portal server error (HTTP 500)" in str(exc_info.value)
+        assert exc_info.value.status_code == 500
+
+    @pytest.mark.asyncio
+    async def test_login_malformed_json(self):
+        """13. Verify malformed JSON response fails safely."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return httpx.Response(
+                    200,
+                    text='<input name="__RequestVerificationToken" type="hidden" value="tok" />',
+                )
+            return httpx.Response(200, text="<html><body>Not JSON</body></html>")
+
+        adapter = DoctusAdapter()
+        adapter._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=adapter.BASE_URL,
+        )
+
+        with pytest.raises(DoctusLoginError) as exc_info:
+            await adapter.login("25071A6231", "pass")
+        assert "Invalid portal response format" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_login_password_never_leaks(self):
+        """14. Verify sentinel password never appears in exceptions or traces."""
+        sentinel_pass = "SENTINEL_SECRET_XYZ987!"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return httpx.Response(
+                    200,
+                    text='<input name="__RequestVerificationToken" type="hidden" value="tok" />',
+                )
+            return httpx.Response(400, text="Bad Request")
+
+        adapter = DoctusAdapter()
+        adapter._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=adapter.BASE_URL,
+        )
+
+        with pytest.raises(DoctusLoginError) as exc_info:
+            await adapter.login("25071A6231", sentinel_pass)
+        assert sentinel_pass not in str(exc_info.value)
+        assert sentinel_pass not in repr(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_login_token_and_cookies_never_leak(self):
+        """15. Verify token and cookie values never leak into exception messages."""
+        sentinel_token = "SENTINEL_TOKEN_SECRET_123"
+        sentinel_cookie = "SENTINEL_COOKIE_SECRET_456"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return httpx.Response(
+                    200,
+                    text=f'<input name="__RequestVerificationToken" type="hidden" value="{sentinel_token}" />',
+                    headers={"Set-Cookie": f"OM5.Antiforgery={sentinel_cookie}; path=/"},
+                )
+            return httpx.Response(
+                200,
+                json={"Status": 0, "Data": {"Message": "Invalid credentials"}},
+            )
+
+        adapter = DoctusAdapter()
+        adapter._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=adapter.BASE_URL,
+        )
+
+        with pytest.raises(DoctusLoginError) as exc_info:
+            await adapter.login("25071A6231", "pass")
+        assert sentinel_token not in str(exc_info.value)
+        assert sentinel_cookie not in str(exc_info.value)
+
+
+class TestAuthenticatedSessionContinuity:
+    """Test downstream session continuity across portal operations."""
+
+    @pytest.mark.asyncio
+    async def test_authenticated_session_continuity(self):
+        """Verify login session cookies are passed to downstream get_semesters call."""
+        captured_requests = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured_requests.append(request)
+            if request.method == "GET" and request.url.path == "/Login":
+                return httpx.Response(
+                    200,
+                    text='<input name="__RequestVerificationToken" type="hidden" value="csrf_tok" />',
+                    headers={"Set-Cookie": "OM5.Antiforgery=csrf_abc123; path=/"},
+                )
+            if request.method == "POST" and request.url.path == "/Login":
+                return httpx.Response(
+                    200,
+                    json={"Status": 1, "Data": {"UserId": "std_session_continuity"}},
+                    headers={"Set-Cookie": ".AspNetCore.Cookies=aspnet_auth_xyz; path=/"},
+                )
+            if request.method == "GET" and request.url.path == "/Academic/Student/Attendance":
+                html = """
+                <html>
+                    <body>
+                        <select id="StdSemPop">
+                            <option value="102">BT25290203</option>
+                        </select>
+                    </body>
+                </html>
+                """
+                return httpx.Response(200, text=html)
+            return httpx.Response(404)
+
+        adapter = DoctusAdapter()
+        adapter._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=adapter.BASE_URL,
+        )
+
+        # Step 1 & 2: Login
+        session = await adapter.login("25071A6231", "valid_pass")
+        assert session.protected_student_id == "std_session_continuity"
+
+        # Step 3 & 4: Call get_semesters() using the established session
+        semesters = await adapter.get_semesters()
+        assert len(semesters) == 1
+        assert semesters[0].semester_id == "102"
+
+        # Step 5: Verify downstream request carried both cookies
+        sem_request = captured_requests[-1]
+        assert sem_request.url.path == "/Academic/Student/Attendance"
+        cookie_header = sem_request.headers.get("cookie", "")
+        assert "OM5.Antiforgery=csrf_abc123" in cookie_header
+        assert ".AspNetCore.Cookies=aspnet_auth_xyz" in cookie_header

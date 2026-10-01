@@ -6,6 +6,7 @@ for attendance retrieval. Handles login, session management,
 and attendance data retrieval.
 """
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -56,6 +57,28 @@ class DoctusSession:
     protected_student_id: str
 
 
+def _extract_antiforgery_token(html: str) -> str:
+    """
+    Extract anti-forgery token from GET /Login HTML.
+
+    Accepts arbitrary attribute ordering and casing. Never logs or leaks the token.
+    """
+    match = re.search(
+        r'<input\b[^>]*?\bname=["\']__RequestVerificationToken["\'][^>]*?\bvalue=["\']([^"\']+)["\']',
+        html,
+        re.IGNORECASE,
+    )
+    if not match:
+        match = re.search(
+            r'<input\b[^>]*?\bvalue=["\']([^"\']+)["\'][^>]*?\bname=["\']__RequestVerificationToken["\']',
+            html,
+            re.IGNORECASE,
+        )
+    if match and match.group(1).strip():
+        return match.group(1).strip()
+    return ""
+
+
 class DoctusAdapter:
     """
     Doctus portal adapter for attendance retrieval.
@@ -92,6 +115,10 @@ class DoctusAdapter:
         """
         Authenticate with Doctus portal.
 
+        Performs two-step authentication:
+        1. GET /Login to obtain anti-forgery cookie and __RequestVerificationToken.
+        2. POST /Login with xPassword and token headers.
+
         Args:
             roll_number: Student's roll number
             password: Portal password
@@ -105,55 +132,101 @@ class DoctusAdapter:
         if not self._client:
             raise RuntimeError("Adapter not initialized. Use async context manager.")
 
-        # Prepare login payload
-        # Doctus expects form data
+        # Step 1: Pre-flight GET /Login to acquire anti-forgery token & cookie
+        try:
+            get_response = await self._client.get(
+                self.LOGIN_ENDPOINT,
+                headers={"Referer": f"{self.BASE_URL}/"},
+            )
+        except httpx.TimeoutException as e:
+            raise DoctusLoginError("Portal connection timed out during pre-flight") from e
+        except httpx.RequestError as e:
+            raise DoctusLoginError(f"Portal unavailable during pre-flight: {e}") from e
+
+        if get_response.status_code != 200:
+            raise DoctusLoginError(
+                f"Portal returned status {get_response.status_code} during pre-flight",
+                status_code=get_response.status_code,
+            )
+
+        token = _extract_antiforgery_token(get_response.text)
+        if not token:
+            raise DoctusLoginError("Failed to acquire anti-forgery token from portal")
+
+        # Step 2: Form POST /Login
         payload = {
-            "UserName": roll_number,
-            "Password": password,
+            "__RequestVerificationToken": token,
+            "UserName": roll_number.strip(),
+            "xPassword": password,
+        }
+
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Requested-With": "XMLHttpRequest",
+            "RequestVerificationToken": token,
+            "Referer": f"{self.BASE_URL}{self.LOGIN_ENDPOINT}",
         }
 
         try:
-            response = await self._client.post(
+            post_response = await self._client.post(
                 self.LOGIN_ENDPOINT,
                 data=payload,
-                headers={
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "X-Requested-With": "XMLHttpRequest",
-                },
+                headers=headers,
             )
         except httpx.TimeoutException as e:
             raise DoctusLoginError("Login request timed out") from e
         except httpx.RequestError as e:
             raise DoctusLoginError(f"Login request failed: {e}") from e
 
-        if response.status_code != 200:
+        # Handle specific HTTP error status codes safely without exposing raw payload/body
+        if post_response.status_code == 400:
             raise DoctusLoginError(
-                f"Login failed with status {response.status_code}",
-                status_code=response.status_code,
+                "Portal rejected authentication request (HTTP 400)",
+                status_code=400,
+            )
+        if post_response.status_code >= 500:
+            raise DoctusLoginError(
+                f"Portal server error (HTTP {post_response.status_code})",
+                status_code=post_response.status_code,
+            )
+        if post_response.status_code != 200:
+            raise DoctusLoginError(
+                f"Login failed with status {post_response.status_code}",
+                status_code=post_response.status_code,
             )
 
-        # Parse login response
+        # Parse login response JSON
         try:
-            data = response.json()
+            data = post_response.json()
         except ValueError as e:
-            raise DoctusLoginError("Invalid login response format") from e
+            raise DoctusLoginError("Invalid portal response format") from e
 
+        if not isinstance(data, dict):
+            raise DoctusLoginError("Invalid portal response format")
+
+        # Check authentication status
         if data.get("Status") != 1:
-            msg = data.get("Data", {}).get("xMessage", "Unknown error")
-            raise DoctusLoginError(f"Login failed: {msg}")
+            data_obj = data.get("Data")
+            error_msg = "Invalid username or password."
+            if isinstance(data_obj, dict):
+                blocked_until = data_obj.get("BlockedUntil")
+                raw_msg = data_obj.get("Message") or data_obj.get("xMessage")
+                if blocked_until:
+                    error_msg = f"Account temporarily blocked until {blocked_until}."
+                elif raw_msg and isinstance(raw_msg, str):
+                    error_msg = raw_msg.strip()
+            raise DoctusLoginError(f"Login failed: {error_msg}")
 
-        # Extract session cookie
-        cookies = response.cookies
-        relic_cookie = cookies.get("relic_VNRVJIET")
-        if not relic_cookie:
-            raise DoctusLoginError("Session cookie not set after login")
-
-        # Extract protected student ID from the login response if available
-        # The protected student ID is often embedded in the login response
+        # Extract protected student ID from login response
         protected_student_id = self._extract_protected_student_id_from_response(data)
+        if not protected_student_id:
+            raise DoctusLoginError(
+                "Authentication succeeded but failed to extract student identifier"
+            )
 
+        # Build session using authoritative self._client.cookies
         session = DoctusSession(
-            cookies=cookies,
+            cookies=self._client.cookies,
             protected_student_id=protected_student_id,
         )
 
@@ -167,13 +240,12 @@ class DoctusAdapter:
         The protected student ID may be embedded in the login response
         under various keys depending on the portal version.
         """
-        # Check common locations in the login response
         data_obj = data.get("Data", {})
         if isinstance(data_obj, dict):
-            # Check common field names for the protected student ID
-            for key in ["StudentId", "ProtectedStudentId", "UserId", "ProtectedId"]:
-                if data_obj.get(key):
-                    return str(data_obj[key])
+            for key in ["UserId", "StudentId", "ProtectedStudentId", "ProtectedId"]:
+                val = data_obj.get(key)
+                if val is not None and str(val).strip():
+                    return str(val).strip()
         return ""
 
     async def get_semesters(self):
