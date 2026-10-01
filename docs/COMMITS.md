@@ -4,6 +4,7 @@
 
 | Commit | Date | Purpose | Subsystem | Verification |
 |--------|------|---------|-----------|--------------|
+| `1427eee` | 2026-10-01 | Reproduce browser document request on /Student/Dashboard and validate semId | Portal, Sync, Parser | 414 tests pass |
 | `2b2f301` | 2026-10-01 | Align get_semesters to /Student/Dashboard and fix frozen PortalAttendance construction | Portal, Parser, Attendance | 414 tests pass |
 | `6c74197` | 2026-10-01 | Fix student ID resolution, HTML extraction, and canonical attendance contract | Portal, Sync, Attendance | 412 tests pass |
 | `d7282b1` | 2026-10-01 | Fix Doctus authentication and session handling with ASP.NET Core protocol & zero-retry guard | Portal, Security, Attendance | 405 tests pass |
