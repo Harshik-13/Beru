@@ -2,13 +2,13 @@
 
 ## Current State
 
-- **Last updated:** 2026-09-30
-- **Current commit:** `68d36f7`
+- **Last updated:** 2026-10-01
+- **Current commit:** `pending`
 - **Current branch:** master
 
 ## Overall Project Status
 
-Personal Alpha phase. Telegram bot is live and functional. Core intelligence pipeline (LLM → tool dispatch → deterministic backend) is wired. Presentation Layer with decoupled ResponseStyleLayer, deterministic domain renderers, and ResponseRendererRegistry is operational. Encyclopedic timetable querying (courses, labs, rooms, professors, schedule analytics) and semantic-invariance testing are fully operational. Briefing scheduler is operational. Portal integration (Doctus) is implemented but not runtime-verified against live portal.
+Personal Alpha phase. Telegram bot is live and functional. Core intelligence pipeline (LLM → tool dispatch → deterministic backend) is wired. Presentation Layer with decoupled ResponseStyleLayer, deterministic domain renderers, and ResponseRendererRegistry is operational. Encyclopedic timetable querying (courses, labs, rooms, professors, schedule analytics), database room/faculty legend enrichment, and semantic-invariance testing are fully operational. Briefing scheduler is operational. Portal integration (Doctus) is implemented but not runtime-verified against live portal.
 
 ## IMPLEMENTED
 
@@ -20,7 +20,7 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 - Telegram identity linking (challenge/verify flow with audit, HTML formatted token)
 - Telegram message handler (idempotency, request-scoped DB sessions, identity resolution, request-scoped domain services, conversation pipeline, HTML parse mode default)
 - LLM provider abstraction (OpenAI-compatible + Mock; aliases for OpenRouter, Groq, OpenAI, NVIDIA, Ollama)
-- Real LLM provider integration (wired in lifespan, dict/object message support, safe tool argument parsing, adaptive HTTP 429 backoff with Retry-After header parsing)
+- Real LLM provider integration (wired in lifespan, dict/object message support, safe tool argument parsing, adaptive HTTP 429 backoff with Retry-After header parsing and non-crashing logger)
 - Conversation service (intent interpretation → tool dispatch → decoupled ResponseRendererRegistry dispatch, strict anti-async-hallucination instruction)
 - Tool registry (automatic registration of all 21 timetable and 8 attendance tools)
 - Decoupled Presentation and Personality Layer (`app/intelligence/rendering/`):
@@ -31,14 +31,17 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
   - `BriefingRenderer`: Pure data formatting for morning briefing cards with schedule highlights and key metrics.
   - `StyleContract`: Global standard enforcing bold labels, minimal emojis, and stripping repetitive greetings ('Hey Harsh!').
 - Encyclopedic Timetable Query Tools & Backend Logic (`app/intelligence/tools/timetable_tools.py`):
-  - `find_activity_details`: Looks up courses/labs across the timetable or specific days; merges contiguous lab blocks; resolves student lab batch (`Batch 1`/`Batch 2`); reports room and faculty faithfully.
-  - `find_faculty_details`: Supports faculty directory mode, course/subject instructor lookup, and professor teaching schedules.
+  - `find_activity_details`: Looks up courses/labs across the timetable or specific days; merges contiguous lab blocks; resolves student lab batch (`Batch 1`/`Batch 2`); reports room and faculty faithfully with automatic fallback to timetable `default_classroom` when specific room is not set.
+  - `find_faculty_details`: Supports faculty directory mode, course/subject instructor lookup, and professor teaching schedules without unrelated room leakage.
   - `find_room_details`: Looks up classroom and lab schedules; checks against student's `default_classroom`.
   - `query_schedule_analytics`: Calculates deterministic timetable metrics:
-    - `classes_vs_labs`: Lecture counts/hours vs practical lab counts/hours and total workload.
     - `subject_count`: Course frequency per week and remaining sessions from current weekday forward.
+    - `classes_vs_labs`: Lecture counts/hours vs practical lab counts/hours and total workload.
     - `daily_workload`: Hours and session count distribution per day (Mon–Sat) with busiest and lightest days.
     - `free_slots`: Calculates break periods and free intervals between scheduled classes.
+  - Clarified semantic tool capabilities: `get_timetable_status` for document lifecycle state, `query_schedule_analytics` for quantitative calculations and counting.
+- Database Room & Faculty Enrichment:
+  - Confirmed timetable entries enriched with verified room, faculty, and course codes from the timetable PDF legend (`5_6185777998969446650.pdf`).
 - Timetable service (state machine, extraction, confirmation, queries; no auto-confirm — explicit student confirmation required)
 - Hybrid timetable extractor (PDF vector table extraction + RapidOCR fallback for scanned/image PDFs and photos)
 - Timetable review surface (weekday grid formatter, photo upload through hybrid extractor, pending timetable with entries fetch)
@@ -59,8 +62,8 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 
 ## TESTED
 
-- 353 tests pass (3 warnings related to unawaited test mocks in telegram message handler)
-- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence (real LLM provider, aliases, tool execution), models, portal, student profile, telegram isolation, telegram message handler (media download, photo through extractor, multi-turn context), telegram startup, timetable, whatsapp isolation, timetable end-to-end onboarding suite (`test_timetable_onboarding_e2e.py`: 19 tests), golden output test suite (`test_golden_outputs.py`: 14 tests), and semantic-invariance and analytics suite (`test_semantic_invariance.py`: 10 tests covering equivalent schedule phrasing, activity lookup, faculty directory and subject lookup, room lookup, classes vs labs breakdown, frequency, workload, and free slots)
+- 358 tests pass (3 warnings related to unawaited test mocks in telegram message handler)
+- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence (real LLM provider, aliases, tool execution), models, portal, student profile, telegram isolation, telegram message handler (media download, photo through extractor, multi-turn context), telegram startup, timetable, whatsapp isolation, timetable end-to-end onboarding suite (`test_timetable_onboarding_e2e.py`: 19 tests), golden output test suite (`test_golden_outputs.py`: 14 tests), and semantic-invariance and analytics suite (`test_semantic_invariance.py`: 13 tests covering equivalent schedule phrasing, activity lookup, default classroom fallback, faculty directory and subject lookup, room lookup, classes vs labs breakdown, frequency, workload, free slots, counting invariance, and HTTP 429 retry logging)
 - Flaky bug fixed: `test_get_next_class` clock flakiness resolved with deterministic `from_time`
 - Ruff: clean on all source files
 - Mypy: clean on all source files

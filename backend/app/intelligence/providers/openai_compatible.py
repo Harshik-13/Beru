@@ -13,11 +13,14 @@ Provider-specific behavior is configured through base URL and model name.
 
 import asyncio
 import json
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 from app.intelligence.providers.base import (
     LLMMessage,

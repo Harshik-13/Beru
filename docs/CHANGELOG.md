@@ -1,5 +1,35 @@
 # CHANGELOG.md — Beru
 
+## 2026-10-01 — Fix Live Conversation Defects: 429 Retry Crash, Room Fallback, Faculty/Room DB Enrichment & Tool Disambiguation
+
+### Why
+Live Telegram testing revealed four concrete defects:
+1. `OpenAICompatibleLLMProvider._make_request` crashed with `NameError: name 'logger' is not defined` when handling Groq HTTP 429 rate limit backoff, forcing the user to resend prompts repeatedly.
+2. `find_activity_details` omitted the location when `room` was `None` instead of falling back to the timetable's `default_classroom` (`E-505`), leaving questions like *"Where is DV lab?"* without a room.
+3. Database timetable entries had `room = None` and `faculty = None` because the extraction step only parsed grid cells, leaving the timetable PDF legend unmapped.
+4. Counting queries (e.g. *"How many OOPJ classes are there in a week"*) risked misrouting to `get_timetable_status` instead of `query_schedule_analytics(metric='subject_count')`.
+
+### What changed
+- `backend/app/intelligence/providers/openai_compatible.py`:
+  - Imported `logging` and initialized module `logger = logging.getLogger(__name__)`, enabling seamless HTTP 429/5xx backoff without crashing.
+- `backend/app/intelligence/tools/timetable_tools.py`:
+  - Added fallback in `find_activity_details`: `room: e.room or timetable.default_classroom`, ensuring section lectures and default classroom activities accurately report location.
+  - Refined semantic capability descriptions in `TIMETABLE_TOOL_DEFINITIONS`:
+    - `get_timetable_status`: explicitly described as querying document lifecycle and confirmation state.
+    - `query_schedule_analytics`: explicitly described as computing deterministic counts, frequencies (`subject_count`), workload, and free breaks.
+- `backend/scripts/enrich_timetable_entries.py` [NEW]:
+  - Script that enriched confirmed database timetable entries with verified room, faculty, and course codes from the timetable PDF legend (`5_6185777998969446650.pdf`).
+- `backend/tests/test_semantic_invariance.py`:
+  - Added 3 new tests: `test_activity_details_default_classroom_fallback`, `test_counting_invariance_oopj`, and `test_openai_compatible_429_logger_retry`.
+  - Total tests in file expanded from 10 to 13 (all passing).
+
+### Verification
+- `pytest backend/tests/test_semantic_invariance.py`: 13/13 passed.
+- `pytest backend/tests/test_golden_outputs.py`: 14/14 passed.
+- Full pytest suite `pytest backend/tests/`: 358/358 passed.
+
+---
+
 ## 2026-09-30 — Encyclopedic Timetable Intelligence, Deterministic Schedule Analytics & Semantic-Invariance (Phase 2)
 
 ### Why

@@ -466,3 +466,109 @@ class TestScheduleAnalytics:
         rendered = registry.render("query_schedule_analytics", result, context)
         assert "Free Slots — Tuesday, Sir:" in rendered
         assert "• <code>13:00 – 14:40</code>" in rendered
+
+    @pytest.mark.asyncio
+    async def test_activity_details_default_classroom_fallback(self, mock_timetable_service):
+        """When an entry lacks an explicit room, find_activity_details must fall back to default_classroom."""
+        # Create an entry with room=None
+        entry_no_room = TimetableEntry(
+            id=uuid.uuid4(),
+            timetable_id=TEST_TIMETABLE_ID,
+            day_of_week=0,
+            start_time=time(14, 40),
+            end_time=time(15, 40),
+            activity_name="ES",
+            activity_type=ActivityType.ACADEMIC,
+            room=None,
+            faculty="Dr. K. Archana",
+        )
+        mock_timetable_service.entry_repo.get_for_timetable = AsyncMock(return_value=[entry_no_room])
+
+        result = await find_activity_details(
+            mock_timetable_service,
+            str(TEST_STUDENT_ID),
+            query="ES",
+        )
+
+        assert result["found"] is True
+        match = result["matches"][0]
+        # Must fall back to default_classroom 'E-505'
+        assert match["room"] == "E-505"
+
+    def test_counting_invariance_oopj(self):
+        """Counting queries for subjects must yield identical frequency analytics."""
+        registry = create_default_renderer_registry()
+        context = _make_context()
+
+        analytics_result = {
+            "status": "confirmed",
+            "metric": "subject_count",
+            "subject": "OOPJ",
+            "scope": "entire_week",
+            "total_in_week": 4,
+            "count_in_scope": 4,
+            "sessions": [
+                {"day": "Monday", "start_time": "10:00", "end_time": "11:00"},
+                {"day": "Wednesday", "start_time": "11:00", "end_time": "12:00"},
+                {"day": "Thursday", "start_time": "13:40", "end_time": "14:40"},
+                {"day": "Saturday", "start_time": "11:00", "end_time": "12:00"},
+            ],
+        }
+
+        variations = [
+            ("query_schedule_analytics", analytics_result, "How many OOPJ classes are there in a week"),
+            ("query_schedule_analytics", analytics_result, "OOPJ weekly count"),
+            ("query_schedule_analytics", analytics_result, "How many sessions of OOPJ do I have in a week?"),
+        ]
+
+        rendered_outputs = [
+            registry.render(tool, res, student_context=context, user_message=query)
+            for tool, res, query in variations
+        ]
+
+        canonical = rendered_outputs[0]
+        for out in rendered_outputs[1:]:
+            assert out == canonical
+        assert "Course Frequency — OOPJ, Sir:" in canonical
+        assert "• <b>Total in Week:</b> <code>4</code> sessions" in canonical
+
+    @pytest.mark.asyncio
+    async def test_openai_compatible_429_logger_retry(self):
+        """HTTP 429 response must log warning and retry without raising NameError."""
+        import httpx
+        from unittest.mock import patch
+        from app.intelligence.providers.openai_compatible import (
+            OpenAICompatibleConfig,
+            OpenAICompatibleLLMProvider,
+        )
+
+        config = OpenAICompatibleConfig(
+            provider_name="groq",
+            model="openai/gpt-oss-120b",
+            api_key="test-key",
+            base_url="https://api.groq.com/openai/v1",
+            max_retries=1,
+            timeout_seconds=5,
+        )
+        provider = OpenAICompatibleLLMProvider()
+        provider._config = config
+
+        # Mock client post: first call 429, second call 200 OK
+        req = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+        resp_429 = httpx.Response(429, headers={"retry-after": "0.01"}, request=req)
+        resp_200 = httpx.Response(
+            200,
+            json={"choices": [{"message": {"role": "assistant", "content": "Hello"}}]},
+            request=req,
+        )
+
+        mock_post = AsyncMock(side_effect=[resp_429, resp_200])
+        mock_client = MagicMock()
+        mock_client.post = mock_post
+        provider._client = mock_client
+
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            res = await provider._make_request([{"role": "user", "content": "hi"}])
+            assert res.status_code == 200
+        assert mock_post.call_count == 2
+

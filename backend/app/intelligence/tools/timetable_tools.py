@@ -692,7 +692,7 @@ async def find_activity_details(
                     "end_time": e.end_time.strftime("%H:%M"),
                     "activity_name": e.activity_name,
                     "activity_type": e.activity_type.value,
-                    "room": e.room,
+                    "room": e.room or timetable.default_classroom,
                     "faculty": e.faculty,
                     "lab_batch": e.lab_batch.value if e.lab_batch else None,
                 }
@@ -1227,8 +1227,9 @@ TIMETABLE_TOOL_DEFINITIONS = [
     {
         "name": "get_timetable_status",
         "description": (
-            "Check whether the student's timetable is confirmed, pending, or none. "
-            "Do NOT use this tool for questions about scheduled classes or timings."
+            "Check the document lifecycle and confirmation state of the student's timetable "
+            "(whether confirmed, pending review, version number, section, or semester). "
+            "Does not provide schedule details, timings, or class counts."
         ),
         "arguments_schema": {
             "type": "object",
@@ -1655,11 +1656,11 @@ TIMETABLE_TOOL_DEFINITIONS = [
     {
         "name": "query_schedule_analytics",
         "description": (
-            "Calculate deterministic schedule statistics and counts from the "
-            "confirmed timetable: 'classes_vs_labs' (total lectures vs practicals and "
-            "hours), 'subject_count' (count of a course across the week or remaining "
-            "days of this week), 'daily_workload' (hours and session count per day, "
-            "heaviest/lightest day), or 'free_slots' (breaks and free periods between classes)."
+            "Calculate deterministic schedule statistics, counts, and frequencies from the "
+            "confirmed timetable: 'subject_count' (count of sessions for a specific course or lab across "
+            "the week or remaining days), 'classes_vs_labs' (total lectures vs practicals and hours), "
+            "'daily_workload' (hours and session count distribution per day, heaviest/lightest day), "
+            "or 'free_slots' (breaks and free intervals between scheduled classes)."
         ),
         "arguments_schema": {
             "type": "object",
