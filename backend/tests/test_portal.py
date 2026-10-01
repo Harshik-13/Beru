@@ -727,9 +727,11 @@ class TestAuthenticatedSessionContinuity:
         assert len(semesters) == 1
         assert semesters[0].semester_id == "102"
 
-        # Step 5: Verify downstream request went to /Student/Dashboard and carried both cookies
+        # Step 5: Verify downstream request went to /Student/Dashboard as document GET
         sem_request = captured_requests[-1]
         assert sem_request.url.path == "/Student/Dashboard"
+        assert "x-requested-with" not in sem_request.headers
+        assert "text/html" in sem_request.headers.get("accept", "")
         cookie_header = sem_request.headers.get("cookie", "")
         assert "OM5.Antiforgery=csrf_abc123" in cookie_header
         assert ".AspNetCore.Cookies=aspnet_auth_xyz" in cookie_header
@@ -889,4 +891,6 @@ class TestAuthenticatedSessionContinuity:
         assert captured_requests[-1].url.path == "/Academic/Shared/GetStdAttPer"
         assert captured_requests[-1].url.params.get("studentId") == "std_param_test"
         assert captured_requests[-1].url.params.get("semId") == "99"
+        assert captured_requests[-1].headers.get("x-requested-with") == "XMLHttpRequest"
+        assert "/Student/Dashboard" in captured_requests[-1].headers.get("referer", "")
 

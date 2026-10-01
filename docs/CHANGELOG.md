@@ -1,5 +1,35 @@
 # CHANGELOG.md — Beru
 
+## 2026-10-01 — Doctus Browser Document Navigation & Explicit Semester Validation
+
+### Task / Change
+Updated `DoctusAdapter` to reproduce standard browser document headers (`Accept: text/html...`, `Upgrade-Insecure-Requests: 1`, standard browser `User-Agent`, omitting `X-Requested-With`) on the `/Student/Dashboard` page request to test the 404 investigation hypothesis; added `is_selected` detection on `SemesterOption` in `DoctusParser.parse_semester_options`; implemented explicit semester validation and active default selection in `PortalSyncService.sync_attendance`; and added safe response status/content-type logging on `GetStdAttPer`.
+
+### Why
+During live testing, `POST /Login` succeeded live (`Status: 1`), but the subsequent `GET /Student/Dashboard` returned 404 while sending AJAX-style headers (`X-Requested-With: XMLHttpRequest`). In browser navigation, `window.location.href` executes a standard document GET without XMLHttpRequest. Furthermore, semester selection was made explicit and validated against the student's discovered semester options, and safe response inspection logging was added to observe the real `GetStdAttPer` response before finalizing any further parser changes.
+
+### What Changed
+- `backend/app/integrations/portal/dto.py`:
+  - Added `is_selected: bool = False` to `SemesterOption`.
+- `backend/app/integrations/portal/parser.py`:
+  - Updated `parse_semester_options()`: sets `is_selected=True` when an option has the HTML `selected` attribute while preserving document order.
+- `backend/app/integrations/portal/doctus.py`:
+  - Added `BROWSER_USER_AGENT` and configured `__aenter__` with standard browser `User-Agent` and `Accept-Language`.
+  - Updated `get_semesters()`: sends top-level document headers (`Accept: text/html...`, `Upgrade-Insecure-Requests: 1`, `Referer: {BASE_URL}/Login`), omitting `X-Requested-With`.
+  - Updated `get_attendance()`: sends AJAX headers (`X-Requested-With: XMLHttpRequest`, `Accept: application/json, text/javascript...`, `Referer: {BASE_URL}/Student/Dashboard`) and logs response status and content-type safely.
+  - Added module logger.
+- `backend/app/integrations/portal/sync_service.py`:
+  - Added explicit validation: verifies `target_semester_id` belongs to discovered semester options, using the active `is_selected` semester as the default.
+- `backend/tests/test_portal.py`:
+  - Updated tests to assert document headers (no `XMLHttpRequest`) on `get_semesters()` and AJAX headers with referer on `get_attendance()`.
+
+### Verification
+- 47/47 portal unit tests passed (`pytest backend/tests/test_portal.py -v`).
+- 11/11 portal sync and freshness tests passed (`pytest backend/tests/test_portal_sync_and_freshness.py -v`).
+- 414/414 full repository regression tests passed cleanly (`pytest backend/tests/ -q`).
+
+---
+
 ## 2026-10-01 — Doctus Downstream Route Alignment & Frozen Dataclass Fix
 
 ### Task / Change

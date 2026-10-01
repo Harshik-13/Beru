@@ -6,11 +6,14 @@ for attendance retrieval. Handles login, session management,
 and attendance data retrieval.
 """
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     pass
@@ -94,6 +97,12 @@ class DoctusAdapter:
     LOGIN_ENDPOINT = "/Login"
     ATTENDANCE_ENDPOINT = "/Academic/Shared/GetStdAttPer"
 
+    BROWSER_USER_AGENT = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    )
+
     def __init__(self):
         self._client: httpx.AsyncClient | None = None
         self._session = None
@@ -103,6 +112,10 @@ class DoctusAdapter:
             base_url=self.BASE_URL,
             timeout=httpx.Timeout(30.0),
             follow_redirects=True,
+            headers={
+                "User-Agent": self.BROWSER_USER_AGENT,
+                "Accept-Language": "en-US,en;q=0.9",
+            },
         )
         return self
 
@@ -309,18 +322,23 @@ class DoctusAdapter:
             raise RuntimeError("Client not initialized")
 
         target_url = getattr(self, "_dashboard_path", None) or "/Student/Dashboard"
+        doc_headers = {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Upgrade-Insecure-Requests": "1",
+            "Referer": f"{self.BASE_URL}{self.LOGIN_ENDPOINT}",
+        }
         try:
             response = await self._client.get(
                 target_url,
                 cookies=self._session.cookies,
-                headers={"X-Requested-With": "XMLHttpRequest"},
+                headers=doc_headers,
             )
             # If landing route returned 404 and was not already the legacy path, attempt legacy fallback
             if response.status_code == 404 and target_url != "/Academic/Student/Attendance":
                 response = await self._client.get(
                     "/Academic/Student/Attendance",
                     cookies=self._session.cookies,
-                    headers={"X-Requested-With": "XMLHttpRequest"},
+                    headers=doc_headers,
                 )
         except httpx.TimeoutException as e:
             raise DoctusAdapterError("Semester request timed out") from e
@@ -383,16 +401,28 @@ class DoctusAdapter:
             f"studentId={protected_student_id}&semId={semester_id}"
         )
 
+        ajax_headers = {
+            "X-Requested-With": "XMLHttpRequest",
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+            "Referer": f"{self.BASE_URL}/Student/Dashboard",
+        }
+
         try:
             response = await self._client.get(
                 url,
                 cookies=self._session.cookies,
-                headers={"X-Requested-With": "XMLHttpRequest"},
+                headers=ajax_headers,
             )
         except httpx.TimeoutException as e:
             raise DoctusAdapterError("Attendance request timed out") from e
         except httpx.RequestError as e:
             raise DoctusAdapterError(f"Attendance request failed: {e}") from e
+
+        logger.info(
+            "GetStdAttPer response status: %s, content-type: %s",
+            response.status_code,
+            response.headers.get("content-type"),
+        )
 
         if response.status_code == 401:
             raise DoctusSessionError("Session expired or invalid")

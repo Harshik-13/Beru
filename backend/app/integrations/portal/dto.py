@@ -15,6 +15,7 @@ class SemesterOption:
 
     semester_id: str
     display_name: str
+    is_selected: bool = False
 
 
 @dataclass(frozen=True, slots=True)

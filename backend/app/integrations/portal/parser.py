@@ -49,10 +49,12 @@ class DoctusParser:
         for option in select.find_all("option"):
             sem_id = option.get("value")
             if sem_id:
+                is_selected = option.get("selected") is not None
                 options.append(
                     SemesterOption(
                         semester_id=sem_id,
                         display_name=option.get_text(strip=True),
+                        is_selected=is_selected,
                     )
                 )
         return options

@@ -316,11 +316,22 @@ class PortalSyncService:
             if not semesters:
                 raise PortalSyncError("No semesters available from portal")
 
-            # Step 4: Determine which semester to use
+            # Step 4: Determine and validate which semester to use
+            available_sem_ids = {s.semester_id for s in semesters}
+            default_sem = next((s for s in semesters if s.is_selected), semesters[0])
             target_semester_id = semester_id
-            if not target_semester_id:
-                # Use the first available semester (typically the most recent)
-                target_semester_id = semesters[0].semester_id
+            if target_semester_id:
+                if target_semester_id not in available_sem_ids:
+                    logger.warning(
+                        "Requested semester %s not found in student's discovered semesters %s. Falling back to default %s.",
+                        target_semester_id,
+                        available_sem_ids,
+                        default_sem.semester_id,
+                    )
+                    target_semester_id = default_sem.semester_id
+            else:
+                # Use the default active semester (marked selected, or first in list)
+                target_semester_id = default_sem.semester_id
 
             # Step 5: Fetch attendance data adhering strictly to canonical PortalAttendance contract
             try:
