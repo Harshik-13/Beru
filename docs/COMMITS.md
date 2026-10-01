@@ -4,6 +4,7 @@
 
 | Commit | Date | Purpose | Subsystem | Verification |
 |--------|------|---------|-----------|--------------|
+| `d7282b1` | 2026-10-01 | Fix Doctus authentication and session handling with ASP.NET Core protocol & zero-retry guard | Portal, Security, Attendance | 405 tests pass |
 | `21ee0d0` | 2026-10-01 | Live Doctus integration, zero-leak credential boundary, 4h freshness sync & concurrency locking | Portal, Attendance, Security | 385 tests pass |
 
 ## Timetable
