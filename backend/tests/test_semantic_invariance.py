@@ -233,7 +233,7 @@ class TestSemanticInvariance:
             assert out == first_output, f"Variation {idx} differed from canonical presentation"
 
         # Check semantic completeness of the unified output
-        assert "Schedule for Tuesday, Sir:" in first_output
+        assert "Schedule for Tuesday:" in first_output
         assert "1. <b>OS</b>" in first_output
         assert "10:00 – 11:00" in first_output
         assert "<code>E-505</code>" in first_output
@@ -275,7 +275,7 @@ class TestActivityDetailsRendering:
 
         # Render output
         rendered = registry.render("find_activity_details", result, context)
-        assert "Activity Details — DV LAB, Sir:" in rendered
+        assert "Activity Details — DV LAB:" in rendered
         assert "1. <b>DV LAB</b>" in rendered
         assert "13:40 – 15:40" in rendered
         assert "<code>E-505</code>" in rendered
@@ -331,7 +331,7 @@ class TestFacultyDetailsRendering:
         assert len(result["faculty_list"]) >= 3
 
         rendered = registry.render("find_faculty_details", result, context)
-        assert "Faculty Directory, Sir:" in rendered
+        assert "Faculty Directory:" in rendered
         assert "• <b>OS:</b> Dr. Rao" in rendered
         assert "• <b>PSA:</b> Dr. Sharma" in rendered
 
@@ -350,7 +350,7 @@ class TestFacultyDetailsRendering:
         assert "Dr. Rao" in result["faculty_names"]
 
         rendered = registry.render("find_faculty_details", result, context)
-        assert "Faculty — OS, Sir:" in rendered
+        assert "Faculty — OS:" in rendered
         assert "• <b>Instructor:</b> Dr. Rao" in rendered
         assert "<code>E-505</code>" in rendered
 
@@ -373,7 +373,7 @@ class TestRoomDetailsRendering:
         assert result["is_default_classroom"] is True
 
         rendered = registry.render("find_room_details", result, context)
-        assert "Room Details — <code>E-505</code>, Sir:" in rendered
+        assert "Room Details — <code>E-505</code>:" in rendered
         assert "<code>E-505</code> is your default classroom for regular lectures." in rendered
         assert "PSA" in rendered
         assert "OOPJ" in rendered
@@ -406,7 +406,7 @@ class TestScheduleAnalytics:
         assert result["total_hours"] == 7.0
 
         rendered = registry.render("query_schedule_analytics", result, context)
-        assert "Schedule Breakdown, Sir:" in rendered
+        assert "Schedule Breakdown:" in rendered
         assert "• <b>Theory Classes:</b> <code>3</code> (3.0 hrs)" in rendered
         assert "• <b>Lab Sessions:</b> <code>2</code> (4.0 hrs)" in rendered
         assert "• <b>Total Workload:</b> <code>5</code> sessions (7.0 hrs/week)" in rendered
@@ -426,7 +426,7 @@ class TestScheduleAnalytics:
 
         assert result["total_in_week"] == 1
         rendered = registry.render("query_schedule_analytics", result, context)
-        assert "Course Frequency — PSA, Sir:" in rendered
+        assert "Course Frequency — PSA:" in rendered
         assert "• <b>Total in Week:</b> <code>1</code> sessions" in rendered
         assert "Monday: <code>10:00 – 11:00</code>" in rendered
 
@@ -446,7 +446,7 @@ class TestScheduleAnalytics:
         assert result["heaviest"][1] == 3.0
 
         rendered = registry.render("query_schedule_analytics", result, context)
-        assert "Weekly Workload Distribution, Sir:" in rendered
+        assert "Weekly Workload Distribution:" in rendered
         assert "• <b>Tuesday:</b> <code>2</code> sessions (3.0 hrs)" in rendered
         assert "• <b>Busiest Day:</b> Tuesday (3.0 hrs)" in rendered
 
@@ -464,7 +464,7 @@ class TestScheduleAnalytics:
         }
 
         rendered = registry.render("query_schedule_analytics", result, context)
-        assert "Free Slots — Tuesday, Sir:" in rendered
+        assert "Free Slots — Tuesday:" in rendered
         assert "• <code>13:00 – 14:40</code>" in rendered
 
     @pytest.mark.asyncio
@@ -529,7 +529,7 @@ class TestScheduleAnalytics:
         canonical = rendered_outputs[0]
         for out in rendered_outputs[1:]:
             assert out == canonical
-        assert "Course Frequency — OOPJ, Sir:" in canonical
+        assert "Course Frequency — OOPJ:" in canonical
         assert "• <b>Total in Week:</b> <code>4</code> sessions" in canonical
 
     @pytest.mark.asyncio

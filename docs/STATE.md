@@ -3,7 +3,7 @@
 ## Current State
 
 - **Last updated:** 2026-10-01
-- **Current commit:** `1636e4e`
+- **Current commit:** `421619b`
 - **Current branch:** master
 
 ## Overall Project Status
@@ -21,10 +21,15 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 - Telegram message handler (idempotency, request-scoped DB sessions, identity resolution, request-scoped domain services, conversation pipeline, HTML parse mode default)
 - LLM provider abstraction (OpenAI-compatible + Mock; aliases for OpenRouter, Groq, OpenAI, NVIDIA, Ollama)
 - Real LLM provider integration (wired in lifespan, dict/object message support, safe tool argument parsing, adaptive HTTP 429 backoff with Retry-After header parsing and non-crashing logger)
-- Conversation service (intent interpretation → tool dispatch → decoupled ResponseRendererRegistry dispatch, strict anti-async-hallucination instruction)
+- Conversation service (intent interpretation → tool dispatch → hybrid presentation pipeline: conversational synthesis for atomic queries via ConversationalResponsePolicy; decoupled ResponseRendererRegistry dispatch for structured collections; strict anti-async-hallucination instruction)
 - Tool registry (automatic registration of all 21 timetable and 8 attendance tools)
-- Decoupled Presentation and Personality Layer (`app/intelligence/rendering/`):
-  - `ResponseStyleLayer`: Isolates Beru's persona (`Sir` honorific, consistent spacing, polite closings, greeting cleanup) from domain presentation.
+- Conversational Synthesis & Persona Architecture (`app/intelligence/conversation/` & `app/intelligence/models/`):
+  - Self-Model Persona Ownership: Permanently moved `"Sir"` into Beru's self-model (`honorific: str = "Sir"` in `BeruIdentity`), with dedicated `respectful_persona` behavioral principle.
+  - `ConversationalResponsePolicy`: Codified 7 conversational rules (answer actual question first, use only relevant verified details, avoid database card dumps, address student naturally as Sir, maintain multi-turn continuity, preserve ambiguity, eliminate premature promises).
+  - Hybrid Execution Routing in `ConversationService`: Atomic queries (`find_activity_details`, `find_faculty_details`, `find_room_details`) synthesize direct natural-language answers over verified backend data; structured collections (schedules, attendance math, analytics, briefings) retain 100% deterministic renderers.
+  - Resilient Fallback: Any failure during LLM synthesis seamlessly falls back to the deterministic domain renderer.
+  - Pure Sanitization & Telegram Formatting Layer (`ResponseStyleLayer`): Strictly handles Telegram HTML safety, unescaped `<`/`>` escaping, greeting cleanup, and whitespace normalization without mechanical "Sir" injection or sentence alteration.
+- Decoupled Presentation Layer (`app/intelligence/rendering/`):
   - `ResponseRendererRegistry`: Dispatches tool execution results cleanly to domain renderers, supporting both result types and tool names.
   - `ScheduleRenderer`: Pure data formatting without hardcoded personality; structural period merging based on entry topology (`11:00 – 13:00 CM LAB`, `14:40 – 16:40 CF LAB`), dynamic batch resolution against student profile, faithful ambiguity preservation when batch is unknown, deterministic missing-field omission (omits room and faculty when not specified). Renderers for activity details, faculty details, room details, and schedule analytics.
   - `AttendanceRenderer`: Pure data formatting for attendance metrics with bold labels, code badges, status indicators (✅, ⚠️), and deficit projections.
@@ -62,8 +67,8 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 
 ## TESTED
 
-- 358 tests pass (3 warnings related to unawaited test mocks in telegram message handler)
-- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence (real LLM provider, aliases, tool execution), models, portal, student profile, telegram isolation, telegram message handler (media download, photo through extractor, multi-turn context), telegram startup, timetable, whatsapp isolation, timetable end-to-end onboarding suite (`test_timetable_onboarding_e2e.py`: 19 tests), golden output test suite (`test_golden_outputs.py`: 14 tests), and semantic-invariance and analytics suite (`test_semantic_invariance.py`: 13 tests covering equivalent schedule phrasing, activity lookup, default classroom fallback, faculty directory and subject lookup, room lookup, classes vs labs breakdown, frequency, workload, free slots, counting invariance, and HTTP 429 retry logging)
+- 364 tests pass (3 warnings related to unawaited test mocks in telegram message handler)
+- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence (real LLM provider, aliases, tool execution), models, portal, student profile, telegram isolation, telegram message handler (media download, photo through extractor, multi-turn context), telegram startup, timetable, whatsapp isolation, timetable end-to-end onboarding suite (`test_timetable_onboarding_e2e.py`: 19 tests), golden output test suite (`test_golden_outputs.py`: 14 tests), semantic-invariance and analytics suite (`test_semantic_invariance.py`: 13 tests), and conversational synthesis suite (`test_conversational_synthesis.py`: 6 tests covering policy prompt composition, direct answer synthesis, multi-turn pronoun continuity, LLM error fallback, and deterministic preservation)
 - Flaky bug fixed: `test_get_next_class` clock flakiness resolved with deterministic `from_time`
 - Ruff: clean on all source files
 - Mypy: clean on all source files

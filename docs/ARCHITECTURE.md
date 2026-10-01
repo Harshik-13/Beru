@@ -113,20 +113,35 @@ TelegramMessageHandler._handle_message(message)
 - Phase 3: `set_briefing_time`, `get_week_schedule`, `get_schedule_for_weekday`, `get_timetable_metadata` tools; course_metadata mapped onto entries during extraction
 - LLM selects tool via standard OpenAI function calling schemas; backend validates and executes deterministically
 
-### Presentation Layer & Renderer Registry
+### Presentation Layer, Conversational Synthesis & Renderer Registry
 
-To eliminate presentation leakage into orchestrator logic (`conversation.py`), Beru uses a decoupled rendering pipeline:
+Beru uses a hybrid response generation architecture balancing conversational naturalness with mathematical and topological determinism:
 ```
-Tool Result → RendererRegistry → Domain Renderer → Style Contract → Telegram
+Verified Tool Result
+       │
+       ├── Atomic Query (find_activity_details, find_faculty_details, find_room_details)
+       │     └── Conversational Synthesis (ConversationalResponsePolicy) ──► Natural Response
+       │
+       └── Structured Collection (schedules, attendance math, analytics, briefings)
+             └── Deterministic Domain Renderer (ScheduleRenderer, AttendanceRenderer, BriefingRenderer)
+       │
+       ▼
+ResponseStyleLayer (Telegram HTML Sanitization & Entity Escaping) ──► Telegram Delivery
 ```
-- **RendererRegistry** (`app/intelligence/rendering/registry.py`): Central dispatch point routing tool execution results to dedicated domain renderers (`ScheduleRenderer`, `AttendanceRenderer`, `BriefingRenderer`). Fallback to `DefaultRenderer` for generic tools.
+
+- **Conversational Synthesis & Persona Ownership** (`app/intelligence/conversation/policy.py` & `app/intelligence/models/identity.py`):
+  - *Persona Ownership*: `"Sir"` is permanently anchored in Beru's self-model (`honorific: str = "Sir"` in `BeruIdentity`) and behavioral principle `respectful_persona`. It is not mechanically injected by renderers or regex post-processors.
+  - *ConversationalResponsePolicy*: Governs natural-language synthesis for atomic queries. Enforces leading with the requested attribute first (room/location, professor, or timing), utilizing only relevant verified facts without database dumps, maintaining multi-turn continuity (resolving pronouns like "it"), and preserving ambiguity.
+  - *Resilient Fallback*: If conversational synthesis fails (timeout or provider rate limit), the pipeline automatically falls back to the deterministic domain renderer.
+- **RendererRegistry** (`app/intelligence/rendering/registry.py`): Central dispatch point routing structured tool execution results to dedicated domain renderers (`ScheduleRenderer`, `AttendanceRenderer`, `BriefingRenderer`). Fallback to `DefaultRenderer` for generic tools.
 - **ScheduleRenderer** (`app/intelligence/rendering/schedule_renderer.py`):
   - *Structural Period Merging*: Algorithmically merges consecutive period entries (`e1.end_time == e2.start_time` for same subject, lab batch, and room) based on underlying entry topology into single cohesive spans (e.g. `11:00 – 13:00 CM LAB`, `14:40 – 16:40 CF LAB`).
   - *Dynamic Batch Resolution & Ambiguity Preservation*: Formats lab sessions according to the authenticated student's stored `lab_batch`. If unknown or unset, explicitly preserves slash ambiguity (`CF LAB / CN LAB [Batch 1 / Batch 2]`) and prompts for resolution rather than assuming Batch 1.
+  - *Deterministic Missing-Field Omission*: Omits room and faculty labels when not specified in verified data.
 - **AttendanceRenderer** (`app/intelligence/rendering/attendance_renderer.py`): Formats deterministic attendance summaries, subject breakdowns, deficit indicators (`⚠️`), met targets (`✅`), and simulation projections.
 - **BriefingRenderer** (`app/intelligence/rendering/briefing_renderer.py`): Formats structured morning briefings with greeting, merged schedule, room codes, and key metrics.
-- **Style Contract** (`app/intelligence/rendering/style_contract.py`): Enforces global Beru standards: concise hierarchy, bold labels (`<b>Time:</b>`, `<b>Room:</b>`), `Sir` honorific, minimal functional emojis, and stripping of repetitive greetings (`Hey Harsh!`).
-- **Telegram HTML Delivery & Fallback** (`app/telegram/formatting.py` & `app/telegram/bot_adapter.py`): Formats messages with Telegram HTML; automatic fallback to plain-text on 400 Bad Request entity parsing errors prevents dropped messages.
+- **ResponseStyleLayer & Telegram HTML Sanitization** (`app/intelligence/rendering/style_layer.py`):
+  - Responsible for Telegram HTML validation and safety: safely escapes stray `<` and `>` into `&lt;` and `&gt;` while preserving valid Telegram HTML tags (`<b>`, `<i>`, `<code>`, `<pre>`, `<a>`). Normalizes layout spacing and strips repetitive greetings (`Hey Harsh!`). Does not alter sentence structures or mechanically inject honorifics.
 
 ### Domain Services
 

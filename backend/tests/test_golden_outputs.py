@@ -203,7 +203,7 @@ def test_golden_tuesday_schedule_batch_1():
     output = registry.render("get_schedule", result, context)
 
     # Assertions
-    assert "<b>Schedule for Tuesday, Sir:</b>" in output
+    assert "<b>Schedule for Tuesday:</b>" in output
     assert "1. <b>OS</b>" in output
     assert "<code>10:00 – 11:00</code>" in output
     assert "<code>E-505</code>" in output
@@ -217,7 +217,6 @@ def test_golden_tuesday_schedule_batch_1():
     assert "4. <b>CF LAB</b> (Batch 1)" in output
     assert "<code>14:40 – 16:40</code>" in output
     assert "4 sessions scheduled." in output
-    assert "Sir" in output
     # Ensure no ambiguity warning because Batch 1 is set
     assert "Note: Lab batch is not yet set" not in output
 
@@ -255,7 +254,7 @@ def test_golden_tuesday_schedule_batch_2():
 
     output = registry.render("get_schedule", result, context)
 
-    assert "<b>Schedule for Tuesday, Sir:</b>" in output
+    assert "<b>Schedule for Tuesday:</b>" in output
     # Batch 2 resolves to CN LAB
     assert "4. <b>CN LAB</b> (Batch 2)" in output
     assert "<code>14:40 – 16:40</code>" in output
@@ -278,7 +277,7 @@ def test_golden_tuesday_schedule_unknown_batch():
 
     output = registry.render("get_schedule", result, context)
 
-    assert "<b>Schedule for Tuesday, Sir:</b>" in output
+    assert "<b>Schedule for Tuesday:</b>" in output
     # Must preserve slash notation and show both batches
     assert "4. <b>CF LAB / CN LAB</b> (Batch 1 / Batch 2)" in output
     assert "<code>14:40 – 16:40</code>" in output
@@ -333,7 +332,7 @@ def test_golden_empty_schedule():
 
     output = registry.render("get_schedule", result, context)
 
-    assert "<b>Schedule for Sunday, Sir:</b>" in output
+    assert "<b>Schedule for Sunday:</b>" in output
     assert "No classes are scheduled for this day." in output
 
 
@@ -353,7 +352,7 @@ def test_golden_week_schedule_key_handling():
 
     output = registry.render("get_week_schedule", result_with_week, context)
 
-    assert "<b>Weekly Schedule Overview, Sir:</b>" in output
+    assert "<b>Weekly Schedule Overview:</b>" in output
     assert "<b>Tuesday</b>" in output
     assert "<b>OS</b>" in output
     assert "No schedule data available for this week" not in output
@@ -381,7 +380,7 @@ def test_golden_next_class():
 
     output = registry.render("get_next_class", result, context)
 
-    assert "<b>Next Upcoming Class, Sir:</b>" in output
+    assert "<b>Next Upcoming Class:</b>" in output
     assert "• <b>Subject:</b> <b>OS</b>" in output
     assert "• <b>Time:</b> <code>10:00 – 11:00</code>" in output
     assert "• <b>Day:</b> Tuesday" in output
@@ -399,7 +398,7 @@ def test_golden_next_class_none():
     result = {"has_class": False, "message": "No more classes today or tomorrow."}
     output = registry.render("get_next_class", result, context)
 
-    assert "<b>Next Upcoming Class, Sir:</b>" in output
+    assert "<b>Next Upcoming Class:</b>" in output
     assert "No more classes today or tomorrow." in output
 
 
@@ -441,7 +440,7 @@ def test_golden_attendance_summary():
 
     output = registry.render("get_attendance_summary", result, context)
 
-    assert "<b>Attendance Summary, Sir:</b>" in output
+    assert "<b>Attendance Summary:</b>" in output
     assert "• <b>Overall:</b> <code>82.5%</code> (66/80 classes attended)" in output
     assert "• <b>Target:</b> <code>75.0%</code>" in output
     assert f"• <b>Status:</b> {CHECK_MARK} Above target (+7.5% margin)" in output
@@ -472,7 +471,7 @@ def test_golden_daily_briefing():
 
     output = registry.render("get_daily_briefing", result, context)
 
-    assert "<b>Good morning, Sir.</b>" in output
+    assert "<b>Good morning.</b>" in output
     assert "Here is your daily briefing for <b>Tuesday</b> (September 29):" in output
     assert "<b>Today's Schedule (4 sessions):</b>" in output
     s1 = (

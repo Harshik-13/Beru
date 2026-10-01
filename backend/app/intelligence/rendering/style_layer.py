@@ -1,9 +1,12 @@
 """Response Style Layer for Beru.
 
-Decouples personality and presentation:
-- Domain renderers format pure verified structured data without persona elements.
-- ResponseStyleLayer injects personality (honorific 'Sir', polite closings, greeting cleanup)
-  and ensures clean spacing and typography across all outgoing responses.
+Responsible for sanitization and Telegram formatting:
+- Cleans repetitive greetings from outgoing responses.
+- Ensures safe Telegram HTML formatting and escaping.
+- Normalizes spacing and layout across all outgoing responses.
+
+Note: Persona and honorific ('Sir') are handled directly by Beru's self-model
+and conversational response policy, not injected mechanically here.
 """
 
 from __future__ import annotations
@@ -11,24 +14,67 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from app.intelligence.rendering.style_contract import (
-    CHECK_MARK,
-    HONORIFIC,
-    WARNING_SIGN,
-    clean_greetings,
-    format_badge,
-    format_percentage,
-    format_time_span,
-)
+from app.intelligence.rendering.style_contract import clean_greetings
 
 if TYPE_CHECKING:
     from app.intelligence.models.context import StudentContext
 
 
-class ResponseStyleLayer:
-    """Applies Beru's persona, honorifics, and tone to rendered structured text."""
+# Supported Telegram HTML tags (opening or closing)
+_ALLOWED_TAG_PATTERN = re.compile(
+    r"</?(?:b|i|u|s|code|pre|blockquote|tg-spoiler|strong|em|ins|strike|del)"
+    r"(?:\s+[^>]*?)?>|"
+    r'<a\s+href="[^"]*"\s*>|</a>|'
+    r'<code(?:\s+class="[^"]*")?\s*>|</code>|'
+    r'<tg-emoji\s+emoji-id="[^"]*"\s*>|</tg-emoji>',
+    re.IGNORECASE,
+)
 
-    def __init__(self, default_honorific: str = HONORIFIC) -> None:
+
+def sanitize_telegram_html(text: str) -> str:
+    """
+    Sanitize text for Telegram HTML parse mode.
+
+    Preserves valid Telegram HTML tags (<b>, <i>, <code>, <pre>, <a>, etc.)
+    and safely escapes unescaped '<', '>', or '&' characters that would
+    otherwise cause Telegram API 400 'can't parse entities' errors.
+    """
+    if not text:
+        return ""
+
+    # Split text into allowed tags and non-tag text segments
+    tokens = []
+    last_end = 0
+
+    for match in _ALLOWED_TAG_PATTERN.finditer(text):
+        start, end = match.span()
+        # Non-tag text before the matched tag
+        if start > last_end:
+            non_tag_segment = text[last_end:start]
+            # Escape ampersands not already part of HTML entities
+            escaped_segment = re.sub(r"&(?!amp;|lt;|gt;|quot;|apos;)", "&amp;", non_tag_segment)
+            # Escape raw '<' and '>'
+            escaped_segment = escaped_segment.replace("<", "&lt;").replace(">", "&gt;")
+            tokens.append(escaped_segment)
+
+        # Append the valid allowed tag as-is
+        tokens.append(match.group(0))
+        last_end = end
+
+    # Remaining text after the last tag
+    if last_end < len(text):
+        remaining = text[last_end:]
+        escaped_remaining = re.sub(r"&(?!amp;|lt;|gt;|quot;|apos;)", "&amp;", remaining)
+        escaped_remaining = escaped_remaining.replace("<", "&lt;").replace(">", "&gt;")
+        tokens.append(escaped_remaining)
+
+    return "".join(tokens)
+
+
+class ResponseStyleLayer:
+    """Applies Telegram formatting, sanitization, and layout normalization."""
+
+    def __init__(self, default_honorific: str = "Sir") -> None:
         self.default_honorific = default_honorific
 
     def apply(
@@ -38,67 +84,29 @@ class ResponseStyleLayer:
         honorific: str | None = None,
     ) -> str:
         """
-        Apply persona and style layer to domain rendered text or conversational response.
+        Apply formatting and sanitization to rendered text or conversational response.
 
         Args:
-            raw_text: Pure structured data text or conversational message.
-            student_context: Optional student context for customization.
-            honorific: Explicit honorific override (defaults to 'Sir').
+            raw_text: Rendered text or conversational response.
+            student_context: Optional student context.
+            honorific: Optional honorific override (unused; persona handles 'Sir').
 
         Returns:
-            Fully styled, polished response text with Beru's persona.
+            Sanitized, clean Telegram-safe response.
         """
         if not raw_text or not raw_text.strip():
-            target_honorific = honorific or self.default_honorific
-            return f"How may I assist you, {target_honorific}?"
+            return "How may I assist you?"
 
-        target_honorific = honorific or self.default_honorific
-
-        # 1. Clean repetitive greetings (e.g. 'Hey Harsh!', 'Hello!')
+        # 1. Clean repetitive robotic greetings (e.g. 'Hey Harsh!', 'Hello!')
         cleaned = clean_greetings(raw_text.strip())
 
-        # 2. Check if honorific is already present
-        has_honorific = target_honorific.lower() in cleaned.lower()
+        # 2. Sanitize Telegram HTML (escape stray '<' or '>', preserve valid tags)
+        cleaned = sanitize_telegram_html(cleaned)
 
-        # 3. Inject honorific into primary header or conversational sentence if missing
-        if not has_honorific:
-            cleaned = self._inject_honorific(cleaned, target_honorific)
-
-        # 4. Normalize multiple blank lines to at most one empty line
+        # 3. Normalize multiple blank lines to at most one empty line
         cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
 
+        # 4. Strip trailing whitespace per line
+        cleaned = "\n".join(line.rstrip() for line in cleaned.split("\n"))
+
         return cleaned.strip()
-
-    def _inject_honorific(self, text: str, honorific: str) -> str:
-        """Politely inject honorific into header line or message ending."""
-        lines = text.split("\n")
-        first_line = lines[0].strip()
-
-        # Case A: First line is a bold header, e.g. <b>Schedule for Wednesday:</b> or <b>Good morning.</b>
-        match = re.match(r"^(<b>.*?)([:.]?</b>)(.*)$", first_line)
-        if match:
-            head = match.group(1).rstrip(":.")
-            punct = ":" if ":" in match.group(2) else "."
-            lines[0] = f"{head}, {honorific}{punct}</b>{match.group(3)}"
-            return "\n".join(lines)
-
-        # Case B: First line ends with colon (plain header)
-        if first_line.endswith(":"):
-            lines[0] = f"{first_line[:-1]}, {honorific}:"
-            return "\n".join(lines)
-
-        # Case C: Short conversational text ending with punctuation
-        last_line = lines[-1].strip()
-        if last_line.endswith("."):
-            lines[-1] = f"{last_line[:-1]}, {honorific}."
-            return "\n".join(lines)
-        if last_line.endswith("!"):
-            lines[-1] = f"{last_line[:-1]}, {honorific}!"
-            return "\n".join(lines)
-        if last_line.endswith("?"):
-            lines[-1] = f"{last_line[:-1]}, {honorific}?"
-            return "\n".join(lines)
-
-        # Default fallback: append honorific to first sentence or header
-        lines[0] = f"{lines[0]}, {honorific}"
-        return "\n".join(lines)

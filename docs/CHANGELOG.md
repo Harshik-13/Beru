@@ -1,5 +1,58 @@
 # CHANGELOG.md — Beru
 
+## 2026-10-01 — Conversational Synthesis for Atomic Queries & Persona Ownership in Self-Model
+
+### Task / Change
+Implemented conversational synthesis for atomic lookup tools (`find_activity_details`, `find_faculty_details`, `find_room_details`), permanently moved `"Sir"` into Beru's self-model (`BeruIdentity`), refined `ResponseStyleLayer` strictly for Telegram HTML sanitization and entity escaping, and added comprehensive property-based and multi-turn tests.
+
+### Why
+When a student asks a direct, focused question (e.g. *"Where is OS lab?"*), forcing a 6-line structured card containing day, time, type, batch, room, and faculty feels robotic, bloated, and unresponsive to the specific question asked. Allowing the LLM to synthesize a natural, direct answer over verified backend data (e.g. *"Your Operating Systems Lab is held in room E-431, Sir (Thursday, 11:00 AM–1:00 PM)."*) provides a true copilot experience. Furthermore, mechanical regex injection of `"Sir"` into headers (e.g. `<b>Schedule Breakdown, Sir:</b>`) created awkward artifacts and risked altering sentence structure. Moving `"Sir"` into the core self-model allows the model to address the student naturally.
+
+### What Changed
+- `backend/app/intelligence/models/identity.py`:
+  - Added `honorific: str = "Sir"` directly to `BeruIdentity`.
+  - Added behavioral principle `respectful_persona` ensuring Beru naturally addresses the student as `"Sir"` within conversational sentences.
+- `backend/app/intelligence/conversation/policy.py` [NEW]:
+  - Created `ConversationalResponsePolicy` codifying the 7 core conversational rules: answer question first, use only relevant verified facts, avoid database card dumps, naturally address student as Sir, maintain multi-turn continuity, preserve ambiguity, and eliminate premature promises.
+- `backend/app/intelligence/services/conversation.py`:
+  - Defined `ATOMIC_QUERY_TOOLS = {"find_activity_details", "find_faculty_details", "find_room_details"}`.
+  - In `_execute_tool`, routed atomic query results to `_generate_conversational_response` using `ConversationalResponsePolicy` and `recent_messages`.
+  - Added resilient fallback: any LLM failure or timeout during synthesis gracefully falls back to the deterministic domain renderer without crashing.
+  - Preserved 100% deterministic rendering for structured collections (day/week schedules, attendance math, analytics, briefings).
+- `backend/app/intelligence/rendering/style_layer.py`:
+  - Refined `ResponseStyleLayer` strictly for sanitization and Telegram HTML formatting.
+  - Removed mechanical `_inject_honorific` regex sentence alterations.
+  - Implemented `sanitize_telegram_html` ensuring stray `<` and `>` are escaped while preserving valid Telegram tags (`<b>`, `<i>`, `<code>`, `<pre>`, `<a>`, etc.).
+- `backend/tests/test_conversational_synthesis.py` [NEW]:
+  - 6 new tests covering policy prompt composition, direct answer synthesis, multi-turn context awareness, LLM error fallback, and deterministic preservation.
+- `backend/tests/test_golden_outputs.py` & `backend/tests/test_semantic_invariance.py`:
+  - Reconciled card header assertions to reflect clean deterministic headers without forced `, Sir:` suffixes.
+
+### Files Changed & Why
+- `backend/app/intelligence/models/identity.py`: Permanent persona ownership of `"Sir"` and respectful principle.
+- `backend/app/intelligence/conversation/__init__.py`: Package export.
+- `backend/app/intelligence/conversation/policy.py`: Dedicated conversational response policy and prompt synthesis.
+- `backend/app/intelligence/services/conversation.py`: Hybrid execution routing for atomic queries and fallback.
+- `backend/app/intelligence/rendering/style_layer.py`: Safe Telegram HTML sanitization and greeting cleanup without regex alteration.
+- `backend/tests/test_conversational_synthesis.py`: Property-based and multi-turn tests.
+- `backend/tests/test_golden_outputs.py` & `backend/tests/test_semantic_invariance.py`: Updated header expectations.
+- `docs/STATE.md`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`: Canonical documentation synchronization.
+
+### Tests & Verification
+- `pytest backend/tests/test_conversational_synthesis.py -v`: 6/6 passed.
+- `pytest backend/tests/test_semantic_invariance.py -v`: 13/13 passed.
+- `pytest backend/tests/test_golden_outputs.py -v`: 14/14 passed.
+- Full pytest test suite (`pytest backend/tests -q`): 364/364 passed in 26.62s with zero failures.
+
+### Security Considerations
+- Backend remains the security and truth boundary: LLM does not access the database or alter numbers/times/rooms. It only formats verified backend tool results.
+- Robust HTML sanitization prevents Telegram entity parsing injection errors.
+
+### Commit Hash
+- `421619b`
+
+---
+
 ## 2026-10-01 — Fix Live Conversation Defects: 429 Retry Crash, Room Fallback, Faculty/Room DB Enrichment & Tool Disambiguation
 
 ### Why

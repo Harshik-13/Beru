@@ -1,19 +1,30 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from app.intelligence.conversation.policy import ConversationalResponsePolicy
 from app.intelligence.models.context import (
     StudentContext,
     ToolResultRef,
 )
 from app.intelligence.models.identity import BERU_IDENTITY
+from app.intelligence.rendering.style_layer import ResponseStyleLayer
 from app.intelligence.services.context_builder import (
     ContextBuilder,
     create_student_context,
 )
 from app.intelligence.services.rate_limiter import get_rate_limiter
 from app.intelligence.tools.registry import tool_registry
+
+logger = logging.getLogger(__name__)
+
+ATOMIC_QUERY_TOOLS: frozenset[str] = frozenset({
+    "find_activity_details",
+    "find_faculty_details",
+    "find_room_details",
+})
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -78,6 +89,13 @@ class ConversationService:
             self.renderer_registry = create_default_renderer_registry()
         else:
             self.renderer_registry = renderer_registry
+
+        self.conversational_policy = ConversationalResponsePolicy(
+            default_honorific=self.beru_identity.honorific
+        )
+        self.response_style_layer = ResponseStyleLayer(
+            default_honorific=self.beru_identity.honorific
+        )
 
     def create_student_context(
         self,
@@ -439,9 +457,12 @@ class ConversationService:
         intent_result: IntentResult,
         user_message: str = "",
     ) -> tuple[str, StudentContext]:
-        """Execute a tool and return the response."""
-        tool_req = intent_result.tool_request
-        if not tool_req:
+        if isinstance(intent_result, dict):
+            tool_req = intent_result.get("tool_request") or intent_result
+        else:
+            tool_req = intent_result.tool_request
+
+        if not tool_req or not isinstance(tool_req, dict) or "name" not in tool_req:
             return "No tool requested.", student_context
 
         tool = self.tool_registry.get(tool_req["name"])
@@ -535,13 +556,46 @@ class ConversationService:
             )
             new_conv = student_context.conversation.add_tool_result(tool_result)
 
-            # Render response deterministically via RendererRegistry
-            response = self.renderer_registry.render(
-                tool_name=tool_req["name"],
-                result=result,
-                student_context=student_context,
-                user_message=user_message,
-            )
+            # Route response generation based on tool category:
+            # 1. Atomic query tools -> Conversational synthesis using LLM + ConversationalResponsePolicy
+            # 2. Structured collections / calculations -> Deterministic domain renderers
+            # Resilient fallback: Any failure in conversational synthesis falls back to deterministic renderer.
+            if (
+                tool_req["name"] in ATOMIC_QUERY_TOOLS
+                and self.llm_provider is not None
+                and user_message
+            ):
+                try:
+                    raw_conversational = await self._generate_conversational_response(
+                        student_context=student_context,
+                        tool_name=tool_req["name"],
+                        result=result,
+                        user_message=user_message,
+                    )
+                    response = self.response_style_layer.apply(
+                        raw_conversational,
+                        student_context=student_context,
+                    )
+                except Exception as synth_err:
+                    logger.warning(
+                        "Conversational synthesis failed for tool %s (%s). "
+                        "Falling back to deterministic renderer.",
+                        tool_req["name"],
+                        synth_err,
+                    )
+                    response = self.renderer_registry.render(
+                        tool_name=tool_req["name"],
+                        result=result,
+                        student_context=student_context,
+                        user_message=user_message,
+                    )
+            else:
+                response = self.renderer_registry.render(
+                    tool_name=tool_req["name"],
+                    result=result,
+                    student_context=student_context,
+                    user_message=user_message,
+                )
 
             new_conv = new_conv.add_message("assistant", response)
             return response, StudentContext(
@@ -562,6 +616,32 @@ class ConversationService:
             new_conv = new_conv.add_message("assistant", response)
             return response, student_context
 
+    async def _generate_conversational_response(
+        self,
+        student_context: StudentContext,
+        tool_name: str,
+        result: Any,
+        user_message: str = "",
+    ) -> str:
+        """Generate focused conversational response from tool result using ConversationalResponsePolicy."""
+        if not self.llm_provider:
+            return str(result)
+
+        student_name = student_context.profile.get_display_name() or "student"
+        recent_messages = student_context.conversation.recent_messages
+
+        messages = self.conversational_policy.build_messages(
+            student_name=student_name,
+            tool_name=tool_name,
+            verified_result=result,
+            user_message=user_message,
+            recent_messages=recent_messages,
+            honorific=self.beru_identity.honorific,
+        )
+
+        response = await self.llm_provider.chat_completion(messages=messages)
+        return response.content or str(result)
+
     async def _generate_response_from_tool_result(
         self,
         student_context: StudentContext,
@@ -569,54 +649,13 @@ class ConversationService:
         result: dict,
         user_message: str = "",
     ) -> str:
-        """Generate natural language response from tool result."""
-        if not self.llm_provider:
-            return str(result)
-
-        student_name = student_context.profile.get_display_name() or "student"
-        system = (
-            f"You are {self.beru_identity.name}, a helpful and friendly "
-            f"AI college copilot talking directly to {student_name}.\n"
-            "You just executed an action or retrieved data using the system tool: "
-            f"{tool_name}.\n"
-            "Present the outcome and information naturally, warmly, and concisely.\n"
-            "Be conversational and direct. Never read out raw JSON or technical keys.\n"
-            "Never ask the student for their student ID "
-            "or internal database identifiers; "
-            "you are already talking directly to the "
-            "authenticated student.\n"
-            "If an action succeeded (such as setting their lab batch or "
-            "confirming their timetable), clearly acknowledge it and guide "
-            "them on what to do next if needed.\n"
-            "CRITICAL INSTRUCTIONS:\n"
-            "- Always deliver the complete answer directly now in this single reply.\n"
-            "- NEVER tell the student you are 'pulling', 'loading', or that you will "
-            "share the list 'in a moment' or 'shortly'. You cannot send follow-up "
-            "messages later; this is your final answer.\n"
-            "- If the system data shows scheduled classes, present them clearly with "
-            "timings and subject names.\n"
-            "- If the system data indicates that a timetable is pending "
-            "review/confirmation (is_unconfirmed_preview), clearly share the "
-            "scheduled classes from the preview and remind the student to reply "
-            "'Confirm' or 'Looks good' to officially activate it.\n"
-            "- If no classes are scheduled or entries are empty, state that clearly."
+        """Backward-compatible wrapper for generating natural language responses from tool results."""
+        return await self._generate_conversational_response(
+            student_context=student_context,
+            tool_name=tool_name,
+            result=result,
+            user_message=user_message,
         )
-        user_prompt = (
-            f"Student asked: {user_message}\n\n"
-            f"System Data (Tool: {tool_name}):\n{result}\n\n"
-            "Reply conversationally to the student:"
-        ) if user_message else (
-            f"System Data (Tool: {tool_name}):\n{result}\n\n"
-            "Summarize this conversationally for the student:"
-        )
-
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_prompt},
-        ]
-
-        response = await self.llm_provider.chat_completion(messages=messages)
-        return response.content or str(result)
 
     def get_conversation_summary(self, student_context: StudentContext) -> str:
         """Get a summary of the current conversation state."""
