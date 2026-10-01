@@ -4,7 +4,7 @@
 
 | Commit | Date | Purpose | Subsystem | Verification |
 |--------|------|---------|-----------|--------------|
-| `421619b` | 2026-10-01 | Conversational synthesis for atomic queries, self-model persona & Telegram sanitization | Intelligence, Rendering | 364 tests pass |
+| `b1f9644` | 2026-10-01 | Conversational synthesis for atomic queries, self-model persona & Telegram sanitization | Intelligence, Rendering | 364 tests pass |
 | `1636e4e` | 2026-10-01 | Fix 429 retry logging, room fallback, legend DB enrichment & tool disambiguation | Intelligence, Timetable | 358 tests pass |
 | `68d36f7` | 2026-09-30 | Encyclopedic timetable tools, schedule analytics & semantic-invariance tests | Timetable, Intelligence, Rendering | 353 tests pass |
 | `2c585b3` | 2026-09-30 | Presentation decoupling, ResponseStyleLayer, missing-field omission & 429 resilience | Intelligence, Rendering, Telegram | 345 tests pass |

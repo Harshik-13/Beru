@@ -49,7 +49,7 @@ When a student asks a direct, focused question (e.g. *"Where is OS lab?"*), forc
 - Robust HTML sanitization prevents Telegram entity parsing injection errors.
 
 ### Commit Hash
-- `421619b`
+- `b1f9644`
 
 ---
 
