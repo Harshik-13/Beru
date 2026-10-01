@@ -86,6 +86,19 @@ class TelegramBotAdapter(TelegramProvider):
         self._poll_task: asyncio.Task[None] | None = None
         self._last_update_id: int = 0
         self._processed_updates: set[int] = set()
+        self._sensitive_chats: set[str] = set()
+
+    def register_sensitive_chat(self, chat_id: int | str) -> None:
+        """Register a chat ID whose incoming message is sensitive (e.g. credential)."""
+        self._sensitive_chats.add(str(chat_id))
+
+    def unregister_sensitive_chat(self, chat_id: int | str) -> None:
+        """Unregister a chat ID from sensitive redaction."""
+        self._sensitive_chats.discard(str(chat_id))
+
+    def is_sensitive_chat(self, chat_id: int | str) -> bool:
+        """Check if chat is currently marked as sensitive."""
+        return str(chat_id) in self._sensitive_chats
 
     @property
     def provider_name(self) -> str:
@@ -339,6 +352,38 @@ class TelegramBotAdapter(TelegramProvider):
                     await asyncio.sleep(0.5)
                     continue
                 raise
+
+    async def delete_message(self, chat_id: int, message_id: int) -> bool:
+        """
+        Delete a message via Telegram Bot API (e.g. for sensitive credential removal).
+
+        Returns:
+            True if deleted successfully, False otherwise.
+        """
+        if not self._session or not self._config:
+            raise RuntimeError("Adapter not initialized")
+
+        url = f"https://api.telegram.org/bot{self._config.bot_token}/deleteMessage"
+        payload = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+        }
+        try:
+            async with self._session.post(url, json=payload) as resp:
+                data = await resp.json()
+                if data.get("ok"):
+                    logger.info("Successfully deleted Telegram message %s in chat %s", message_id, chat_id)
+                    return True
+                logger.warning(
+                    "Telegram deleteMessage failed for message %s in chat %s: %s",
+                    message_id,
+                    chat_id,
+                    data.get("description", "Unknown error"),
+                )
+                return False
+        except Exception as e:
+            logger.warning("Exception during deleteMessage for message %s in chat %s: %s", message_id, chat_id, e)
+            return False
 
     async def download_file(self, file_id: str, destination_path: str) -> str:
         """Download a file from Telegram by file_id to destination_path.
@@ -624,6 +669,14 @@ class TelegramBotAdapter(TelegramProvider):
         sender_repr = (
             from_contact.normalized_identifier or from_contact.provider_user_id
         )
+        is_sensitive = chat_id in self._sensitive_chats
+        if is_sensitive:
+            log_text = "[REDACTED_SENSITIVE_CREDENTIAL]"
+            raw_data = {"redacted": True, "type": "CREDENTIAL_EVENT"}
+        else:
+            log_text = text
+            raw_data = message
+
         logger.info(
             "Telegram message received [update_id=%s, id=%s, chat_id=%s, "
             "from=%s, type=%s]: %r",
@@ -632,7 +685,7 @@ class TelegramBotAdapter(TelegramProvider):
             chat_id,
             sender_repr,
             message_type,
-            text,
+            log_text,
         )
 
         # Build normalized message
@@ -649,7 +702,7 @@ class TelegramBotAdapter(TelegramProvider):
             is_forwarded=message.get("forward_date") is not None,
             is_from_me=False,
             chat_id=chat_id,
-            raw_provider_data=message,
+            raw_provider_data=raw_data,
         )
 
         await self._message_queue.put(normalized)

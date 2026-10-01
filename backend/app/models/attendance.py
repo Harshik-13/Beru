@@ -25,6 +25,14 @@ class AttendanceSource(str, enum.Enum):  # noqa: UP042
     DOCTUS = "doctus"
 
 
+class AttendanceProvenance(str, enum.Enum):  # noqa: UP042
+    PORTAL_LIVE_SYNC = "portal_live_sync"
+    PORTAL_SNAPSHOT_FRESH = "portal_snapshot_fresh"
+    PORTAL_SNAPSHOT_STALE = "portal_snapshot_stale"
+    MANUAL_LOG = "manual_log"
+    SIMULATED = "simulated"
+
+
 class AttendanceSnapshot(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "attendance_snapshots"
 

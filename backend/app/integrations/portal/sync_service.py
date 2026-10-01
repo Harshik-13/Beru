@@ -6,12 +6,14 @@ Doctus portal into Beru's attendance domain.
 """
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+import logging
 from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.concurrency import keyed_lock_manager
 from app.integrations.portal.credential_store import (
     FernetCredentialConfig,
     FernetCredentialStore,
@@ -22,6 +24,10 @@ from app.integrations.portal.doctus import (
     DoctusLoginError,
     DoctusSessionError,
 )
+from app.models.attendance import AttendanceProvenance
+from app.models.portal_credential import PortalCredentialStatus
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from app.integrations.portal.dto import PortalAttendance
@@ -145,6 +151,106 @@ class PortalSyncService:
             self._subject_repo = SubjectAttendanceRepository(self.session)
         return self._subject_repo
 
+    FRESHNESS_TTL = timedelta(hours=4)
+
+    def is_snapshot_fresh(self, snapshot: AttendanceSnapshot | None) -> bool:
+        """Check if an attendance snapshot is less than 4 hours old."""
+        if not snapshot or not snapshot.captured_at:
+            return False
+        age = datetime.now(UTC) - snapshot.captured_at
+        return age < self.FRESHNESS_TTL
+
+    async def get_or_sync_attendance(
+        self,
+        student_id: UUID,
+        force_sync: bool = False,
+        semester_id: str | None = None,
+    ) -> tuple[AttendanceSnapshot | None, AttendanceProvenance, str | None]:
+        """
+        Retrieve fresh attendance data for a student, syncing from Doctus if stale.
+
+        Enforces:
+        - 4-hour freshness TTL
+        - Async keyed locking to prevent concurrent duplicate syncs
+        - Graceful fallback to cached snapshot if live sync fails
+        - Zero fabrication if no data is available
+        """
+        # 1. Fast-path check without acquiring lock
+        latest_snapshot = await self.snapshot_repo.get_latest_for_student_with_subjects(student_id)
+        if not force_sync and self.is_snapshot_fresh(latest_snapshot):
+            return latest_snapshot, AttendanceProvenance.PORTAL_SNAPSHOT_FRESH, None
+
+        # 2. Acquire keyed lock to prevent thundering herd
+        async with keyed_lock_manager.lock(f"portal_sync:{student_id}"):
+            # Re-check under lock
+            latest_snapshot = await self.snapshot_repo.get_latest_for_student_with_subjects(student_id)
+            if not force_sync and self.is_snapshot_fresh(latest_snapshot):
+                return latest_snapshot, AttendanceProvenance.PORTAL_SNAPSHOT_FRESH, None
+
+            # Verify credentials exist
+            credential = await self.credential_repo.get_by_student_and_portal(student_id, "doctus")
+            if not credential:
+                if latest_snapshot:
+                    return (
+                        latest_snapshot,
+                        AttendanceProvenance.PORTAL_SNAPSHOT_STALE,
+                        "No portal credentials configured. Showing cached snapshot.",
+                    )
+                return (
+                    None,
+                    AttendanceProvenance.PORTAL_SNAPSHOT_STALE,
+                    "No portal credentials configured. Please connect your college portal.",
+                )
+
+            if credential.status == PortalCredentialStatus.RECONNECT_REQUIRED:
+                if latest_snapshot:
+                    return (
+                        latest_snapshot,
+                        AttendanceProvenance.PORTAL_SNAPSHOT_STALE,
+                        "Portal credentials require reconnection. Showing cached snapshot.",
+                    )
+                return (
+                    None,
+                    AttendanceProvenance.PORTAL_SNAPSHOT_STALE,
+                    "Portal credentials require reconnection. Please connect your college portal.",
+                )
+
+            # Attempt live sync
+            try:
+                await self.sync_attendance(student_id, semester_id)
+                refreshed = await self.snapshot_repo.get_latest_for_student_with_subjects(student_id)
+                return refreshed, AttendanceProvenance.PORTAL_LIVE_SYNC, None
+            except DoctusLoginError as e:
+                logger.warning(
+                    "Portal authentication failed during sync for student %s: %s",
+                    student_id,
+                    e,
+                )
+                if latest_snapshot:
+                    return (
+                        latest_snapshot,
+                        AttendanceProvenance.PORTAL_SNAPSHOT_STALE,
+                        "Portal login failed. Please reconnect credentials.",
+                    )
+                return (
+                    None,
+                    AttendanceProvenance.PORTAL_SNAPSHOT_STALE,
+                    "Portal login failed. Please reconnect credentials.",
+                )
+            except Exception as e:
+                logger.warning("Portal sync failed for student %s: %s", student_id, e)
+                if latest_snapshot:
+                    return (
+                        latest_snapshot,
+                        AttendanceProvenance.PORTAL_SNAPSHOT_STALE,
+                        f"Live portal refresh unavailable: {e}",
+                    )
+                return (
+                    None,
+                    AttendanceProvenance.PORTAL_SNAPSHOT_STALE,
+                    f"Live portal refresh unavailable: {e}",
+                )
+
     async def sync_attendance(
         self,
         student_id: UUID,
@@ -179,7 +285,7 @@ class PortalSyncService:
         _roll_number, password = await self.credential_store.get_credential(
             student_id, "doctus"
         )
-        if not credential.roll_number or not credential.password:
+        if not credential.roll_number or not password:
             raise PortalCredentialsMissingError(
                 "Portal credentials not configured correctly."
             )
@@ -189,6 +295,12 @@ class PortalSyncService:
             try:
                 await adapter.login(credential.roll_number, password)
             except DoctusLoginError as e:
+                await self.credential_repo.update_status(
+                    credential.id,
+                    PortalCredentialStatus.RECONNECT_REQUIRED,
+                    failure=True,
+                )
+                await self.session.commit()
                 raise PortalLoginError(
                     f"Portal login failed: {e}", status_code=e.status_code
                 ) from e
@@ -226,6 +338,15 @@ class PortalSyncService:
                 attendance=attendance,
                 semester_id=target_semester_id,
             )
+
+            now = datetime.now(UTC)
+            await self.credential_repo.update_sync_timestamp(credential.id, now)
+            await self.credential_repo.update_status(
+                credential.id,
+                PortalCredentialStatus.CONNECTED,
+                failure=False,
+            )
+            await self.session.commit()
 
             return PortalSyncResult(
                 success=True,

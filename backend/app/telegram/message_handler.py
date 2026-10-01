@@ -45,6 +45,10 @@ from app.telegram.models import (
     TelegramContactIdentity,
     TelegramMessageType,
 )
+from app.integrations.portal.onboarding_service import (
+    OnboardingStep,
+    PortalCredentialOnboardingService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +76,7 @@ class TelegramMessageHandler:
         student_repo: StudentRepository | None = None,
         llm_provider: LLMProvider | None = None,
         config: TelegramMessageHandlerConfig | None = None,
+        portal_onboarding_service: PortalCredentialOnboardingService | None = None,
     ):
         self._adapter = adapter
         self._session_factory = session_factory
@@ -84,6 +89,9 @@ class TelegramMessageHandler:
         self._task: asyncio.Task[None] | None = None
         self._processed_keys: set[str] = set()
         self._conversation_contexts: dict[UUID, ConversationContext] = {}
+        self._portal_onboarding = (
+            portal_onboarding_service or PortalCredentialOnboardingService()
+        )
 
     async def start(self) -> None:
         """Start processing messages from the Telegram adapter."""
@@ -178,6 +186,53 @@ class TelegramMessageHandler:
             student_repo = self._student_repo or StudentRepository(session)
             student = await student_repo.get_or_create(student_id)
 
+            # 5b. Handle active portal credential onboarding flow
+            if self._portal_onboarding.has_active_flow(student_id):
+                flow = self._portal_onboarding.get_flow_state(student_id)
+                if flow and flow.step == OnboardingStep.AWAITING_ROLL_NUMBER:
+                    reply = self._portal_onboarding.receive_roll_number(
+                        student_id=student_id,
+                        roll_number=message.text or "",
+                        adapter=self._adapter,
+                    )
+                    await self._send_response(message.chat_id, reply)
+                    await self._mark_processed(idempotency_key)
+                    return
+                elif flow and flow.step == OnboardingStep.AWAITING_PASSWORD:
+                    from app.integrations.portal.sync_service import PortalSyncService
+                    sync_service = PortalSyncService(session)
+                    msg_id_part = (
+                        message.event_id.split(":")[1]
+                        if ":" in message.event_id
+                        else message.event_id
+                    )
+                    try:
+                        msg_id_int = int(msg_id_part)
+                    except ValueError:
+                        msg_id_int = 0
+                    success, reply = await self._portal_onboarding.receive_password(
+                        student_id=student_id,
+                        password=message.text or "",
+                        message_id=msg_id_int,
+                        session=session,
+                        adapter=self._adapter,
+                        sync_service=sync_service,
+                    )
+                    await self._send_response(message.chat_id, reply)
+                    await self._mark_processed(idempotency_key)
+                    return
+
+            # Check for direct /connect_portal or /portal command
+            if message.text and message.text.strip().lower() in (
+                "/connect_portal",
+                "/portal",
+                "/link_portal",
+            ):
+                reply = self._portal_onboarding.start_flow(student_id, message.chat_id)
+                await self._send_response(message.chat_id, reply)
+                await self._mark_processed(idempotency_key)
+                return
+
             # 6. Handle media message (timetable PDF / photo)
             if message.message_type in (
                 TelegramMessageType.DOCUMENT,
@@ -220,6 +275,7 @@ class TelegramMessageHandler:
                 confirmed_tt=confirmed_tt,
                 pending_tt=pending_tt,
                 needs_batch=needs_batch,
+                chat_id=message.chat_id,
             )
             student_context = self._create_student_context(student_id, profile)
 
@@ -233,6 +289,7 @@ class TelegramMessageHandler:
                     llm_provider=self._llm_provider,
                     timetable_service=timetable_service,
                     attendance_service=attendance_service,
+                    portal_onboarding_service=self._portal_onboarding,
                 )
 
             logger.info(
@@ -327,6 +384,7 @@ class TelegramMessageHandler:
         confirmed_tt: Any | None = None,
         pending_tt: Any | None = None,
         needs_batch: bool = False,
+        chat_id: int | None = None,
     ) -> StudentProfile:
         """Create a student profile from Student model with timetable status."""
         has_tt = isinstance(confirmed_tt, Timetable)
@@ -363,6 +421,7 @@ class TelegramMessageHandler:
             branch=active_tt.branch if active_tt else None,
             semester=active_tt.semester if active_tt else None,
             section=active_tt.section if active_tt else None,
+            chat_id=chat_id,
         )
 
     def _create_student_context(

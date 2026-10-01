@@ -149,7 +149,7 @@ async def get_overall_attendance(service, student_id: str):
             "available": False,
             "message": (
                 "No verified attendance data available. "
-                "Upload and confirm a timetable first."
+                "Upload and confirm a timetable or connect your college portal first."
             ),
         }
     return {
@@ -157,9 +157,16 @@ async def get_overall_attendance(service, student_id: str):
         "attended": result.attended,
         "conducted": result.conducted,
         "percentage": result.percentage,
-        "captured_at": result.captured_at.isoformat(),
+        "cumulative_attended": result.attended,
+        "cumulative_conducted": result.conducted,
+        "cumulative_percentage": result.percentage,
+        "captured_at": result.captured_at.isoformat()
+        if hasattr(result.captured_at, "isoformat")
+        else str(result.captured_at),
         "source": result.source,
         "semester_id": result.semester_id,
+        "provenance": getattr(result, "provenance", "portal_snapshot_fresh"),
+        "notice": getattr(result, "notice", None),
     }
 
 
@@ -200,13 +207,41 @@ async def get_attendance_summary(service, student_id: str):
             "message": "No verified attendance data available.",
         }
 
+    overall_dict = (
+        result.overall.to_dict()
+        if hasattr(result.overall, "to_dict")
+        else {
+            "attended": result.overall.get("attended", 0),
+            "conducted": result.overall.get("conducted", 0),
+            "percentage": result.overall.get("percentage", 0.0),
+            "cumulative_attended": result.overall.get("attended", 0),
+            "cumulative_conducted": result.overall.get("conducted", 0),
+            "cumulative_percentage": result.overall.get("percentage", 0.0),
+        }
+        if isinstance(result.overall, dict)
+        else {
+            "attended": getattr(result.overall, "attended", 0),
+            "conducted": getattr(result.overall, "conducted", 0),
+            "percentage": getattr(result.overall, "percentage", 0.0),
+            "cumulative_attended": getattr(result.overall, "attended", 0),
+            "cumulative_conducted": getattr(result.overall, "conducted", 0),
+            "cumulative_percentage": getattr(result.overall, "percentage", 0.0),
+        }
+    )
+
     return {
         "available": True,
-        "overall": result.overall,
-        "subjects": [s.to_dict() for s in result.subjects],
-        "captured_at": result.captured_at.isoformat(),
+        "overall": overall_dict,
+        "subjects": [
+            s.to_dict() if hasattr(s, "to_dict") else s for s in result.subjects
+        ],
+        "captured_at": result.captured_at.isoformat()
+        if hasattr(result.captured_at, "isoformat")
+        else str(result.captured_at),
         "source": result.source,
         "semester_id": result.semester_id,
+        "provenance": getattr(result, "provenance", "portal_snapshot_fresh"),
+        "notice": getattr(result, "notice", None),
     }
 
 
@@ -694,15 +729,49 @@ ATTENDANCE_TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "name": "start_portal_connection",
+        "description": (
+            "Starts the secure portal credential onboarding or reconnection flow "
+            "when the student expresses an intention to connect or reconnect their college attendance portal."
+        ),
+        "arguments_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+        "result_schema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string"},
+                "message": {"type": "string"},
+            },
+        },
+    },
 ]
 
 
 # Tool implementations mapping
 async def execute_attendance_tool(
-    attendance_service, timetable_service, tool_name: str, student_id: str, **kwargs
+    attendance_service,
+    timetable_service,
+    tool_name: str,
+    student_id: str,
+    portal_onboarding_service=None,
+    chat_id: int | None = None,
+    **kwargs,
 ):
     """Execute an attendance tool by name."""
-    if tool_name == "get_overall_attendance":
+    if tool_name == "start_portal_connection":
+        msg = "Sure, Sir. Please send your college roll number."
+        if portal_onboarding_service and chat_id:
+            from uuid import UUID
+            msg = portal_onboarding_service.start_flow(UUID(student_id), chat_id)
+        return {
+            "status": "AWAITING_ROLL_NUMBER",
+            "message": msg,
+        }
+    elif tool_name == "get_overall_attendance":
         return await get_overall_attendance(attendance_service, student_id)
     elif tool_name == "get_subject_attendance":
         return await get_subject_attendance(

@@ -23,6 +23,25 @@ class OverallAttendanceResult:
     captured_at: datetime
     source: str
     semester_id: str | None
+    provenance: str = "portal_snapshot_fresh"
+    notice: str | None = None
+
+    def to_dict(self):
+        return {
+            "attended": self.attended,
+            "conducted": self.conducted,
+            "percentage": self.percentage,
+            "cumulative_attended": self.attended,
+            "cumulative_conducted": self.conducted,
+            "cumulative_percentage": self.percentage,
+            "captured_at": self.captured_at.isoformat()
+            if hasattr(self.captured_at, "isoformat")
+            else str(self.captured_at),
+            "source": self.source,
+            "semester_id": self.semester_id,
+            "provenance": self.provenance,
+            "notice": self.notice,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +58,19 @@ class SubjectAttendanceResult:
     cumulative_conducted: int
     cumulative_percentage: float
 
+    def to_dict(self):
+        return {
+            "subject_code": self.subject_code,
+            "subject_name": self.subject_name,
+            "monthly_attended": self.monthly_attended,
+            "monthly_conducted": self.monthly_conducted,
+            "monthly_percentage": self.monthly_percentage,
+            "monthly_period": self.monthly_period,
+            "cumulative_attended": self.cumulative_attended,
+            "cumulative_conducted": self.cumulative_conducted,
+            "cumulative_percentage": self.cumulative_percentage,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class AttendanceSummaryResult:
@@ -49,6 +81,25 @@ class AttendanceSummaryResult:
     captured_at: datetime
     source: str
     semester_id: str | None
+    provenance: str = "portal_snapshot_fresh"
+    notice: str | None = None
+
+    def to_dict(self):
+        return {
+            "overall": self.overall.to_dict()
+            if hasattr(self.overall, "to_dict")
+            else self.overall,
+            "subjects": [
+                s.to_dict() if hasattr(s, "to_dict") else s for s in self.subjects
+            ],
+            "captured_at": self.captured_at.isoformat()
+            if hasattr(self.captured_at, "isoformat")
+            else str(self.captured_at),
+            "source": self.source,
+            "semester_id": self.semester_id,
+            "provenance": self.provenance,
+            "notice": self.notice,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,12 +299,36 @@ class AttendanceService:
     Enforces ownership, validates inputs, performs deterministic calculations.
     """
 
-    def __init__(self, session):
+    def __init__(self, session, sync_service=None):
         self.session = session
+        self._sync_service = sync_service
 
-    async def get_latest_snapshot(self, student_id: str):
+    @property
+    def sync_service(self):
+        if self._sync_service is None and self.session:
+            from app.integrations.portal.sync_service import PortalSyncService
+            self._sync_service = PortalSyncService(self.session)
+        return self._sync_service
+
+    async def sync_attendance(self, student_id: str, semester_id: str | None = None):
+        """Trigger explicit sync of attendance data from portal."""
+        from uuid import UUID
+        return await self.sync_service.sync_attendance(UUID(student_id), semester_id)
+
+    async def get_latest_snapshot(self, student_id: str, auto_sync: bool = False):
         """Get the latest attendance snapshot for a student."""
+        from uuid import UUID
         from app.models.attendance import AttendanceSnapshot
+
+        if auto_sync and self.sync_service:
+            try:
+                snapshot, _prov, _notice = await self.sync_service.get_or_sync_attendance(
+                    UUID(student_id)
+                )
+                if snapshot:
+                    return snapshot
+            except Exception:
+                pass
 
         result = await self.session.execute(
             select(AttendanceSnapshot)
@@ -275,9 +350,24 @@ class AttendanceService:
         )
         return result.scalar_one_or_none()
 
-    async def get_overall_attendance(self, student_id: str):
-        """Get overall attendance for a student."""
-        snapshot = await self.get_latest_snapshot(student_id)
+    async def get_overall_attendance(self, student_id: str, auto_sync: bool = True):
+        """Get overall attendance for a student, auto-syncing if stale and portal connected."""
+        from uuid import UUID
+        snapshot = None
+        provenance = "portal_snapshot_fresh"
+        notice = None
+
+        if auto_sync and self.sync_service:
+            try:
+                snapshot, prov_enum, notice = await self.sync_service.get_or_sync_attendance(
+                    UUID(student_id)
+                )
+                provenance = prov_enum.value
+            except Exception:
+                snapshot = await self.get_latest_snapshot(student_id)
+        else:
+            snapshot = await self.get_latest_snapshot(student_id)
+
         if not snapshot:
             return None
 
@@ -288,11 +378,13 @@ class AttendanceService:
             captured_at=snapshot.captured_at,
             source=snapshot.source.value,
             semester_id=snapshot.semester_id,
+            provenance=provenance,
+            notice=notice,
         )
 
     async def get_subject_attendance(self, student_id: str, subject_code: str):
         """Get attendance for a specific subject."""
-        snapshot = await self.get_latest_snapshot(student_id)
+        snapshot = await self.get_latest_snapshot(student_id, auto_sync=True)
         if not snapshot:
             return None
 
@@ -317,9 +409,24 @@ class AttendanceService:
                 )
         return None
 
-    async def get_attendance_summary(self, student_id: str):
-        """Get complete attendance summary for a student."""
-        snapshot = await self.get_latest_snapshot(student_id)
+    async def get_attendance_summary(self, student_id: str, auto_sync: bool = True):
+        """Get complete attendance summary for a student, auto-syncing if stale and portal connected."""
+        from uuid import UUID
+        snapshot = None
+        provenance = "portal_snapshot_fresh"
+        notice = None
+
+        if auto_sync and self.sync_service:
+            try:
+                snapshot, prov_enum, notice = await self.sync_service.get_or_sync_attendance(
+                    UUID(student_id)
+                )
+                provenance = prov_enum.value
+            except Exception:
+                snapshot = await self.get_latest_snapshot(student_id)
+        else:
+            snapshot = await self.get_latest_snapshot(student_id)
+
         if not snapshot:
             return None
 
@@ -350,11 +457,15 @@ class AttendanceService:
                 captured_at=snapshot.captured_at,
                 source=snapshot.source.value,
                 semester_id=snapshot.semester_id,
+                provenance=provenance,
+                notice=notice,
             ),
             subjects=subjects,
             captured_at=snapshot.captured_at,
             source=snapshot.source.value,
             semester_id=snapshot.semester_id,
+            provenance=provenance,
+            notice=notice,
         )
 
     async def get_subjects_below_target(

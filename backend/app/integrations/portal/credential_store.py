@@ -6,6 +6,7 @@ Credentials are scoped to student_id and portal.
 """
 
 import base64
+from datetime import UTC, datetime
 import os
 from uuid import UUID
 
@@ -43,9 +44,13 @@ class FernetCredentialStore(PortalCredentialStore):
         portal: str,
         roll_number: str,
         password: str,
+        status: str = "CONNECTED",
+        connected_at: datetime | None = None,
+        last_successful_auth_at: datetime | None = None,
     ) -> None:
         """Store encrypted portal credentials for a student."""
         encrypted_password = self._fernet.encrypt(password.encode()).decode()
+        now = datetime.now(UTC)
 
         # Use upsert pattern - delete existing then insert
         await self.session.execute(
@@ -60,6 +65,9 @@ class FernetCredentialStore(PortalCredentialStore):
             portal=portal,
             roll_number=roll_number,
             encrypted_password=encrypted_password,
+            status=status,
+            connected_at=connected_at or now,
+            last_successful_auth_at=last_successful_auth_at or now,
         )
         self.session.add(credential)
         await self.session.flush()

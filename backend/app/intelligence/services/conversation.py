@@ -73,6 +73,7 @@ class ConversationService:
         timetable_service: TimetableService | None = None,
         attendance_service: AttendanceService | None = None,
         renderer_registry: Any | None = None,
+        portal_onboarding_service: Any | None = None,
     ):
         self.tool_registry = tool_registry_instance or tool_registry
         self.context_builder = context_builder or ContextBuilder()
@@ -80,6 +81,7 @@ class ConversationService:
         self.beru_identity = beru_identity or BERU_IDENTITY
         self.timetable_service = timetable_service
         self.attendance_service = attendance_service
+        self.portal_onboarding_service = portal_onboarding_service
 
         if renderer_registry is None:
             from app.intelligence.rendering.registry import (
@@ -500,6 +502,7 @@ class ConversationService:
 
             # Attendance tools that may need TimetableService or AttendanceService
             attendance_tools = {
+                "start_portal_connection",
                 "simulate_absence",
                 "get_overall_attendance",
                 "get_subject_attendance",
@@ -534,11 +537,14 @@ class ConversationService:
                     execute_attendance_tool,
                 )
 
+                chat_id = getattr(student_context.profile, "chat_id", None)
                 result = await execute_attendance_tool(
                     self.attendance_service,
                     self.timetable_service,
                     tool_req["name"],
                     str(student_context.student_id),
+                    portal_onboarding_service=self.portal_onboarding_service,
+                    chat_id=chat_id,
                     **clean_arguments,
                 )
             else:

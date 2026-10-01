@@ -8,17 +8,25 @@
 
 ## Overall Project Status
 
-Personal Alpha phase. Telegram bot is live and functional. Core intelligence pipeline (LLM → tool dispatch → deterministic backend) is wired. Presentation Layer with decoupled ResponseStyleLayer, deterministic domain renderers, and ResponseRendererRegistry is operational. Encyclopedic timetable querying (courses, labs, rooms, professors, schedule analytics), database room/faculty legend enrichment, and semantic-invariance testing are fully operational. Briefing scheduler is operational. Portal integration (Doctus) is implemented but not runtime-verified against live portal.
+Personal Alpha phase. Telegram bot is live and functional. Core intelligence pipeline (LLM → tool dispatch → deterministic backend) is wired. Presentation Layer with decoupled ResponseStyleLayer, deterministic domain renderers, and ResponseRendererRegistry is operational. Encyclopedic timetable querying (courses, labs, rooms, professors, schedule analytics), database room/faculty legend enrichment, and semantic-invariance testing are fully operational. Briefing scheduler is operational. Live Doctus portal integration with zero-leak credential onboarding, 4-hour freshness attendance sync, concurrency locking, and provenance presentation is implemented and verified.
 
 ## IMPLEMENTED
 
 - FastAPI application with lifespan management
 - PostgreSQL database with SQLAlchemy 2.x async ORM
-- Alembic migrations (10 migrations, chain verified)
+- Alembic migrations (11 migrations, chain verified)
 - Student model with profile fields (name, attendance_target, briefing_time, timezone, lab_batch, graduation_year)
-- Telegram Bot API adapter (long polling, message normalization, pure transport bridge, drop pending updates, HTML formatting with plain-text fallback retry on 400 error)
+- Live Doctus Portal Integration & 4-Hour Freshness Sync (`app/integrations/portal/` & `app/core/concurrency.py`):
+  - Zero-Leak Credential Boundary: Interactive Telegram flow (`/connect_portal` or natural language 'connect my portal') steps student through `AWAITING_ROLL_NUMBER` → `AWAITING_PASSWORD`. Transport filter marks chat sensitive in `TelegramBotAdapter`, redacting `raw_provider_data` and log records, and calls Telegram Bot API `delete_message` immediately upon receiving password.
+  - Auth-First Verification: Credentials verified against live Doctus before being encrypted with Fernet and saved to PostgreSQL. Failed authentication leaves existing working credentials untainted.
+  - Lifecycle Tracking: Portal credentials track status (`CONNECTED`, `RECONNECT_REQUIRED`), `last_successful_auth_at`, `last_auth_failure_at`, and `last_sync_at`.
+  - 4-Hour Freshness Engine: Attendance snapshots are considered fresh for 4 hours. Stale queries automatically trigger background Doctus sync.
+  - Concurrency Locking: In-memory `KeyedLockManager` serializes concurrent portal requests per student, preventing duplicate Doctus requests and thundering herds.
+  - Resilient Fallback & Zero Fabrication: If Doctus is unreachable (503, network drop, timeout), system falls back gracefully to the latest verified snapshot with `PORTAL_SNAPSHOT_STALE` provenance and a warning notice. If no cached snapshot exists, returns empty/unavailable without fabricating any attendance.
+  - Attendance Provenance Presentation: `AttendanceRenderer` renders clean cards with provenance metadata badges (`📅 Synced live from Doctus just now`, `📅 Sourced from Doctus snapshot (time)`, `⚠️ Cached snapshot (Live refresh unavailable)`).
+- Telegram Bot API adapter (long polling, message normalization, pure transport bridge, drop pending updates, HTML formatting with plain-text fallback retry on 400 error, sensitive chat redaction, message deletion)
 - Telegram identity linking (challenge/verify flow with audit, HTML formatted token)
-- Telegram message handler (idempotency, request-scoped DB sessions, identity resolution, request-scoped domain services, conversation pipeline, HTML parse mode default)
+- Telegram message handler (idempotency, request-scoped DB sessions, identity resolution, request-scoped domain services, conversation pipeline, HTML parse mode default, credential onboarding flow interception)
 - LLM provider abstraction (OpenAI-compatible + Mock; aliases for OpenRouter, Groq, OpenAI, NVIDIA, Ollama)
 - Real LLM provider integration (wired in lifespan, dict/object message support, safe tool argument parsing, adaptive HTTP 429 backoff with Retry-After header parsing and non-crashing logger)
 - Conversation service (intent interpretation → tool dispatch → hybrid presentation pipeline: conversational synthesis for atomic queries via ConversationalResponsePolicy; decoupled ResponseRendererRegistry dispatch for structured collections; strict anti-async-hallucination instruction)
@@ -67,8 +75,8 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 
 ## TESTED
 
-- 364 tests pass (3 warnings related to unawaited test mocks in telegram message handler)
-- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence (real LLM provider, aliases, tool execution), models, portal, student profile, telegram isolation, telegram message handler (media download, photo through extractor, multi-turn context), telegram startup, timetable, whatsapp isolation, timetable end-to-end onboarding suite (`test_timetable_onboarding_e2e.py`: 19 tests), golden output test suite (`test_golden_outputs.py`: 14 tests), semantic-invariance and analytics suite (`test_semantic_invariance.py`: 13 tests), and conversational synthesis suite (`test_conversational_synthesis.py`: 6 tests covering policy prompt composition, direct answer synthesis, multi-turn pronoun continuity, LLM error fallback, and deterministic preservation)
+- 385 tests pass (3 warnings related to unawaited test mocks in telegram message handler)
+- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence (real LLM provider, aliases, tool execution), models, portal, student profile, telegram isolation, telegram message handler (media download, photo through extractor, multi-turn context), telegram startup, timetable, whatsapp isolation, timetable end-to-end onboarding suite (`test_timetable_onboarding_e2e.py`: 19 tests), golden output test suite (`test_golden_outputs.py`: 14 tests), semantic-invariance and analytics suite (`test_semantic_invariance.py`: 13 tests), conversational synthesis suite (`test_conversational_synthesis.py`: 6 tests), and the live portal integration & freshness test suites (21 tests across `test_portal_security.py`, `test_portal_onboarding.py`, `test_portal_semantic_routing.py`, and `test_portal_sync_and_freshness.py`)
 - Flaky bug fixed: `test_get_next_class` clock flakiness resolved with deterministic `from_time`
 - Ruff: clean on all source files
 - Mypy: clean on all source files

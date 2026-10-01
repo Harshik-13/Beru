@@ -10,6 +10,7 @@ Enforces:
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from app.intelligence.rendering.style_contract import (
@@ -46,8 +47,69 @@ class AttendanceRenderer:
             return self.render_below_target(result, student_context)
         elif tool_name == "calculate_classes_needed":
             return self.render_recovery(result, student_context)
+        elif tool_name == "sync_attendance":
+            return self.render_sync_result(result, student_context)
 
         return self.render_generic_attendance(result, student_context)
+
+    def _format_provenance_badge(self, result: dict[str, Any]) -> str:
+        """Format provenance timestamp and freshness note."""
+        provenance = result.get("provenance")
+        captured_at_str = result.get("captured_at")
+        notice = result.get("notice")
+
+        lines: list[str] = []
+        if notice:
+            lines.append(f"<i>⚠️ {notice}</i>")
+
+        if provenance == "portal_live_sync":
+            lines.append("<i>📅 Synced live from Doctus just now</i>")
+        elif provenance == "portal_snapshot_stale":
+            if captured_at_str:
+                formatted = self._format_timestamp(captured_at_str)
+                lines.append(f"<i>⚠️ Cached snapshot from {formatted} (Live refresh unavailable)</i>")
+            else:
+                lines.append("<i>⚠️ Live refresh unavailable</i>")
+        elif captured_at_str:
+            formatted = self._format_timestamp(captured_at_str)
+            lines.append(f"<i>📅 Sourced from Doctus snapshot ({formatted})</i>")
+
+        return "\n".join(lines).strip()
+
+    def _format_timestamp(self, ts_str: str) -> str:
+        """Convert ISO timestamp string into readable representation."""
+        try:
+            dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            return dt.strftime("%d %b, %I:%M %p")
+        except Exception:
+            return ts_str
+
+    def render_sync_result(
+        self, result: dict[str, Any], student_context: StudentContext
+    ) -> str:
+        """Render result of manual or automated sync_attendance tool."""
+        if not result.get("success"):
+            error_msg = result.get("error") or result.get("message") or "Sync failed"
+            return (
+                f"<b>Attendance Sync:</b>\n\n"
+                f"⚠️ <b>Unable to sync attendance:</b> {error_msg}\n"
+                f"<i>If your credentials changed, use /connect_portal to reconnect.</i>"
+            )
+
+        pct = result.get("overall_percentage")
+        pct_str = format_percentage(pct) if pct is not None else "N/A"
+        subjects_count = result.get("subject_count", 0)
+
+        lines = [
+            "<b>Attendance Sync:</b>",
+            "",
+            f"{CHECK_MARK} <b>Successfully synced from Doctus!</b>",
+            f"• <b>Overall Attendance:</b> {pct_str}",
+            f"• <b>Subjects Updated:</b> <code>{subjects_count}</code>",
+            "",
+            "<i>📅 Synced live from Doctus just now</i>",
+        ]
+        return "\n".join(lines).strip()
 
     def render_summary(
         self, result: dict[str, Any], student_context: StudentContext
@@ -105,6 +167,11 @@ class AttendanceRenderer:
                     f"{idx}. <b>{name}:</b> {pct_str} ({s_att}/{s_cond}) \u2014 {badge}"
                 )
 
+        badge_footer = self._format_provenance_badge(result)
+        if badge_footer:
+            lines.append("")
+            lines.append(badge_footer)
+
         return "\n".join(lines).strip()
 
     def render_overall(
@@ -129,6 +196,12 @@ class AttendanceRenderer:
             f"• <b>Target:</b> {format_percentage(target)}",
             f"• <b>Margin:</b> {status_icon} {diff:+.1f}%",
         ]
+
+        badge_footer = self._format_provenance_badge(result)
+        if badge_footer:
+            lines.append("")
+            lines.append(badge_footer)
+
         return "\n".join(lines).strip()
 
     def render_subject(
@@ -155,6 +228,12 @@ class AttendanceRenderer:
             ),
             f"• <b>Status:</b> {status_icon} {status_label}",
         ]
+
+        badge_footer = self._format_provenance_badge(result)
+        if badge_footer:
+            lines.append("")
+            lines.append(badge_footer)
+
         return "\n".join(lines).strip()
 
     def render_simulation(
@@ -205,6 +284,11 @@ class AttendanceRenderer:
                 f"{WARNING_SIGN} {defic:.1f}% deficit"
             )
 
+        badge_footer = self._format_provenance_badge(result)
+        if badge_footer:
+            lines.append("")
+            lines.append(badge_footer)
+
         return "\n".join(lines).strip()
 
     def render_recovery(
@@ -223,6 +307,12 @@ class AttendanceRenderer:
             f"• <b>Projected Outcome:</b> {format_percentage(proj_pct)}",
             f"• <b>Feasibility:</b> {feasibility}",
         ]
+
+        badge_footer = self._format_provenance_badge(result)
+        if badge_footer:
+            lines.append("")
+            lines.append(badge_footer)
+
         return "\n".join(lines).strip()
 
     def render_generic_attendance(

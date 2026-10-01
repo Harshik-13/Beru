@@ -42,13 +42,18 @@
 5. **Message idempotency** — Duplicate updates must not cause duplicate side effects.
 6. **Graceful failure handling** — Background task exceptions logged; shutdown graceful.
 
-### Attendance Requirements
+### Attendance & Portal Requirements
 
 1. **Deterministic calculations** — Percentage, simulation, recovery; no LLM arithmetic.
 2. **Non-mutating simulations** — Simulations never modify actual attendance records.
 3. **Stale/missing data handling** — Clearly distinguish: current verified, stale snapshot, unavailable portal, no synchronized data.
 4. **Portal sync** — Read-only; credential security preserved.
-5. **No fabrication** — Never fabricate attendance data.
+5. **No fabrication** — Never fabricate attendance data. If the portal is down and no snapshot exists, return error/unavailable.
+6. **Zero-Leak Credential Boundary** — Onboarding and reconnection happen through a multi-step interactive flow (`AWAITING_ROLL_NUMBER` → `AWAITING_PASSWORD`). Plaintext passwords must NEVER enter conversation context, LLM prompts, tool arguments, database logs, or normalized message payloads (`raw_provider_data` is redacted at the transport boundary). Password messages in Telegram must be deleted immediately after receipt.
+7. **Auth-First Verification** — Credentials must be verified against live Doctus before being encrypted with Fernet and saved to the database. Failed authentication attempts must never overwrite or corrupt existing valid credentials.
+8. **4-Hour Freshness Engine** — Attendance snapshots are fresh for 4 hours (`FRESHNESS_TTL = 4h`). Stale data triggers a background sync to Doctus. Concurrency is guarded per-student by `KeyedLockManager` to prevent duplicate portal requests.
+9. **Provenance Tracking** — Every attendance query reports provenance (`PORTAL_LIVE_SYNC`, `PORTAL_SNAPSHOT_FRESH`, `PORTAL_SNAPSHOT_STALE`) and human-readable timestamp metadata.
+10. **Resilient Fallback** — If live Doctus synchronization fails (network error, portal maintenance, session expiry), the system falls back to the latest verified cached snapshot with a warning note, rather than failing the user query.
 
 ### Timetable Requirements
 

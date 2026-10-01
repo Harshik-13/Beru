@@ -1,5 +1,78 @@
 # CHANGELOG.md — Beru
 
+## 2026-10-01 — Live Doctus Portal Integration, Zero-Leak Credential Boundary & 4-Hour Freshness Sync
+
+### Task / Change
+Implemented end-to-end college portal (Doctus) integration with an interactive zero-leak credential onboarding flow, transport-level password redaction, immediate Telegram message deletion, auth-first credential verification, Fernet encryption at rest, 4-hour freshness attendance sync, key-based concurrency locking, and unambiguous timestamp provenance presentation.
+
+### Why
+Students need live, accurate attendance updates directly from their college portal (automation.vnrvjiet.ac.in). However, handling college portal credentials over a chat platform carries major security risks: credentials must never leak into chat history, application logs, database backups, or LLM context windows. Additionally, live attendance fetching must be protected against duplicate concurrent requests (thundering herd), must respect a 4-hour freshness TTL to avoid excessive load on the college portal, and must gracefully fall back to cached snapshots with degraded provenance if the portal is unreachable—strictly adhering to Beru's zero-fabrication invariant.
+
+### What Changed
+- `backend/app/models/portal_credential.py` & Alembic Migration `migrations/versions/a4b5c6d7e8f9_add_portal_credential_lifecycle.py`:
+  - Added credential lifecycle tracking: `PortalCredentialStatus` (`CONNECTED`, `RECONNECT_REQUIRED`), `connected_at`, `last_successful_auth_at`, `last_auth_failure_at`, and `last_sync_at`.
+- `backend/app/telegram/bot_adapter.py`:
+  - Implemented `delete_message(chat_id, message_id)` via Telegram Bot API `/deleteMessage`.
+  - Added sensitive chat registry (`register_sensitive_chat`, `unregister_sensitive_chat`, `is_sensitive_chat`) with string normalization.
+  - Redacted `raw_provider_data` and logger output for sensitive chats receiving credential messages (`[REDACTED_SENSITIVE_CREDENTIAL]`).
+- `backend/app/integrations/portal/onboarding_service.py` [NEW]:
+  - Dedicated multi-step interactive onboarding state machine (`AWAITING_ROLL_NUMBER` → `AWAITING_PASSWORD`).
+  - Auth-First Verification: Tests credentials against live Doctus before touching database persistence.
+  - Safe Rollback: Failed authentication never corrupts or downgrades existing valid credentials.
+  - Immediate Telegram message deletion: Dispatches `delete_message` to purge plaintext password from Telegram immediately after reading.
+  - Unregisters sensitive chat filter upon completion or cancellation.
+- `backend/app/core/concurrency.py` [NEW]:
+  - Implemented `KeyedLockManager` providing in-memory key-based mutual exclusion (`asyncio.Lock` per key) to serialize duplicate requests for the same student while running distinct students concurrently. Automatically garbage-collects completed locks.
+- `backend/app/integrations/portal/sync_service.py`:
+  - Implemented 4-hour freshness TTL (`FRESHNESS_TTL = timedelta(hours=4)`).
+  - Implemented `get_or_sync_attendance` with fast-path freshness check and `KeyedLockManager` concurrency guard.
+  - Handled Doctus errors gracefully: marks credential status as `RECONNECT_REQUIRED` on `DoctusLoginError`; falls back to latest cached snapshot with `PORTAL_SNAPSHOT_STALE` on communication failures.
+  - Enforced zero-fabrication: returns None/unavailable if Doctus is down and no cached snapshot exists.
+  - Updated `last_sync_at` and `CONNECTED` status on successful sync.
+- `backend/app/intelligence/services/attendance_service.py`:
+  - Added `sync_service` property and auto-sync support to `get_overall_attendance` and `get_attendance_summary`.
+  - Added `provenance` and `notice` fields and `to_dict` serialization to all attendance dataclasses.
+- `backend/app/intelligence/rendering/attendance_renderer.py`:
+  - Added provenance badge formatting: `📅 Synced live from Doctus just now`, `📅 Sourced from Doctus snapshot ({time})`, and `⚠️ Cached snapshot ({time}) (Live refresh unavailable)`.
+  - Added dedicated renderer for `sync_attendance` tool execution.
+- `backend/app/telegram/message_handler.py`:
+  - Intercepted onboarding flow messages before conversation pipeline to prevent passwords from ever entering LLM prompts or audit logs.
+  - Wired `/connect_portal` and `/sync_attendance` commands.
+- `backend/app/intelligence/tools/attendance_tools.py`:
+  - Added `start_portal_connection` tool definition and semantic routing for natural language requests ("connect my portal", "reconnect doctus").
+- `backend/tests/`:
+  - Added 21 new tests across `test_portal_security.py`, `test_portal_onboarding.py`, `test_portal_semantic_routing.py`, and `test_portal_sync_and_freshness.py`.
+
+### Files Changed & Why
+- `backend/app/models/portal_credential.py`: Model schema updates for lifecycle tracking.
+- `migrations/versions/a4b5c6d7e8f9_add_portal_credential_lifecycle.py`: Database schema migration.
+- `backend/app/telegram/bot_adapter.py`: Sensitive chat redaction and message deletion.
+- `backend/app/telegram/message_handler.py`: Boundary interception for credential steps.
+- `backend/app/integrations/portal/onboarding_service.py`: Multi-step credential flow orchestration.
+- `backend/app/core/concurrency.py`: In-memory keyed lock manager.
+- `backend/app/integrations/portal/sync_service.py`: Freshness engine, concurrency locking, and status transitions.
+- `backend/app/intelligence/services/attendance_service.py`: Auto-sync and provenance propagation.
+- `backend/app/intelligence/rendering/attendance_renderer.py`: Provenance badges and sync formatting.
+- `backend/app/intelligence/tools/attendance_tools.py`: Tool definitions and forwarders.
+- `backend/tests/test_portal_*.py`: Comprehensive test suites.
+- `docs/STATE.md`, `docs/ARCHITECTURE.md`, `docs/REQUIREMENTS.md`: Documentation synchronization.
+
+### Implementation Approach
+Phase 1 decoupled credential intake completely from the LLM conversation pipeline, inserting a zero-leak transport filter into `TelegramBotAdapter` and an isolated `PortalCredentialOnboardingService`. Phase 2 built a deterministic 4-hour freshness engine in `PortalSyncService` backed by `KeyedLockManager`, and enriched `AttendanceRenderer` with unambiguous provenance indicators.
+
+### Tests & Verification
+- `pytest backend/tests/test_portal_security.py backend/tests/test_portal_onboarding.py backend/tests/test_portal_semantic_routing.py backend/tests/test_portal_sync_and_freshness.py -v`: 21/21 passed in 0.45s.
+- `pytest backend/tests -q`: 385/385 passed in 26.05s with zero failures.
+
+### Security Considerations
+- Plaintext passwords never enter logs, `raw_provider_data`, `ConversationContext`, or LLM prompts.
+- Telegram Bot API deletes password messages immediately upon arrival.
+- Passwords encrypted at rest using AES-128-CBC / HMAC-SHA256 (Fernet).
+- Concurrency locks prevent thundering-herd load on the college portal.
+- Stale data is never represented as live data; failed syncs fallback honestly with degraded provenance flags.
+
+---
+
 ## 2026-10-01 — Conversational Synthesis for Atomic Queries & Persona Ownership in Self-Model
 
 ### Task / Change

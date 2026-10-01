@@ -27,15 +27,15 @@ Telegram Bot API ←→ TelegramBotAdapter ←→ TelegramMessageHandler ←→ 
 | Module | Purpose | Key Files |
 |--------|---------|-----------|
 | `app/api/` | HTTP endpoints | `health.py`, `dependencies.py` |
-| `app/core/` | Configuration, database | `config.py`, `database.py` |
+| `app/core/` | Configuration, database, concurrency | `config.py`, `database.py`, `concurrency.py` |
 | `app/models/` | SQLAlchemy ORM models | `student.py`, `telegram_identity.py`, `telegram_linking_challenge.py`, `timetable.py`, `attendance.py`, `briefing_delivery.py`, `audit_event.py`, `whatsapp_identity.py`, `portal_credential.py` |
 | `app/repositories/` | Database access layer | One repo per model |
 | `app/schemas/` | Pydantic schemas | `student.py`, `whatsapp_identity.py` |
 | `app/security/` | Auth, authorization, audit | `context.py`, `authentication.py`, `authorization.py`, `authorization_service.py`, `student_resolver.py`, `audit.py` |
-| `app/intelligence/` | LLM + conversation + tools | `models/`, `providers/`, `services/`, `tools/` |
+| `app/intelligence/` | LLM + conversation + tools | `models/`, `providers/`, `services/`, `tools/`, `rendering/` |
 | `app/telegram/` | Telegram adapter + linking | `bot_adapter.py`, `message_handler.py`, `linking_service.py`, `auth.py`, `models.py`, `provider.py` |
 | `app/whatsapp/` | WhatsApp abstraction (future) | `provider.py`, `models.py`, `auth.py`, `spike.py`, `baileys_adapter.py` |
-| `app/integrations/portal/` | Doctus portal adapter | `doctus.py`, `parser.py`, `sync_service.py`, `credential_store.py`, `credentials.py`, `dto.py` |
+| `app/integrations/portal/` | Doctus portal adapter & sync | `doctus.py`, `parser.py`, `sync_service.py`, `onboarding_service.py`, `credential_store.py`, `credentials.py`, `dto.py` |
 | `app/workers/` | Background workers | `briefing_scheduler.py` |
 | `app/llm/` | LLM abstraction (empty, providers in intelligence/) | `__init__.py` |
 
@@ -224,6 +224,10 @@ ResponseStyleLayer (Telegram HTML Sanitization & Entity Escaping) ──► Tele
 
 3. **Identity linking:**
    /start → Challenge creation → Student enters challenge → LinkingService.verify → TelegramIdentity creation → Audit log
+
+4. **Portal Credential Onboarding & Attendance Sync:**
+   - Onboarding Flow: User says "connect portal" or `/connect_portal` → `start_portal_connection` tool → `PortalCredentialOnboardingService` starts flow (`AWAITING_ROLL_NUMBER`) → User sends roll number → Flow transitions to `AWAITING_PASSWORD` → `register_sensitive_chat` marks chat sensitive → User sends password → Telegram transport redacts `raw_provider_data` and log text → `delete_message` calls Telegram Bot API to delete user password message → `DoctusAdapter.login` verifies credentials against live Doctus → `FernetCredentialStore` encrypts and atomically persists credential in DB (`CONNECTED`).
+   - Attendance Query & Freshness Flow: User asks "What is my attendance?" → LLM calls `get_overall_attendance` or `get_attendance_summary` → `AttendanceService` checks 4-hour freshness TTL → If fresh (< 4h), returns cached snapshot (`PORTAL_SNAPSHOT_FRESH`) → If stale (> 4h), acquires `KeyedLockManager.lock(f"portal_sync:{student_id}")` → Re-checks freshness under lock → Fetches live attendance via `DoctusAdapter` → Persists immutable `AttendanceSnapshot` and `SubjectAttendance` records → Updates `last_sync_at` timestamp → Returns `PORTAL_LIVE_SYNC` → If portal unavailable, falls back to latest cached snapshot (`PORTAL_SNAPSHOT_STALE`) with warning note → `AttendanceRenderer` renders clean card with status icons and timestamp provenance badge.
 
 ---
 
