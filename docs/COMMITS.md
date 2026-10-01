@@ -4,6 +4,7 @@
 
 | Commit | Date | Purpose | Subsystem | Verification |
 |--------|------|---------|-----------|--------------|
+| `1636e4e` | 2026-10-01 | Fix 429 retry logging, room fallback, legend DB enrichment & tool disambiguation | Intelligence, Timetable | 358 tests pass |
 | `68d36f7` | 2026-09-30 | Encyclopedic timetable tools, schedule analytics & semantic-invariance tests | Timetable, Intelligence, Rendering | 353 tests pass |
 | `2c585b3` | 2026-09-30 | Presentation decoupling, ResponseStyleLayer, missing-field omission & 429 resilience | Intelligence, Rendering, Telegram | 345 tests pass |
 | `fdaea24` | 2026-09-29 | Fix LLM async promise hallucination and normalize weekday tool arguments | Intelligence, Timetable | 62 timetable tests pass |
