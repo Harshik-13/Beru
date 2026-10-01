@@ -157,6 +157,7 @@ class DoctusAdapter:
         payload = {
             "__RequestVerificationToken": token,
             "UserName": roll_number.strip(),
+            "xUsername": roll_number.strip(),
             "xPassword": password,
         }
 
@@ -217,6 +218,10 @@ class DoctusAdapter:
                     error_msg = raw_msg.strip()
             raise DoctusLoginError(f"Login failed: {error_msg}")
 
+        # Retain authenticated navigation/landing path if returned in Data
+        if isinstance(data.get("Data"), str) and data["Data"].startswith("/"):
+            self._dashboard_path = data["Data"]
+
         # Extract protected student ID from login response dictionary if present;
         # otherwise fall back to normalized roll number (never treat redirect URLs as ID)
         protected_student_id = self._extract_protected_student_id_from_response(data)
@@ -250,21 +255,21 @@ class DoctusAdapter:
 
     def _extract_protected_student_id_from_html(self, html: str) -> str:
         """
-        Extract internal student ID (StdId / StudentId) from attendance HTML page.
+        Extract internal student ID (StdId / StudentId) from authenticated dashboard/attendance HTML.
 
-        Supports standard and reversed attribute ordering and known JavaScript variables.
-        Validates that extracted candidate is non-empty and non-generic.
+        Supports standard and reversed attribute ordering (name/id and value) and known JavaScript variables.
+        Validates that extracted candidate is non-empty, non-generic, and not a path.
         """
-        # 1. Check HTML input elements: name before value
+        # 1. Check HTML input elements: name/id before value
         match = re.search(
-            r'<input\b[^>]*?\bname=["\'](?:StdId|StudentId|student_id)["\'][^>]*?\bvalue=["\']([^"\']+)["\']',
+            r'<input\b[^>]*?\b(?:name|id)=["\'](?:StdId|StudentId|student_id)["\'][^>]*?\bvalue=["\']([^"\']+)["\']',
             html,
             re.IGNORECASE,
         )
         if not match:
-            # Check HTML input elements: value before name
+            # Check HTML input elements: value before name/id
             match = re.search(
-                r'<input\b[^>]*?\bvalue=["\']([^"\']+)["\'][^>]*?\bname=["\'](?:StdId|StudentId|student_id)["\']',
+                r'<input\b[^>]*?\bvalue=["\']([^"\']+)["\'][^>]*?\b(?:name|id)=["\'](?:StdId|StudentId|student_id)["\']',
                 html,
                 re.IGNORECASE,
             )
@@ -290,6 +295,10 @@ class DoctusAdapter:
         """
         Retrieve available semester options.
 
+        Requests the post-login landing route (/Student/Dashboard) with fallback to legacy
+        /Academic/Student/Attendance, extracts internal student ID from HTML if present,
+        and parses semester options.
+
         Returns:
             List of SemesterOption objects
         """
@@ -299,14 +308,20 @@ class DoctusAdapter:
         if not self._client:
             raise RuntimeError("Client not initialized")
 
+        target_url = getattr(self, "_dashboard_path", None) or "/Student/Dashboard"
         try:
-            # The semesters are typically embedded in the attendance page
-            # We need to fetch the attendance page first
             response = await self._client.get(
-                "/Academic/Student/Attendance",
+                target_url,
                 cookies=self._session.cookies,
                 headers={"X-Requested-With": "XMLHttpRequest"},
             )
+            # If landing route returned 404 and was not already the legacy path, attempt legacy fallback
+            if response.status_code == 404 and target_url != "/Academic/Student/Attendance":
+                response = await self._client.get(
+                    "/Academic/Student/Attendance",
+                    cookies=self._session.cookies,
+                    headers={"X-Requested-With": "XMLHttpRequest"},
+                )
         except httpx.TimeoutException as e:
             raise DoctusAdapterError("Semester request timed out") from e
         except httpx.RequestError as e:
@@ -319,7 +334,7 @@ class DoctusAdapter:
                 f"Semester request failed with status {response.status_code}"
             )
 
-        # Attempt to extract actual internal student ID from the attendance page HTML to enrich session
+        # Attempt to extract actual internal student ID from the dashboard HTML to enrich session
         extracted_id = self._extract_protected_student_id_from_html(response.text)
         if extracted_id and extracted_id != self._session.protected_student_id:
             self._session = DoctusSession(
@@ -404,7 +419,6 @@ class DoctusAdapter:
         # Parse attendance HTML
         try:
             attendance = DoctusParser.parse_attendance(html, semester_id)
-            attendance.semester_id = semester_id
         except DoctusParserError as e:
             raise DoctusParseError("Failed to parse attendance", e) from e
 

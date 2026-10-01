@@ -1,5 +1,36 @@
 # CHANGELOG.md — Beru
 
+## 2026-10-01 — Doctus Downstream Route Alignment & Frozen Dataclass Fix
+
+### Task / Change
+Aligned `DoctusAdapter.get_semesters` to request the authenticated landing route `/Student/Dashboard` (falling back to legacy `/Academic/Student/Attendance` on 404), added support for general navigation semester dropdowns in `DoctusParser.parse_semester_options`, included both `xUsername` and `UserName` in `POST /Login` form payload, verified the parameterized attendance endpoint `/Academic/Shared/GetStdAttPer?studentId={id}&semId={sem_id}`, fixed a `FrozenInstanceError` in `DoctusParser.parse_attendance`, and added comprehensive offline tests.
+
+### Why
+During the previous live test, authentication reached `Status: 1`, but the subsequent semester fetch requested `/Academic/Student/Attendance` which returned HTTP 404. In modern EduPrime, `/Student/Dashboard` is the post-login landing route where navigation and student data reside. Furthermore, offline testing revealed that `PortalAttendance` is an immutable frozen dataclass, which raised a `FrozenInstanceError` when `doctus.py` attempted to mutate `attendance.semester_id` after parsing.
+
+### What Changed
+- `backend/app/integrations/portal/doctus.py`:
+  - Included `xUsername` alongside `UserName` in `POST /Login` payload.
+  - Stored post-login landing route (`self._dashboard_path = data["Data"]`).
+  - Updated `get_semesters()`: queries `/Student/Dashboard` (or `self._dashboard_path`) with fallback to `/Academic/Student/Attendance` if 404.
+  - Removed frozen dataclass field mutation `attendance.semester_id = semester_id`.
+  - Enriched internal `StdId` from dashboard HTML using `_extract_protected_student_id_from_html()` supporting both `name` and `id` attributes.
+- `backend/app/integrations/portal/parser.py`:
+  - Updated `parse_semester_options()`: checks `#StdSemPop` and falls back to any select with name/id containing `sem`.
+  - Updated `parse_attendance()`: directly passes `semester_id` into the `PortalAttendance` constructor so the frozen instance is constructed with the correct value.
+- `backend/tests/test_portal.py`:
+  - Updated `test_authenticated_session_continuity` and `test_session_enriched_by_html_id_discovery` to test `/Student/Dashboard`.
+  - Added `test_get_semesters_fallback_to_legacy_attendance_route` verifying fallback behavior.
+  - Added `test_get_attendance_uses_verified_parameterized_endpoint` verifying parameterized URL `/Academic/Shared/GetStdAttPer?studentId={id}&semId={sem_id}`.
+  - Asserted `xUsername` presence in login form payload.
+
+### Verification
+- 47/47 portal unit tests passed (`pytest backend/tests/test_portal.py -v`).
+- 11/11 portal sync and freshness tests passed (`pytest backend/tests/test_portal_sync_and_freshness.py -v`).
+- 414/414 full project tests passed cleanly (`pytest backend/tests/ -q`).
+
+---
+
 ## 2026-10-01 — Doctus Session Identifier Fallback & Sync Pipeline Alignment
 
 ### Task / Change

@@ -35,6 +35,14 @@ class DoctusParser:
         soup = BeautifulSoup(html, "html.parser")
         select = soup.find("select", id="StdSemPop")
         if not select:
+            select = soup.find(
+                "select",
+                attrs={"id": re.compile(r"sem", re.I)},
+            ) or soup.find(
+                "select",
+                attrs={"name": re.compile(r"sem", re.I)},
+            )
+        if not select:
             return []
 
         options = []
@@ -95,7 +103,7 @@ class DoctusParser:
 
         return PortalAttendance(
             source="doctus",
-            semester_id="",
+            semester_id=semester_id,
             overall_attended=overall_attended,
             overall_conducted=overall_conducted,
             overall_percentage_from_portal=portal_pct,

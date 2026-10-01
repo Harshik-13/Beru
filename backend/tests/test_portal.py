@@ -418,6 +418,8 @@ class TestDoctusAdapterLogin:
 
         await adapter.login("25071A6231", "pass")
         assert captured_data.get("__RequestVerificationToken") == "token_xyz_999"
+        assert captured_data.get("UserName") == "25071A6231"
+        assert captured_data.get("xUsername") == "25071A6231"
         assert captured_headers.get("requestverificationtoken") == "token_xyz_999"
 
     @pytest.mark.asyncio
@@ -680,7 +682,7 @@ class TestAuthenticatedSessionContinuity:
 
     @pytest.mark.asyncio
     async def test_authenticated_session_continuity(self):
-        """Verify login session cookies are passed to downstream get_semesters call."""
+        """Verify login session cookies are passed to downstream get_semesters call at /Student/Dashboard."""
         captured_requests = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -694,10 +696,10 @@ class TestAuthenticatedSessionContinuity:
             if request.method == "POST" and request.url.path == "/Login":
                 return httpx.Response(
                     200,
-                    json={"Status": 1, "Data": {"UserId": "std_session_continuity"}},
+                    json={"Status": 1, "Data": "/Student/Dashboard"},
                     headers={"Set-Cookie": ".AspNetCore.Cookies=aspnet_auth_xyz; path=/"},
                 )
-            if request.method == "GET" and request.url.path == "/Academic/Student/Attendance":
+            if request.method == "GET" and request.url.path == "/Student/Dashboard":
                 html = """
                 <html>
                     <body>
@@ -718,16 +720,16 @@ class TestAuthenticatedSessionContinuity:
 
         # Step 1 & 2: Login
         session = await adapter.login("25071A6231", "valid_pass")
-        assert session.protected_student_id == "std_session_continuity"
+        assert session.protected_student_id == "25071A6231"
 
         # Step 3 & 4: Call get_semesters() using the established session
         semesters = await adapter.get_semesters()
         assert len(semesters) == 1
         assert semesters[0].semester_id == "102"
 
-        # Step 5: Verify downstream request carried both cookies
+        # Step 5: Verify downstream request went to /Student/Dashboard and carried both cookies
         sem_request = captured_requests[-1]
-        assert sem_request.url.path == "/Academic/Student/Attendance"
+        assert sem_request.url.path == "/Student/Dashboard"
         cookie_header = sem_request.headers.get("cookie", "")
         assert "OM5.Antiforgery=csrf_abc123" in cookie_header
         assert ".AspNetCore.Cookies=aspnet_auth_xyz" in cookie_header
@@ -762,7 +764,7 @@ class TestAuthenticatedSessionContinuity:
 
     @pytest.mark.asyncio
     async def test_session_enriched_by_html_id_discovery(self):
-        """Verify session.protected_student_id is enriched when get_semesters discovers internal StdId."""
+        """Verify session.protected_student_id is enriched when get_semesters discovers internal StdId in dashboard HTML."""
         def handler(request: httpx.Request) -> httpx.Response:
             if request.method == "GET" and request.url.path == "/Login":
                 return httpx.Response(
@@ -774,7 +776,7 @@ class TestAuthenticatedSessionContinuity:
                     200,
                     json={"Status": 1, "Data": "/Student/Dashboard"},
                 )
-            if request.method == "GET" and request.url.path == "/Academic/Student/Attendance":
+            if request.method == "GET" and request.url.path == "/Student/Dashboard":
                 html = """
                 <html>
                     <body>
@@ -801,3 +803,90 @@ class TestAuthenticatedSessionContinuity:
         # get_semesters discovers the internal StdId and enriches the session
         await adapter.get_semesters()
         assert adapter._session.protected_student_id == "internal_std_9999"
+
+    @pytest.mark.asyncio
+    async def test_get_semesters_fallback_to_legacy_attendance_route(self):
+        """Verify get_semesters falls back to /Academic/Student/Attendance if /Student/Dashboard is 404."""
+        requested_paths = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requested_paths.append(request.url.path)
+            if request.method == "GET" and request.url.path == "/Login":
+                return httpx.Response(
+                    200,
+                    text='<input name="__RequestVerificationToken" type="hidden" value="tok" />',
+                )
+            if request.method == "POST" and request.url.path == "/Login":
+                return httpx.Response(
+                    200,
+                    json={"Status": 1, "Data": "/Student/Dashboard"},
+                )
+            if request.method == "GET" and request.url.path == "/Student/Dashboard":
+                return httpx.Response(404, text="Not Found")
+            if request.method == "GET" and request.url.path == "/Academic/Student/Attendance":
+                html = """
+                <html>
+                    <body>
+                        <select id="StdSemPop">
+                            <option value="105">BT25290205</option>
+                        </select>
+                    </body>
+                </html>
+                """
+                return httpx.Response(200, text=html)
+            return httpx.Response(404)
+
+        adapter = DoctusAdapter()
+        adapter._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=adapter.BASE_URL,
+        )
+
+        await adapter.login("25071a6231", "pass")
+        semesters = await adapter.get_semesters()
+        assert len(semesters) == 1
+        assert semesters[0].semester_id == "105"
+        assert "/Student/Dashboard" in requested_paths
+        assert "/Academic/Student/Attendance" in requested_paths
+
+    @pytest.mark.asyncio
+    async def test_get_attendance_uses_verified_parameterized_endpoint(self):
+        """Verify get_attendance calls /Academic/Shared/GetStdAttPer?studentId={id}&semId={sem_id}."""
+        captured_requests = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured_requests.append(request)
+            if request.method == "GET" and request.url.path == "/Login":
+                return httpx.Response(
+                    200,
+                    text='<input name="__RequestVerificationToken" type="hidden" value="tok" />',
+                )
+            if request.method == "POST" and request.url.path == "/Login":
+                return httpx.Response(
+                    200,
+                    json={"Status": 1, "Data": {"UserId": "std_param_test"}},
+                )
+            if request.method == "GET" and request.url.path == "/Academic/Shared/GetStdAttPer":
+                return httpx.Response(
+                    200,
+                    json={
+                        "Status": 1,
+                        "Data": "<table><tr><th>Subject</th><th>Attended</th><th>Conducted</th></tr><tr><td>CS101</td><td>20</td><td>25</td></tr></table>",
+                    },
+                )
+            return httpx.Response(404)
+
+        adapter = DoctusAdapter()
+        adapter._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=adapter.BASE_URL,
+        )
+
+        await adapter.login("25071a6231", "pass")
+        attendance = await adapter.get_attendance("99")
+
+        assert attendance is not None
+        assert captured_requests[-1].url.path == "/Academic/Shared/GetStdAttPer"
+        assert captured_requests[-1].url.params.get("studentId") == "std_param_test"
+        assert captured_requests[-1].url.params.get("semId") == "99"
+
