@@ -1,5 +1,32 @@
 # CHANGELOG.md — Beru
 
+## 2026-10-01 — Doctus Session Identifier Fallback & Sync Pipeline Alignment
+
+### Task / Change
+Decoupled authentication success from student-ID discovery in `DoctusAdapter.login`, implemented internal HTML student-ID discovery (`_extract_protected_student_id_from_html`), established the canonical `PortalAttendance` contract across `sync_service.py` without runtime tuple branching, and added 7 new unit tests for redirect URL handling, HTML student ID parsing, and session enrichment.
+
+### Why
+During live Telegram verification, the ASP.NET Core authentication protocol succeeded (`POST /Login` returned HTTP 200 with `Status: 1`), but the session creation aborted because EduPrime returns `{"Status": 1, "Data": "/Student/Dashboard"}` rather than a dictionary containing `"UserId"`. Furthermore, an architectural audit revealed that `sync_service.py` expected a tuple from `get_attendance()` instead of consuming `PortalAttendance` directly, and `_extract_protected_student_id_from_html` was called in `get_semesters()` but not implemented on `DoctusAdapter`.
+
+### What Changed
+- `backend/app/integrations/portal/doctus.py`:
+  - Updated `login()`: when `Status == 1`, extracts student ID from dictionary if available, otherwise safely falls back to the normalized roll number. Never treats redirect URLs as student IDs.
+  - Implemented `_extract_protected_student_id_from_html(html)`: extracts internal `StdId`/`StudentId` from HTML inputs and JavaScript variables without generic numeric matching.
+  - Updated `get_semesters()`: enriches the temporary fallback `protected_student_id` with discovered internal `StdId`.
+- `backend/app/integrations/portal/sync_service.py`:
+  - Updated line 327 to consume `PortalAttendance` directly: `attendance = await adapter.get_attendance(target_semester_id)`.
+- `backend/tests/test_portal.py`:
+  - Added `TestDoctusHtmlStudentIdExtraction` with 5 tests (standard input, reversed input, JS variable, missing returns empty, rejects URL values).
+  - Added `test_login_success_with_redirect_url_data` verifying roll number fallback when `Data` is a redirect URL.
+  - Added `test_session_enriched_by_html_id_discovery` verifying internal ID enrichment during downstream calls.
+
+### Verification
+- 45/45 portal unit tests passed (`pytest backend/tests/test_portal.py -v`).
+- 11/11 portal sync and freshness tests passed (`pytest backend/tests/test_portal_sync_and_freshness.py -v`).
+- 412/412 full repository regression tests passed cleanly (`pytest backend/tests/ -q`).
+
+---
+
 ## 2026-10-01 — Doctus Live Authentication & Session Alignment (ASP.NET Core / Anti-CSRF)
 
 ### Task / Change

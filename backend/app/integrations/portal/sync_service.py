@@ -322,9 +322,9 @@ class PortalSyncService:
                 # Use the first available semester (typically the most recent)
                 target_semester_id = semesters[0].semester_id
 
-            # Step 5: Fetch attendance data
+            # Step 5: Fetch attendance data adhering strictly to canonical PortalAttendance contract
             try:
-                attendance, _ = await adapter.get_attendance(target_semester_id)
+                attendance = await adapter.get_attendance(target_semester_id)
             except DoctusSessionError:
                 raise PortalSyncError(
                     "Portal session expired or invalid during attendance fetch"

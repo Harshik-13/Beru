@@ -217,12 +217,11 @@ class DoctusAdapter:
                     error_msg = raw_msg.strip()
             raise DoctusLoginError(f"Login failed: {error_msg}")
 
-        # Extract protected student ID from login response
+        # Extract protected student ID from login response dictionary if present;
+        # otherwise fall back to normalized roll number (never treat redirect URLs as ID)
         protected_student_id = self._extract_protected_student_id_from_response(data)
         if not protected_student_id:
-            raise DoctusLoginError(
-                "Authentication succeeded but failed to extract student identifier"
-            )
+            protected_student_id = roll_number.strip().upper()
 
         # Build session using authoritative self._client.cookies
         session = DoctusSession(
@@ -237,15 +236,54 @@ class DoctusAdapter:
         """
         Extract protected student ID from login response.
 
-        The protected student ID may be embedded in the login response
-        under various keys depending on the portal version.
+        Checks known keys if Data is a dictionary. Never treats redirect URLs as student IDs.
         """
-        data_obj = data.get("Data", {})
+        data_obj = data.get("Data")
         if isinstance(data_obj, dict):
-            for key in ["UserId", "StudentId", "ProtectedStudentId", "ProtectedId"]:
+            for key in ["UserId", "StudentId", "ProtectedStudentId", "ProtectedId", "id"]:
                 val = data_obj.get(key)
                 if val is not None and str(val).strip():
-                    return str(val).strip()
+                    candidate = str(val).strip()
+                    if not candidate.startswith("/"):
+                        return candidate
+        return ""
+
+    def _extract_protected_student_id_from_html(self, html: str) -> str:
+        """
+        Extract internal student ID (StdId / StudentId) from attendance HTML page.
+
+        Supports standard and reversed attribute ordering and known JavaScript variables.
+        Validates that extracted candidate is non-empty and non-generic.
+        """
+        # 1. Check HTML input elements: name before value
+        match = re.search(
+            r'<input\b[^>]*?\bname=["\'](?:StdId|StudentId|student_id)["\'][^>]*?\bvalue=["\']([^"\']+)["\']',
+            html,
+            re.IGNORECASE,
+        )
+        if not match:
+            # Check HTML input elements: value before name
+            match = re.search(
+                r'<input\b[^>]*?\bvalue=["\']([^"\']+)["\'][^>]*?\bname=["\'](?:StdId|StudentId|student_id)["\']',
+                html,
+                re.IGNORECASE,
+            )
+        if match and match.group(1).strip():
+            candidate = match.group(1).strip()
+            if candidate and not candidate.startswith("/"):
+                return candidate
+
+        # 2. Check JavaScript variables: e.g. var stdId = "..." or studentId = "..."
+        js_match = re.search(
+            r'\b(?:var|let|const)?\s*(?:stdId|studentId|student_id)\s*[:=]\s*["\']([^"\']+)["\']',
+            html,
+            re.IGNORECASE,
+        )
+        if js_match and js_match.group(1).strip():
+            candidate = js_match.group(1).strip()
+            if candidate and not candidate.startswith("/"):
+                return candidate
+
         return ""
 
     async def get_semesters(self):
@@ -281,14 +319,13 @@ class DoctusAdapter:
                 f"Semester request failed with status {response.status_code}"
             )
 
-        # Extract protected student ID from the attendance page HTML
-        if not self._session.protected_student_id:
-            extracted_id = self._extract_protected_student_id_from_html(response.text)
-            if extracted_id:
-                self._session = DoctusSession(
-                    cookies=self._session.cookies,
-                    protected_student_id=extracted_id,
-                )
+        # Attempt to extract actual internal student ID from the attendance page HTML to enrich session
+        extracted_id = self._extract_protected_student_id_from_html(response.text)
+        if extracted_id and extracted_id != self._session.protected_student_id:
+            self._session = DoctusSession(
+                cookies=self._session.cookies,
+                protected_student_id=extracted_id,
+            )
 
         # Parse semester options from the page
         try:

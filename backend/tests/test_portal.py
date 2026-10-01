@@ -272,6 +272,35 @@ class TestDoctusTokenExtraction:
         assert _extract_antiforgery_token(html) == ""
 
 
+class TestDoctusHtmlStudentIdExtraction:
+    """Test HTML student ID extraction logic."""
+
+    def test_extract_html_id_standard_input(self):
+        adapter = DoctusAdapter()
+        html = '<div><input name="StdId" type="hidden" value="456" /></div>'
+        assert adapter._extract_protected_student_id_from_html(html) == "456"
+
+    def test_extract_html_id_reversed_input(self):
+        adapter = DoctusAdapter()
+        html = '<div><input value="789" type="hidden" name="StudentId" /></div>'
+        assert adapter._extract_protected_student_id_from_html(html) == "789"
+
+    def test_extract_html_id_js_variable(self):
+        adapter = DoctusAdapter()
+        html = '<script>var stdId = "101112";</script>'
+        assert adapter._extract_protected_student_id_from_html(html) == "101112"
+
+    def test_extract_html_id_missing_returns_empty(self):
+        adapter = DoctusAdapter()
+        html = '<div><p>Welcome to portal</p></div>'
+        assert adapter._extract_protected_student_id_from_html(html) == ""
+
+    def test_extract_html_id_rejects_url_values(self):
+        adapter = DoctusAdapter()
+        html = '<input name="StdId" value="/Student/Dashboard" />'
+        assert adapter._extract_protected_student_id_from_html(html) == ""
+
+
 class TestDoctusAdapterLogin:
     """Test suite for DoctusAdapter login and session management."""
 
@@ -702,3 +731,73 @@ class TestAuthenticatedSessionContinuity:
         cookie_header = sem_request.headers.get("cookie", "")
         assert "OM5.Antiforgery=csrf_abc123" in cookie_header
         assert ".AspNetCore.Cookies=aspnet_auth_xyz" in cookie_header
+
+    @pytest.mark.asyncio
+    async def test_login_success_with_redirect_url_data(self):
+        """Verify login succeeds when Data is a redirect URL and falls back to roll number."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and request.url.path == "/Login":
+                return httpx.Response(
+                    200,
+                    text='<input name="__RequestVerificationToken" type="hidden" value="tok" />',
+                    headers={"Set-Cookie": "OM5.Antiforgery=cookie1; path=/"},
+                )
+            if request.method == "POST" and request.url.path == "/Login":
+                return httpx.Response(
+                    200,
+                    json={"Status": 1, "Data": "/Student/Dashboard"},
+                    headers={"Set-Cookie": ".AspNetCore.Cookies=cookie2; path=/"},
+                )
+            return httpx.Response(404)
+
+        adapter = DoctusAdapter()
+        adapter._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=adapter.BASE_URL,
+        )
+
+        session = await adapter.login("25071a6231", "pass")
+        assert session.protected_student_id == "25071A6231"
+        assert session.protected_student_id != "/Student/Dashboard"
+
+    @pytest.mark.asyncio
+    async def test_session_enriched_by_html_id_discovery(self):
+        """Verify session.protected_student_id is enriched when get_semesters discovers internal StdId."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and request.url.path == "/Login":
+                return httpx.Response(
+                    200,
+                    text='<input name="__RequestVerificationToken" type="hidden" value="tok" />',
+                )
+            if request.method == "POST" and request.url.path == "/Login":
+                return httpx.Response(
+                    200,
+                    json={"Status": 1, "Data": "/Student/Dashboard"},
+                )
+            if request.method == "GET" and request.url.path == "/Academic/Student/Attendance":
+                html = """
+                <html>
+                    <body>
+                        <input type="hidden" name="StdId" value="internal_std_9999" />
+                        <select id="StdSemPop">
+                            <option value="102">BT25290203</option>
+                        </select>
+                    </body>
+                </html>
+                """
+                return httpx.Response(200, text=html)
+            return httpx.Response(404)
+
+        adapter = DoctusAdapter()
+        adapter._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=adapter.BASE_URL,
+        )
+
+        # Login initially sets temporary fallback to normalized roll number
+        session = await adapter.login("25071a6231", "pass")
+        assert session.protected_student_id == "25071A6231"
+
+        # get_semesters discovers the internal StdId and enriches the session
+        await adapter.get_semesters()
+        assert adapter._session.protected_student_id == "internal_std_9999"
