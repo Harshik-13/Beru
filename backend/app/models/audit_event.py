@@ -21,6 +21,7 @@ class AuditEventType(str, enum.Enum):  # noqa: UP042
     UNAUTHORIZED_ACCESS = "unauthorized_access"
     AUTHORIZATION_FAILURE = "authorization_failure"
     STUDENT_CREATED = "student_created"
+    STUDENT_UPDATED = "student_updated"
     WHATSAPP_IDENTITY_CREATED = "whatsapp_identity_created"
     WHATSAPP_IDENTITY_UPDATED = "whatsapp_identity_updated"
     TELEGRAM_IDENTITY_LINKED = "telegram_identity_linked"

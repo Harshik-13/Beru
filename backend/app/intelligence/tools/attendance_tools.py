@@ -7,6 +7,31 @@ and deterministic simulations.
 
 from dataclasses import dataclass
 from datetime import date
+from typing import Any
+
+# Tool Taxonomy Sets
+MUTATION_TOOLS: frozenset[str] = frozenset({
+    "set_attendance_target",
+    "sync_attendance",
+    "start_portal_connection",
+})
+
+SIMULATION_TOOLS: frozenset[str] = frozenset({
+    "calculate_bunk_allowance",
+    "simulate_day_absence",
+    "simulate_absence",
+    "calculate_classes_needed",
+})
+
+READ_TOOLS: frozenset[str] = frozenset({
+    "get_overall_attendance",
+    "get_subject_attendance",
+    "get_attendance_summary",
+    "get_attendance_extremes",
+    "get_subjects_below_target",
+    "get_attendance_snapshot_info",
+    "get_subject_codes",
+})
 
 
 @dataclass(frozen=True, slots=True)
@@ -425,11 +450,62 @@ async def sync_attendance(service, student_id: str, semester_id: str | None = No
         }
 
 
+async def set_attendance_target(
+    service, student_id: str, target_percentage: float
+):
+    """Set and verify student's target attendance percentage."""
+    try:
+        return await service.set_attendance_target(
+            student_id=student_id, target_percentage=target_percentage
+        )
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def calculate_bunk_allowance(
+    service, student_id: str, subject_code: str | None = None
+):
+    """Calculate maximum safe classes that can be missed."""
+    try:
+        return await service.calculate_bunk_allowance(
+            student_id=student_id, subject_code=subject_code
+        )
+    except Exception as e:
+        return {"available": False, "error": str(e)}
+
+
+async def simulate_day_absence(
+    attendance_service, timetable_service, student_id: str, day: str = "tomorrow"
+):
+    """Simulate missing classes for an entire day based on confirmed timetable."""
+    try:
+        return await attendance_service.simulate_day_absence(
+            student_id=student_id,
+            day=day,
+            timetable_service=timetable_service,
+        )
+    except Exception as e:
+        return {"available": False, "error": str(e)}
+
+
+async def get_attendance_extremes(service, student_id: str):
+    """Get subjects with lowest and highest attendance."""
+    try:
+        return await service.get_attendance_extremes(student_id=student_id)
+    except Exception as e:
+        return {"available": False, "error": str(e)}
+
+
 async def calculate_classes_needed(
-    service, student_id: str, subject_code: str, target_percentage: float
+    service,
+    student_id: str,
+    subject_code: str | None = None,
+    target_percentage: float | None = None,
 ):
     """Calculate minimum classes needed to reach target percentage."""
-    if target_percentage < 0 or target_percentage > 100:
+    if target_percentage is not None and (
+        target_percentage < 0 or target_percentage > 100
+    ):
         return {"error": "Target percentage must be between 0 and 100"}
 
     try:
@@ -439,9 +515,24 @@ async def calculate_classes_needed(
             target_percentage=target_percentage,
         )
 
+        if not getattr(result, "achievable", True):
+            return {
+                "already_achieved": False,
+                "achievable": False,
+                "classes_needed": None,
+                "current_percentage": result.projected_percentage,
+                "target_percentage": target_percentage,
+                "message": getattr(
+                    result,
+                    "message",
+                    "Target attendance cannot be achieved mathematically because classes have already been missed.",
+                ),
+            }
+
         if result.target_achieved:
             return {
                 "already_achieved": True,
+                "achievable": True,
                 "classes_needed": 0,
                 "current_percentage": result.projected_percentage,
                 "target_percentage": target_percentage,
@@ -449,14 +540,15 @@ async def calculate_classes_needed(
 
         return {
             "already_achieved": False,
+            "achievable": True,
             "classes_needed": result.classes_needed,
             "projected_attended": result.projected_attended,
             "projected_conducted": result.projected_conducted,
             "projected_percentage": result.projected_percentage,
             "target_percentage": target_percentage,
         }
-    except Exception:
-        return {"error": "Calculation failed"}
+    except Exception as e:
+        return {"error": f"Calculation failed: {e!s}"}
 
 
 async def get_attendance_snapshot_info(service, student_id: str):
@@ -485,6 +577,136 @@ async def get_subject_codes(service, student_id: str):
 
 # Tool definitions for registry
 ATTENDANCE_TOOL_DEFINITIONS = [
+    {
+        "name": "set_attendance_target",
+        "description": (
+            "Set and update the student's target attendance percentage (e.g. 67%, 75%, 80%). "
+            "Persists the new target to the database, re-verifies the committed state, "
+            "and returns verified post-mutation progress."
+        ),
+        "arguments_schema": {
+            "type": "object",
+            "properties": {
+                "student_id": {"type": "string", "format": "uuid"},
+                "target_percentage": {
+                    "type": "number",
+                    "minimum": 1.0,
+                    "maximum": 100.0,
+                    "description": "The new target attendance percentage (between 1.0 and 100.0).",
+                },
+            },
+            "required": ["student_id", "target_percentage"],
+        },
+        "result_schema": {
+            "type": "object",
+            "properties": {
+                "success": {"type": "boolean"},
+                "mutation": {"type": "object"},
+                "attendance": {"type": "object"},
+                "target": {"type": "object"},
+                "provenance": {"type": "object"},
+                "error": {"type": ["string", "null"]},
+            },
+        },
+    },
+    {
+        "name": "calculate_bunk_allowance",
+        "description": (
+            "Calculate how many classes the student can safely miss/bunk without dropping below "
+            "their attendance target. Can calculate for a specific subject or overall across all subjects."
+        ),
+        "arguments_schema": {
+            "type": "object",
+            "properties": {
+                "student_id": {"type": "string", "format": "uuid"},
+                "subject_code": {
+                    "type": ["string", "null"],
+                    "description": "Optional: subject code or name to calculate safe bunks for. If omitted, calculates for overall and all subjects.",
+                },
+            },
+            "required": ["student_id"],
+        },
+        "result_schema": {
+            "type": "object",
+            "properties": {
+                "available": {"type": "boolean"},
+                "is_overall": {"type": "boolean"},
+                "subject_code": {"type": ["string", "null"]},
+                "subject_name": {"type": ["string", "null"]},
+                "safe_bunks": {"type": ["integer", "null"]},
+                "current_percentage": {"type": ["number", "null"]},
+                "projected_percentage_after_bunk": {"type": ["number", "null"]},
+                "status": {"type": "string"},
+                "subjects": {"type": ["array", "null"]},
+                "message": {"type": ["string", "null"]},
+                "error": {"type": ["string", "null"]},
+            },
+        },
+    },
+    {
+        "name": "simulate_day_absence",
+        "description": (
+            "Simulate missing all scheduled classes on a specific day (e.g. 'tomorrow', 'today', 'Monday', 'Friday'). "
+            "Uses the student's CONFIRMED timetable to aggregate periods and predicts impact on individual subjects "
+            "and overall attendance with safety checks."
+        ),
+        "arguments_schema": {
+            "type": "object",
+            "properties": {
+                "student_id": {"type": "string", "format": "uuid"},
+                "day": {
+                    "type": "string",
+                    "description": "Day identifier: 'tomorrow', 'today', or a named weekday like 'Monday', 'Friday'. Defaults to 'tomorrow'.",
+                },
+            },
+            "required": ["student_id"],
+        },
+        "result_schema": {
+            "type": "object",
+            "properties": {
+                "available": {"type": "boolean"},
+                "date": {"type": ["string", "null"]},
+                "day_name": {"type": ["string", "null"]},
+                "scheduled_classes_count": {"type": "integer"},
+                "current_overall_percentage": {"type": ["number", "null"]},
+                "projected_overall_percentage": {"type": ["number", "null"]},
+                "overall_safe": {"type": "boolean"},
+                "subjects_safe": {"type": "boolean"},
+                "is_safe": {"type": "boolean"},
+                "affected_subjects": {"type": ["array", "null"]},
+                "message": {"type": ["string", "null"]},
+                "error": {"type": ["string", "null"]},
+            },
+        },
+    },
+    {
+        "name": "get_attendance_extremes",
+        "description": (
+            "Identify the student's subjects with the lowest and highest attendance percentages. "
+            "Handles multi-course ties gracefully and groups subjects into at-risk vs safe."
+        ),
+        "arguments_schema": {
+            "type": "object",
+            "properties": {
+                "student_id": {"type": "string", "format": "uuid"},
+            },
+            "required": ["student_id"],
+        },
+        "result_schema": {
+            "type": "object",
+            "properties": {
+                "available": {"type": "boolean"},
+                "overall_percentage": {"type": ["number", "null"]},
+                "target_percentage": {"type": ["number", "null"]},
+                "lowest": {"type": "array"},
+                "highest": {"type": "array"},
+                "below_target": {"type": "array"},
+                "at_or_above_target": {"type": "array"},
+                "total_subjects": {"type": "integer"},
+                "message": {"type": ["string", "null"]},
+            },
+        },
+    },
     {
         "name": "get_overall_attendance",
         "description": "Get the student's overall attendance percentage and current month attendance.",
@@ -680,27 +902,37 @@ ATTENDANCE_TOOL_DEFINITIONS = [
         "name": "calculate_classes_needed",
         "description": (
             "Calculate minimum consecutive classes needed to reach "
-            "a target attendance percentage."
+            "a target attendance percentage, either overall or for a specific subject."
         ),
         "arguments_schema": {
             "type": "object",
             "properties": {
                 "student_id": {"type": "string", "format": "uuid"},
-                "subject_code": {"type": "string"},
-                "target_percentage": {"type": "number", "minimum": 0, "maximum": 100},
+                "subject_code": {
+                    "type": ["string", "null"],
+                    "description": "Optional: subject code or name. If omitted, calculates for overall attendance.",
+                },
+                "target_percentage": {
+                    "type": ["number", "null"],
+                    "minimum": 0,
+                    "maximum": 100,
+                    "description": "Optional target percentage. If omitted, uses student's configured target.",
+                },
             },
-            "required": ["student_id", "subject_code", "target_percentage"],
+            "required": ["student_id"],
         },
         "result_schema": {
             "type": "object",
             "properties": {
                 "already_achieved": {"type": "boolean"},
-                "classes_needed": {"type": "integer"},
+                "achievable": {"type": "boolean"},
+                "classes_needed": {"type": ["integer", "null"]},
                 "projected_attended": {"type": ["integer", "null"]},
                 "projected_conducted": {"type": ["integer", "null"]},
                 "projected_percentage": {"type": ["number", "null"]},
-                "target_percentage": {"type": "number"},
+                "target_percentage": {"type": ["number", "null"]},
                 "current_percentage": {"type": ["number", "null"]},
+                "message": {"type": ["string", "null"]},
                 "error": {"type": ["string", "null"]},
             },
         },
@@ -795,7 +1027,24 @@ async def execute_attendance_tool(
     **kwargs,
 ):
     """Execute an attendance tool by name."""
-    if tool_name == "start_portal_connection":
+    if tool_name == "set_attendance_target":
+        return await set_attendance_target(
+            attendance_service, student_id, kwargs["target_percentage"]
+        )
+    elif tool_name == "calculate_bunk_allowance":
+        return await calculate_bunk_allowance(
+            attendance_service, student_id, kwargs.get("subject_code")
+        )
+    elif tool_name == "simulate_day_absence":
+        return await simulate_day_absence(
+            attendance_service,
+            timetable_service,
+            student_id,
+            kwargs.get("day", "tomorrow"),
+        )
+    elif tool_name == "get_attendance_extremes":
+        return await get_attendance_extremes(attendance_service, student_id)
+    elif tool_name == "start_portal_connection":
         msg = "Sure, Sir. Please send your college roll number."
         if portal_onboarding_service and chat_id:
             from uuid import UUID
@@ -844,8 +1093,8 @@ async def execute_attendance_tool(
         return await calculate_classes_needed(
             attendance_service,
             student_id,
-            kwargs["subject_code"],
-            kwargs["target_percentage"],
+            kwargs.get("subject_code"),
+            kwargs.get("target_percentage"),
         )
     elif tool_name == "get_attendance_snapshot_info":
         return await get_attendance_snapshot_info(attendance_service, student_id)

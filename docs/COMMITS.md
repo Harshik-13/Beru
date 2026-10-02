@@ -4,6 +4,7 @@
 
 | Commit | Date | Purpose | Subsystem | Verification |
 |--------|------|---------|-----------|--------------|
+| `7188b47` | 2026-10-02 | Complete attendance intelligence suite & Action Integrity Invariant | Attendance, Intelligence, Security | 443 tests pass |
 | `b196cea` | 2026-10-02 | Fix portal sync greenlet error, add read-time snapshot reconciliation, and clarify attendance target status | Portal, Attendance, Rendering | 428 tests pass |
 | `e33cac9` | 2026-10-02 | Allow null for optional tool arguments preventing Groq 400 validation error | Intelligence, Tools | 423 tests pass |
 | `e043673` | 2026-10-02 | Dual overall/monthly attendance, multi-turn dialogue state & course mapping | Intelligence, Attendance, Portal | 423 tests pass |

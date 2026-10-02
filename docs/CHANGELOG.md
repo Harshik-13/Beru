@@ -1,6 +1,56 @@
 # CHANGELOG.md — Beru
 
-## 2026-10-02 — Post-Commit Greenlet Safety in Portal Sync, Read-Time Legacy Snapshot Reconciliation & Natural Attendance Target Reporting
+## 2026-10-02 — Complete Attendance Intelligence Suite & Action Integrity Invariant
+
+### Task / Change
+Implemented the complete attendance intelligence suite (safe bunk calculation, full-day leave simulations, attendance extremes, 100% target recovery boundary handling, and verified target mutation) and established an enterprise-grade Action Integrity Invariant ensuring Beru only claims state mutation when an authorized backend mutation tool executes and returns a verified result.
+
+### Why
+1. Previously, when asked to change the attendance target or mutate state, Beru could hallucinate conversational confirmation ("I've updated your target to 80%") without executing a backend tool or verifying persistent DB state.
+2. Students frequently ask diverse attendance questions ("How many classes can I bunk?", "What if I take leave today?", "Which subject has my lowest attendance?", "How many classes do I need to attend to hit 75%?"). Beru lacked dedicated tools for these scenarios, risking hallucinated LLM calculations or inability to serve student needs.
+3. Edge cases in attendance recovery math (such as targeting 100% when classes have already been missed) caused divide-by-zero or infinite loop potentials unless handled mathematically with boundary checks.
+4. Floating-point division precision artifacts (`4.0 / 0.2 = 20.000000000000004`) triggered off-by-one errors when wrapped directly in `ceil()`, requiring rounded division before applying `ceil()`.
+
+### What Changed
+- `backend/app/models/audit_event.py`:
+  - Added `STUDENT_UPDATED = "student_updated"` to `AuditEventType` enum.
+- `backend/app/security/audit.py`:
+  - Implemented `log_student_updated(student_id, event_metadata)` with typed audit logging.
+- `backend/app/intelligence/services/attendance_service.py`:
+  - `set_attendance_target`: Implemented validation (1.0..100.0), authorization, idempotency check, DB mutation, commit, fresh DB re-read verification, and `STUDENT_UPDATED` audit event logging.
+  - `calculate_bunk_allowance`: Implemented exact safe bunk formula $B_{\max} = \max(0, \lfloor \frac{A - t \cdot C}{t} \rfloor)$ with zero-conducted guards ($C=0$), zero-attended guards ($A=0$), below-target detection, single-subject and overall breakdowns.
+  - `simulate_day_absence`: Implemented date/weekday semantics, confirmed timetable check (rejecting pending/missing with `TIMETABLE_REVIEW_PENDING` / `NO_TIMETABLE`), student lab batch filtering, repeated period aggregation, and 3-tier safety status (`overall_safe`, `subjects_safe`, `is_safe`).
+  - `get_attendance_extremes`: Implemented lowest and highest attendance courses with multi-subject tie grouping.
+  - `calculate_recovery`: Added $T=100.0\%$ boundary handling (`classes_needed: int | None`, `achievable: bool = False`, clean explanation when $A < C$; $0$ classes needed when $A == C$); eliminated floating-point division precision artifacts via rounded division before `ceil()`.
+  - `calculate_classes_needed`: Updated to support overall recovery when `subject_code` is None.
+- `backend/app/intelligence/tools/attendance_tools.py`:
+  - Formalized tool taxonomy: `MUTATION_TOOLS`, `SIMULATION_TOOLS`, and `READ_TOOLS`.
+  - Added tools: `set_attendance_target`, `calculate_bunk_allowance`, `simulate_day_absence`, and `get_attendance_extremes`.
+  - Registered tool schemas in `ATTENDANCE_TOOL_DEFINITIONS` and wired into `execute_attendance_tool`.
+- `backend/app/intelligence/rendering/attendance_renderer.py` & `registry.py`:
+  - Added dedicated deterministic renderers: `render_set_target`, `render_bunk_allowance`, `render_day_absence`, and `render_extremes`.
+  - Registered in `AttendanceRenderer.render` and `ResponseRendererRegistry`.
+- `backend/app/intelligence/services/conversation.py`:
+  - Defined `MUTATION_TOOLS`, `GRACEFUL_CAPABILITY_REFUSAL`, and `is_state_mutation_intent`.
+  - Wired Action Integrity Invariant guard in `process_message`: if user message reflects state mutation intent and no tool execution occurred, returns `GRACEFUL_CAPABILITY_REFUSAL` instead of hallucinating success.
+  - Wired new attendance tools into `attendance_tools` dispatch set and mock intent interpreter.
+- `backend/app/intelligence/services/context_builder.py` & `backend/app/intelligence/conversation/policy.py`:
+  - Injected Action Integrity Invariant and attendance intelligence instructions into system prompt and synthesis guidelines.
+- `backend/tests/test_attendance_intelligence_suite.py`:
+  - Added comprehensive test suite with 15 tests verifying target mutation, idempotency, validation bounds, safe bunk exact math, zero-data handling, recovery 100% boundary conditions, overall recovery, day absence period aggregation and lab batch filtering, extremes with multi-subject ties, and Action Integrity Invariant refusals/executions.
+
+### Security Considerations
+- Action Integrity Invariant enforces backend security boundary: LLM text generation is never trusted as evidence of a mutation.
+- Target changes are validated, committed, re-read, and logged in `audit_events` table for auditability.
+- Multi-user tenant isolation is strictly preserved via authenticated `student_id`.
+- Deterministic backend calculations eliminate LLM arithmetic hallucinations.
+
+### Verification
+- 15/15 tests passing in `test_attendance_intelligence_suite.py`.
+- 443/443 passing tests across the entire test suite.
+- Uvicorn daemon running cleanly on `127.0.0.1:8000`.
+
+---
 
 ### Task / Change
 Resolved `MissingGreenlet` exception in live portal sync by capturing snapshot primitives and in-memory DTO subject counts before `session.commit()`; implemented non-mutating read-time compatibility fallback for legacy snapshots stored prior to parser fix; established single source of truth for attendance target arithmetic (`target_difference`, `target_status`, `target_gap_percentage`) in `AttendanceService`; and eliminated complicated jargon ("margin", "deficit", "cushion") in favor of clear natural language status indicators (`• Status: ⚠️ {gap}% more needed to reach {target}%`, `• Status: ✅ At {target}% target`, and `• Status: ✅ {diff}% above {target}% target`).

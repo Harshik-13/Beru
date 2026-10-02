@@ -3,15 +3,23 @@
 ## Current State
 
 - **Last updated:** 2026-10-02
-- **Current commit:** `b196cea`
+- **Current commit:** `7188b47`
 - **Current branch:** master
 
 ## Overall Project Status
 
-Personal Alpha phase. Telegram bot is live and functional. Core intelligence pipeline (LLM → tool dispatch → deterministic backend) is wired. Presentation Layer with decoupled ResponseStyleLayer, deterministic domain renderers, and ResponseRendererRegistry is operational. Encyclopedic timetable querying (courses, labs, rooms, professors, schedule analytics), database room/faculty legend enrichment, and semantic-invariance testing are fully operational. Briefing scheduler is operational. Live Doctus portal integration with zero-leak credential onboarding, 4-hour freshness attendance sync, timetable-inferred semester resolution, unauthenticated redirect detection, concurrency locking, and provenance presentation is implemented and verified.
+Personal Alpha phase. Telegram bot is live and functional. Core intelligence pipeline (LLM → tool dispatch → deterministic backend) is wired. Presentation Layer with decoupled ResponseStyleLayer, deterministic domain renderers, and ResponseRendererRegistry is operational. Complete Attendance Intelligence Suite with deterministic safe bunk calculation, full-day leave simulations, attendance extremes, 100% target recovery boundary handling, and verified target mutation is operational. Action Integrity Invariant strictly prevents hallucinated mutations when no authorized mutation tool executes. Encyclopedic timetable querying, database room/faculty legend enrichment, and semantic-invariance testing are fully operational. Briefing scheduler is operational. Live Doctus portal integration with zero-leak credential onboarding, 4-hour freshness attendance sync, timetable-inferred semester resolution, unauthenticated redirect detection, concurrency locking, and provenance presentation is implemented and verified.
 
 ## IMPLEMENTED
 
+- Complete Attendance Intelligence Suite & Action Integrity Invariant (`app/intelligence/services/attendance_service.py`, `app/intelligence/tools/attendance_tools.py`, `app/intelligence/rendering/attendance_renderer.py`, `app/intelligence/services/conversation.py`):
+  - Action Integrity Invariant: Beru may only claim a state-changing action was completed when an authorized backend mutation tool executes successfully and returns a verified committed result. Text generation alone is never evidence of state mutation. Unsupported or un-executed mutation intents trigger graceful capability refusal (`GRACEFUL_CAPABILITY_REFUSAL`) instead of hallucinating success.
+  - Attendance Target Mutation (`set_attendance_target`): Validates target percentage between 1.0% and 100.0%, enforces authorization, checks idempotency, commits to PostgreSQL, verifies committed state via fresh DB re-read, records `AuditEventType.STUDENT_UPDATED` in `audit_events`, and returns verified post-mutation progress and metrics.
+  - Safe Bunk Calculation (`calculate_bunk_allowance`): Deterministic calculation of maximum classes that can be safely missed without dropping below target: $B_{\max} = \max(0, \lfloor \frac{A - t \cdot C}{t} \rfloor)$. Supports zero-conducted guards ($C=0 \implies 0$), below-target detection ($A/C < t \implies 0$), single-subject querying, and overall summary with per-subject breakdown.
+  - Full-Day Absence Simulation (`simulate_day_absence`): Date-aware leave simulation enforcing confirmed timetable presence (`TIMETABLE_REVIEW_PENDING` / `NO_TIMETABLE` errors if unconfirmed/missing), filtering by student lab batch, aggregating multiple periods of the same course on a given day, and computing a 3-tier safety status (`overall_safe`, `subjects_safe`, `is_safe`).
+  - Attendance Extremes Querying (`get_attendance_extremes`): Identifies highest and lowest attendance subjects with graceful multi-subject tie grouping, showing percentage, classes conducted/attended, and distance from target.
+  - Recovery Calculations & 100% Boundary Handling (`calculate_recovery`, `calculate_classes_needed`): Computes classes needed to reach target percentage overall or per-subject; handles $T=100.0\%$ target boundary correctly (returns `achievable=False` with descriptive explanation if any class was ever missed; returns `0` classes if attendance is already 100.0%); eliminates floating-point precision ceil artifacts via rounded division.
+  - Taxonomy & Structured Renderers: Formally separates tools into `MUTATION_TOOLS`, `SIMULATION_TOOLS`, and `READ_TOOLS` (`ATOMIC_QUERY_TOOLS`), with specialized deterministic renderers in `AttendanceRenderer` (`render_set_target`, `render_bunk_allowance`, `render_day_absence`, `render_extremes`) wired into `ResponseRendererRegistry`.
 - FastAPI application with lifespan management
 - PostgreSQL database with SQLAlchemy 2.x async ORM
 - Alembic migrations (11 migrations, chain verified)

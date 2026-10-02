@@ -1,3 +1,4 @@
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -94,11 +95,28 @@ class AuditService:
         self,
         *,
         student_id: UUID,
-        event_metadata: dict[str, str] | None = None,
+        event_metadata: dict[str, Any] | None = None,
     ) -> AuditEvent:
         return await self._repo.create(
             event_type=AuditEventType.STUDENT_CREATED,
             student_id=student_id,
+            success=True,
+            metadata=event_metadata,
+        )
+
+    async def log_student_updated(
+        self,
+        *,
+        student_id: UUID,
+        resource_type: str = "student",
+        resource_id: UUID | None = None,
+        event_metadata: dict[str, Any] | None = None,
+    ) -> AuditEvent:
+        return await self._repo.create(
+            event_type=AuditEventType.STUDENT_UPDATED,
+            student_id=student_id,
+            resource_type=resource_type,
+            resource_id=resource_id or student_id,
             success=True,
             metadata=event_metadata,
         )

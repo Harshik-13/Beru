@@ -20,11 +20,107 @@ from app.intelligence.tools.registry import tool_registry
 
 logger = logging.getLogger(__name__)
 
+MUTATION_TOOLS: frozenset[str] = frozenset({
+    "set_attendance_target",
+    "set_lab_batch",
+    "set_briefing_time",
+    "confirm_timetable",
+    "update_timetable_entry",
+    "add_timetable_entry",
+    "delete_timetable_entry",
+    "sync_attendance",
+    "start_portal_connection",
+})
+
+GRACEFUL_CAPABILITY_REFUSAL: str = (
+    "Sir, I do not currently have the capability to perform that action directly. "
+    "I can, however, help you with your attendance tracking, timetable, or briefings."
+)
+
+
+def is_state_mutation_intent(message: str) -> bool:
+    """
+    Detect whether a student prompt is attempting to mutate state or settings.
+    Used to enforce the Action Integrity Invariant when no authorized mutation tool executes.
+    """
+    msg = message.strip().casefold()
+    mutation_verbs = {
+        "change",
+        "update",
+        "set",
+        "modify",
+        "delete",
+        "remove",
+        "reset",
+        "clear",
+        "edit",
+        "switch",
+        "replace",
+        "make",
+    }
+    tokens = set(msg.split())
+    has_mutation_verb = bool(tokens & mutation_verbs)
+    has_new_assignment = (
+        "is my new" in msg
+        or "as my new" in msg
+        or "to my new" in msg
+        or "new target" in msg
+    )
+
+    mutation_targets = [
+        "target",
+        "roll number",
+        "roll no",
+        "rollnum",
+        "email",
+        "phone",
+        "password",
+        "branch",
+        "section",
+        "semester",
+        "name",
+        "snapshot",
+        "attendance",
+        "timetable",
+        "batch",
+        "briefing",
+    ]
+    has_target = any(t in msg for t in mutation_targets)
+
+    # Exclude read/query intents
+    query_prefixes = (
+        "what",
+        "how",
+        "show",
+        "tell",
+        "check",
+        "view",
+        "display",
+        "get",
+        "when",
+        "where",
+        "why",
+        "can i",
+        "could i",
+    )
+    starts_with_query = any(
+        msg.startswith(p + " ") or msg.startswith(p + "'") for p in query_prefixes
+    )
+
+    return (
+        (has_mutation_verb or has_new_assignment)
+        and has_target
+        and not starts_with_query
+    )
+
+
 ATOMIC_QUERY_TOOLS: frozenset[str] = frozenset({
     "find_activity_details",
     "find_faculty_details",
     "find_room_details",
     "get_course_mapping",
+    "calculate_bunk_allowance",
+    "get_attendance_extremes",
 })
 
 if TYPE_CHECKING:
@@ -144,6 +240,23 @@ class ConversationService:
             return await self._execute_tool(
                 student_context, intent_result, user_message=message
             )
+
+        # ACTION INTEGRITY INVARIANT:
+        # If user intended a state mutation, but no tool was invoked to execute it,
+        # Beru must refuse with a graceful capability message rather than hallucinate success.
+        if is_state_mutation_intent(message):
+            from app.intelligence.rendering.style_contract import (
+                sanitize_conversational_response,
+            )
+
+            response = sanitize_conversational_response(GRACEFUL_CAPABILITY_REFUSAL)
+            new_conv = student_context.conversation.add_message("assistant", response)
+            student_context = StudentContext(
+                student_id=student_context.student_id,
+                profile=student_context.profile,
+                conversation=new_conv,
+            )
+            return response, student_context
 
         # No tool needed - direct response sanitized by style contract
         from app.intelligence.rendering.style_contract import (
@@ -396,6 +509,55 @@ class ConversationService:
                 confidence=0.7,
             )
 
+        if "target" in msg_lower and any(w in msg_lower for w in ["set", "update", "change", "new", "make"]):
+            import re
+            m = re.search(r"(\d+(?:\.\d+)?)", msg_lower)
+            if m:
+                target_pct = float(m.group(1))
+                return IntentResult(
+                    tool_request={
+                        "name": "set_attendance_target",
+                        "arguments": {"target_percentage": target_pct},
+                    },
+                    confidence=0.9,
+                )
+
+        if "bunk" in msg_lower:
+            return IntentResult(
+                tool_request={
+                    "name": "calculate_bunk_allowance",
+                    "arguments": {},
+                },
+                confidence=0.9,
+            )
+
+        if any(w in msg_lower for w in ["skip today", "miss today", "leave today", "take leave", "take off"]):
+            return IntentResult(
+                tool_request={
+                    "name": "simulate_day_absence",
+                    "arguments": {},
+                },
+                confidence=0.9,
+            )
+
+        if any(w in msg_lower for w in ["highest attendance", "lowest attendance", "extremes", "best attendance", "worst attendance"]):
+            return IntentResult(
+                tool_request={
+                    "name": "get_attendance_extremes",
+                    "arguments": {},
+                },
+                confidence=0.9,
+            )
+
+        if any(w in msg_lower for w in ["classes needed", "need to attend", "reach target"]):
+            return IntentResult(
+                tool_request={
+                    "name": "calculate_classes_needed",
+                    "arguments": {},
+                },
+                confidence=0.9,
+            )
+
         return IntentResult(
             raw_response=(
                 "I'm not sure what you mean. Could you rephrase? I can help "
@@ -532,6 +694,10 @@ class ConversationService:
                 "calculate_classes_needed",
                 "get_attendance_snapshot_info",
                 "sync_attendance",
+                "set_attendance_target",
+                "calculate_bunk_allowance",
+                "simulate_day_absence",
+                "get_attendance_extremes",
             }
 
             # Sanitize arguments: remove student_id if supplied by LLM

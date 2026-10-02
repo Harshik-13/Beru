@@ -169,6 +169,10 @@ def create_default_renderer_registry() -> ResponseRendererRegistry:
 
     # Attendance Tools
     attendance_tools = {
+        "set_attendance_target",
+        "calculate_bunk_allowance",
+        "simulate_day_absence",
+        "get_attendance_extremes",
         "get_attendance_summary",
         "get_overall_attendance",
         "get_subject_attendance",

@@ -35,7 +35,15 @@ class AttendanceRenderer:
         user_message: str = "",
     ) -> str:
         """Main dispatch point for attendance tools."""
-        if tool_name == "get_attendance_summary":
+        if tool_name == "set_attendance_target":
+            return self.render_set_target(result, student_context)
+        elif tool_name == "calculate_bunk_allowance":
+            return self.render_bunk_allowance(result, student_context)
+        elif tool_name == "simulate_day_absence":
+            return self.render_day_absence(result, student_context)
+        elif tool_name == "get_attendance_extremes":
+            return self.render_extremes(result, student_context)
+        elif tool_name == "get_attendance_summary":
             return self.render_summary(result, student_context)
         elif tool_name == "get_overall_attendance":
             return self.render_overall(result, student_context)
@@ -51,6 +59,299 @@ class AttendanceRenderer:
             return self.render_sync_result(result, student_context)
 
         return self.render_generic_attendance(result, student_context)
+
+    def render_set_target(
+        self, result: dict[str, Any], student_context: StudentContext
+    ) -> str:
+        """Render target update card with verified post-mutation metrics."""
+        if not result.get("success"):
+            err = result.get("error", "Unable to update target.")
+            return f"<b>Target Update:</b>\n\n⚠️ <b>Update failed:</b> {err}"
+
+        mutation = result.get("mutation", {})
+        old_target = mutation.get("old_target", 75.0)
+        new_target = mutation.get("new_target", 75.0)
+        is_idempotent = mutation.get("idempotent", False)
+
+        attendance = result.get("attendance", {})
+        pct = float(attendance.get("current_percentage", 0.0))
+        att = attendance.get("attended", 0)
+        cond = attendance.get("conducted", 0)
+
+        target_info = result.get("target", {})
+        diff = target_info.get("difference", 0.0)
+        status = target_info.get("status", "at_target")
+        gap = target_info.get("gap_percentage", 0.0)
+        recovery = target_info.get("recovery_classes_needed", 0)
+        safe_bunks = target_info.get("safe_bunks", 0)
+
+        if is_idempotent:
+            note_line = f"• Attendance target is already set to <b>{format_percentage(new_target)}</b>."
+        else:
+            note_line = (
+                f"• Target updated from <b>{format_percentage(old_target)}</b> "
+                f"to <b>{format_percentage(new_target)}</b>."
+            )
+
+        if status == "below":
+            status_line = (
+                f"• <b>Status:</b> {WARNING_SIGN} {gap:.1f}% more needed to reach {new_target:.0f}%"
+            )
+            rec_line = (
+                f"• <b>Recovery:</b> <code>{recovery}</code> consecutive classes needed"
+                if recovery > 0
+                else ""
+            )
+        elif status == "at_target":
+            status_line = f"• <b>Status:</b> {CHECK_MARK} Exactly at {new_target:.0f}% target"
+            rec_line = ""
+        else:
+            status_line = f"• <b>Status:</b> {CHECK_MARK} {diff:.1f}% above {new_target:.0f}% target"
+            rec_line = (
+                f"• <b>Safe Bunks:</b> Up to <code>{safe_bunks}</code> classes can be missed without dropping below target"
+                if safe_bunks > 0
+                else ""
+            )
+
+        lines = [
+            "<b>Attendance Target Updated:</b>",
+            "",
+            f"{CHECK_MARK} {note_line}",
+            f"• <b>Current Overall:</b> {format_percentage(pct)} ({att}/{cond} attended)",
+            status_line,
+        ]
+        if rec_line:
+            lines.append(rec_line)
+
+        return "\n".join(lines).strip()
+
+    def render_bunk_allowance(
+        self, result: dict[str, Any], student_context: StudentContext
+    ) -> str:
+        """Render safe bunk allowance."""
+        if not result.get("available"):
+            msg = result.get("message") or result.get("error") or "Attendance data unavailable."
+            return f"<b>Safe Bunk Allowance:</b>\n\n⚠️ {msg}"
+
+        target = float(result.get("target_percentage", 75.0))
+        is_overall = result.get("is_overall", False)
+
+        if is_overall:
+            safe_bunks = result.get("safe_bunks", 0)
+            curr_pct = float(result.get("current_percentage", 0.0))
+            proj_pct = float(result.get("projected_percentage_after_bunk", curr_pct))
+            status = result.get("status")
+
+            lines = ["<b>Safe Bunk Allowance (Overall):</b>", ""]
+            if status == "below_target":
+                lines.append(
+                    f"• <b>Current Overall:</b> {format_percentage(curr_pct)} "
+                    f"(Target: {format_percentage(target)})"
+                )
+                lines.append(f"• <b>Safe Bunks:</b> <code>0</code> classes")
+                lines.append(
+                    f"• <b>Status:</b> {WARNING_SIGN} Your attendance is currently below your target. "
+                    "Attending upcoming classes is required to recover."
+                )
+            elif status == "no_classes_conducted":
+                lines.append("• <b>Safe Bunks:</b> <code>0</code> (no classes conducted yet)")
+            else:
+                bunk_word = "classes" if safe_bunks != 1 else "class"
+                lines.append(
+                    f"• <b>Safe Bunks:</b> Up to <code>{safe_bunks}</code> {bunk_word} "
+                    f"can be missed overall without dropping below {target:.0f}%"
+                )
+                lines.append(
+                    f"• <b>Current Overall:</b> {format_percentage(curr_pct)} → "
+                    f"<b>Projected:</b> {format_percentage(proj_pct)}"
+                )
+
+            # Per-subject breakdown
+            subs = result.get("subjects", [])
+            if subs:
+                lines.append("")
+                lines.append("<b>Subject Breakdown:</b>")
+                for s in subs:
+                    s_name = s.get("subject_name") or s.get("subject_code")
+                    s_bunk = s.get("safe_bunks", 0)
+                    s_pct = float(s.get("current_percentage", 0.0))
+                    if s_bunk > 0:
+                        b_badge = f"{CHECK_MARK} <code>{s_bunk}</code> safe to miss"
+                    elif s_pct >= target:
+                        b_badge = f"{CHECK_MARK} At target (0 safe)"
+                    else:
+                        b_badge = f"{WARNING_SIGN} Below target (0 safe)"
+                    lines.append(f"• <b>{s_name}:</b> {format_percentage(s_pct)} — {b_badge}")
+
+            lines.append("")
+            lines.append(
+                "<i>ℹ️ Note: Bunk allowance represents total future classes you can miss under current totals.</i>"
+            )
+            return "\n".join(lines).strip()
+
+        # Specific subject
+        sub_name = result.get("subject_name") or result.get("subject_code", "Subject")
+        safe_bunks = result.get("safe_bunks", 0)
+        curr_pct = float(result.get("current_percentage", 0.0))
+        proj_pct = float(result.get("projected_percentage_after_bunk", curr_pct))
+        status = result.get("status")
+
+        lines = [f"<b>Safe Bunk Allowance: {sub_name}:</b>", ""]
+        if status == "below_target":
+            lines.append(
+                f"• <b>Current Attendance:</b> {format_percentage(curr_pct)} "
+                f"(Target: {format_percentage(target)})"
+            )
+            lines.append("• <b>Safe Bunks:</b> <code>0</code> classes")
+            lines.append(
+                f"• <b>Status:</b> {WARNING_SIGN} Attendance is below target. "
+                "You cannot afford to skip any classes in this subject."
+            )
+        elif status == "no_classes_conducted":
+            lines.append("• <b>Safe Bunks:</b> <code>0</code> (no classes conducted yet)")
+        else:
+            bunk_word = "classes" if safe_bunks != 1 else "class"
+            lines.append(
+                f"• <b>Safe Bunk Allowance:</b> <code>{safe_bunks}</code> {bunk_word}"
+            )
+            lines.append(
+                f"• <b>Current Attendance:</b> {format_percentage(curr_pct)} → "
+                f"<b>Projected:</b> {format_percentage(proj_pct)}"
+            )
+            lines.append(
+                f"• <b>Status:</b> {CHECK_MARK} Safe to miss up to {safe_bunks} {bunk_word} "
+                f"while maintaining ≥ {target:.0f}%"
+            )
+
+        lines.append("")
+        lines.append(
+            "<i>ℹ️ Note: This is your total future bunk allowance under current assumptions, "
+            "not classes you can skip on a single day.</i>"
+        )
+        return "\n".join(lines).strip()
+
+    def render_day_absence(
+        self, result: dict[str, Any], student_context: StudentContext
+    ) -> str:
+        """Render day-leave simulation prediction."""
+        if not result.get("available"):
+            msg = result.get("message") or result.get("error") or "Simulation unavailable."
+            return f"<b>Day-Leave Simulation:</b>\n\n⚠️ {msg}"
+
+        day_name = result.get("day_name", "Day")
+        total_periods = result.get("scheduled_classes_count", 0)
+        target = float(result.get("target_percentage", 75.0))
+
+        if total_periods == 0:
+            return f"<b>Day-Leave Simulation: {day_name}:</b>\n\n{CHECK_MARK} {result.get('message')}"
+
+        curr_overall = float(result.get("current_overall_percentage", 0.0))
+        proj_overall = float(result.get("projected_overall_percentage", 0.0))
+        is_safe = result.get("is_safe", False)
+        overall_safe = result.get("overall_safe", False)
+        subjects_safe = result.get("subjects_safe", False)
+
+        if is_safe:
+            feasibility_text = (
+                f"{CHECK_MARK} <b>Safe:</b> Both overall attendance and individual subjects "
+                f"remain at or above your {target:.0f}% target."
+            )
+        elif overall_safe and not subjects_safe:
+            feasibility_text = (
+                f"{WARNING_SIGN} <b>Caution:</b> Overall attendance stays above {target:.0f}%, "
+                f"but one or more scheduled subjects will drop below target."
+            )
+        else:
+            feasibility_text = (
+                f"{WARNING_SIGN} <b>Unsafe:</b> Missing scheduled classes will drop overall "
+                f"attendance below your {target:.0f}% target."
+            )
+
+        lines = [
+            f"<b>Day-Leave Simulation: {day_name}:</b>",
+            "",
+            f"• <b>Scheduled Periods:</b> <code>{total_periods}</code>",
+            (
+                f"• <b>Overall Attendance Impact:</b> {format_percentage(curr_overall)} → "
+                f"<b>{format_percentage(proj_overall)}</b> "
+                f"({proj_overall - curr_overall:+.1f}%)"
+            ),
+            f"• <b>Leave Feasibility:</b> {feasibility_text}",
+            "",
+            "<b>Scheduled Subjects Impact:</b>",
+        ]
+
+        for s in result.get("affected_subjects", []):
+            name = s.get("subject_name") or s.get("subject_code")
+            periods = s.get("scheduled_periods", 1)
+            p_word = "period" if periods == 1 else "periods"
+            c_pct = s.get("current_percentage")
+            p_pct = s.get("projected_percentage")
+            safe = s.get("is_safe", True)
+
+            if c_pct is not None and p_pct is not None:
+                badge = f"{CHECK_MARK} Safe" if safe else f"{WARNING_SIGN} Drops below {target:.0f}%"
+                lines.append(
+                    f"• <b>{name}</b> (<code>{periods}</code> {p_word}): "
+                    f"{format_percentage(c_pct)} → {format_percentage(p_pct)} — {badge}"
+                )
+            else:
+                lines.append(f"• <b>{name}</b> (<code>{periods}</code> {p_word})")
+
+        lines.append("")
+        lines.append(
+            "<i>📅 Based on your confirmed timetable and verified attendance records.</i>"
+        )
+        return "\n".join(lines).strip()
+
+    def render_extremes(
+        self, result: dict[str, Any], student_context: StudentContext
+    ) -> str:
+        """Render lowest and highest attendance courses with multi-subject tie handling."""
+        if not result.get("available"):
+            msg = result.get("message") or "Attendance data unavailable."
+            return f"<b>Attendance Extremes:</b>\n\n⚠️ {msg}"
+
+        target = float(result.get("target_percentage", 75.0))
+        lowest = result.get("lowest", [])
+        highest = result.get("highest", [])
+        below = result.get("below_target", [])
+        total = result.get("total_subjects", 0)
+
+        lines = ["<b>Attendance Extremes:</b>", ""]
+
+        lines.append("• <b>Lowest Attendance:</b>")
+        for s in lowest:
+            name = s.get("subject_name") or s.get("subject_code")
+            pct = float(s.get("percentage", 0.0))
+            att = s.get("attended", 0)
+            cond = s.get("conducted", 0)
+            icon = CHECK_MARK if pct >= target else WARNING_SIGN
+            lines.append(f"  {icon} <b>{name}:</b> {format_percentage(pct)} ({att}/{cond})")
+
+        lines.append("")
+        lines.append("• <b>Highest Attendance:</b>")
+        for s in highest:
+            name = s.get("subject_name") or s.get("subject_code")
+            pct = float(s.get("percentage", 0.0))
+            att = s.get("attended", 0)
+            cond = s.get("conducted", 0)
+            icon = CHECK_MARK if pct >= target else WARNING_SIGN
+            lines.append(f"  {icon} <b>{name}:</b> {format_percentage(pct)} ({att}/{cond})")
+
+        lines.append("")
+        below_count = len(below)
+        if below_count > 0:
+            lines.append(
+                f"• <b>Subjects Below Target ({target:.0f}%):</b> "
+                f"<code>{below_count}</code> of <code>{total}</code> subjects need attention."
+            )
+        else:
+            lines.append(
+                f"• <b>All Subjects Safe:</b> {CHECK_MARK} All <code>{total}</code> subjects meet or exceed {target:.0f}%."
+            )
+
+        return "\n".join(lines).strip()
 
     def _format_provenance_badge(self, result: dict[str, Any]) -> str:
         """Format provenance timestamp and freshness note."""

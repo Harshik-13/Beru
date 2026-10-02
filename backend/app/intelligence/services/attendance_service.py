@@ -7,7 +7,8 @@ The LLM never performs attendance arithmetic.
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+import zoneinfo
 from math import ceil
 from typing import Any
 from uuid import UUID
@@ -164,11 +165,13 @@ class SimulationResult:
 class RecoveryResult:
     """Result of recovery calculation."""
 
-    classes_needed: int
+    classes_needed: int | None
     projected_attended: int
     projected_conducted: int
     projected_percentage: float
     target_achieved: bool
+    achievable: bool = True
+    message: str | None = None
 
 
 class AttendanceCalculationError(Exception):
@@ -270,6 +273,7 @@ def calculate_recovery(
             projected_conducted=current_conducted,
             projected_percentage=round_percentage(current_percentage),
             target_achieved=True,
+            achievable=True,
         )
 
     # If target is 100%, need infinite classes unless already perfect
@@ -281,10 +285,17 @@ def calculate_recovery(
                 projected_conducted=current_conducted,
                 projected_percentage=100.0,
                 target_achieved=True,
+                achievable=True,
             )
-        # Cannot reach 100% if not already perfect
-        raise AttendanceCalculationError(
-            "Cannot reach 100% target unless already perfect"
+        # Cannot reach 100% mathematically if any class was missed
+        return RecoveryResult(
+            classes_needed=None,
+            projected_attended=current_attended,
+            projected_conducted=current_conducted,
+            projected_percentage=round_percentage(current_percentage),
+            target_achieved=False,
+            achievable=False,
+            message="100% attendance cannot be achieved mathematically because classes have already been missed.",
         )
 
     # Direct mathematical solution:
@@ -302,7 +313,7 @@ def calculate_recovery(
     if denominator <= 0:
         raise AttendanceCalculationError("Invalid target percentage")
 
-    classes_needed = max(0, ceil(numerator / denominator))
+    classes_needed = max(0, ceil(round(numerator / denominator, 9)))
 
     projected_attended = current_attended + classes_needed
     projected_conducted = current_conducted + classes_needed
@@ -346,6 +357,11 @@ class AttendanceService:
 
         try:
             uid = UUID(str(student_id))
+            if hasattr(self, "student_repo") and self.student_repo:
+                student = await self.student_repo.get_by_id(uid)
+                if student and student.attendance_target is not None:
+                    return float(student.attendance_target)
+                return 75.0
             stmt = select(Student.attendance_target).where(Student.id == uid)
             res = await self.session.execute(stmt)
             target = res.scalar_one_or_none()
@@ -857,10 +873,18 @@ class AttendanceService:
     async def calculate_classes_needed(
         self,
         student_id: str,
-        subject_code: str,
-        target_percentage: float,
+        subject_code: str | None = None,
+        target_percentage: float | None = None,
     ):
-        """Calculate classes needed to reach target percentage."""
+        """
+        Calculate classes needed to reach target percentage.
+
+        If subject_code is None or empty, calculates recovery classes needed overall.
+        If target_percentage is None, uses the student's configured target.
+        """
+        if target_percentage is None:
+            target_percentage = await self._get_student_target(student_id)
+
         if target_percentage < 0 or target_percentage > 100:
             raise AttendanceCalculationError(
                 "Target percentage must be between 0 and 100"
@@ -870,20 +894,678 @@ class AttendanceService:
         if not snapshot:
             raise AttendanceCalculationError("No attendance data available")
 
-        subject = None
-        for s in snapshot.subjects:
-            if s.subject_code == subject_code:
-                subject = s
-                break
+        # If subject_code specified, find subject
+        if subject_code:
+            target_code = subject_code.strip().casefold()
+            subject = None
+            for s in snapshot.subjects:
+                if (
+                    s.subject_code.strip().casefold() == target_code
+                    or (s.subject_name and s.subject_name.strip().casefold() == target_code)
+                ):
+                    subject = s
+                    break
 
-        if not subject:
-            raise AttendanceCalculationError(f"Subject {subject_code} not found")
+            if not subject:
+                raise AttendanceCalculationError(f"Subject {subject_code} not found")
+
+            return calculate_recovery(
+                current_attended=subject.cumulative_attended,
+                current_conducted=subject.cumulative_conducted,
+                target_percentage=target_percentage,
+            )
+
+        # Overall recovery
+        (
+            overall_att,
+            overall_cond,
+            _pct,
+            _reconciled,
+            _diff,
+            _status,
+            _gap,
+        ) = self._reconcile_snapshot_overall(snapshot, target_percentage)
 
         return calculate_recovery(
-            current_attended=subject.cumulative_attended,
-            current_conducted=subject.cumulative_conducted,
+            current_attended=overall_att,
+            current_conducted=overall_cond,
             target_percentage=target_percentage,
         )
+
+    async def set_attendance_target(
+        self,
+        student_id: str,
+        target_percentage: float,
+    ) -> dict[str, Any]:
+        """
+        Set and verify the student's target attendance percentage.
+
+        Protocol:
+        1. Validate 1.0 <= target_percentage <= 100.0.
+        2. Verify student exists.
+        3. Check idempotency.
+        4. Mutate & commit to database.
+        5. Re-read fresh from DB to verify committed value.
+        6. Record audit event in audit_events table.
+        7. Return verified post-mutation payload.
+        """
+        if target_percentage < 1.0 or target_percentage > 100.0:
+            raise ValueError("Target percentage must be between 1.0 and 100.0")
+
+        from app.models.student import Student
+        from app.security.audit import AuditService
+
+        uid = UUID(str(student_id))
+        if hasattr(self, "student_repo") and self.student_repo:
+            student = await self.student_repo.get_by_id(uid)
+        else:
+            stmt = select(Student).where(Student.id == uid)
+            res = await self.session.execute(stmt)
+            student = res.scalar_one_or_none()
+        if not student:
+            raise ValueError(f"Student not found: {student_id}")
+
+        old_target = (
+            float(student.attendance_target)
+            if student.attendance_target is not None
+            else 75.0
+        )
+        new_target = round(float(target_percentage), 2)
+        is_idempotent = abs(old_target - new_target) < 1e-4
+
+        if not is_idempotent:
+            student.attendance_target = new_target
+            await self.session.commit()
+
+            # Re-read fresh from DB to verify committed value
+            if hasattr(self, "student_repo") and self.student_repo:
+                verified_student = await self.student_repo.get_by_id(uid)
+                verified_target = (
+                    float(verified_student.attendance_target)
+                    if verified_student and verified_student.attendance_target is not None
+                    else new_target
+                )
+            else:
+                verify_stmt = select(Student.attendance_target).where(Student.id == uid)
+                verify_res = await self.session.execute(verify_stmt)
+                verified_target = float(verify_res.scalar_one())
+
+            # Log audit event
+            audit_svc = getattr(self, "audit_service", None) or AuditService(self.session)
+            await audit_svc.log_student_updated(
+                student_id=uid,
+                event_metadata={
+                    "action": "set_attendance_target",
+                    "old_target": old_target,
+                    "new_target": verified_target,
+                    "idempotent": False,
+                },
+            )
+            await self.session.commit()
+        else:
+            verified_target = old_target
+
+        # Compute verified post-mutation metrics from attendance snapshot
+        snapshot = await self.get_latest_snapshot(str(uid), auto_sync=False)
+        if snapshot:
+            (
+                attended,
+                conducted,
+                pct,
+                legacy_reconciled,
+                diff,
+                status,
+                gap,
+            ) = self._reconcile_snapshot_overall(snapshot, verified_target)
+
+            t_ratio = verified_target / 100.0
+            if pct < verified_target:
+                rec = calculate_recovery(attended, conducted, verified_target)
+                recovery_classes = rec.classes_needed
+                safe_bunks = 0
+            else:
+                recovery_classes = 0
+                safe_bunks = (
+                    max(0, int((attended - t_ratio * conducted) / t_ratio))
+                    if t_ratio > 0
+                    else 0
+                )
+        else:
+            attended, conducted, pct = 0, 0, 0.0
+            diff, gap = 0.0, 0.0
+            status = "at_target"
+            recovery_classes = 0
+            safe_bunks = 0
+
+        return {
+            "success": True,
+            "mutation": {
+                "action": "set_attendance_target",
+                "success": True,
+                "old_target": old_target,
+                "new_target": verified_target,
+                "idempotent": is_idempotent,
+            },
+            "attendance": {
+                "current_percentage": pct,
+                "attended": attended,
+                "conducted": conducted,
+            },
+            "target": {
+                "percentage": verified_target,
+                "difference": diff,
+                "status": status,
+                "gap_percentage": gap,
+                "recovery_classes_needed": recovery_classes,
+                "safe_bunks": safe_bunks,
+            },
+            "provenance": {
+                "snapshot_id": str(snapshot.id) if snapshot else None,
+                "captured_at": snapshot.captured_at.isoformat()
+                if snapshot and hasattr(snapshot.captured_at, "isoformat")
+                else (str(snapshot.captured_at) if snapshot else None),
+            },
+        }
+
+    async def calculate_bunk_allowance(
+        self,
+        student_id: str,
+        subject_code: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Calculate maximum safe classes that can be missed without dropping below target.
+
+        Formula: B_max = max(0, floor((A - t*C) / t)) where t = T / 100.
+        """
+        snapshot = await self.get_latest_snapshot(student_id, auto_sync=True)
+        if not snapshot:
+            return {
+                "available": False,
+                "message": (
+                    "I couldn't verify your current attendance data, so I can't safely "
+                    "calculate that right now."
+                ),
+            }
+
+        target = await self._get_student_target(student_id)
+        tt_mapping = await self._get_confirmed_timetable_mapping(student_id)
+        t_ratio = target / 100.0
+
+        # Case 1: Specific subject requested
+        if subject_code:
+            query_norm = subject_code.strip().casefold()
+            matched_subject = None
+            friendly_name = None
+
+            for s in snapshot.subjects:
+                s_code = s.subject_code.strip()
+                mapped_info = tt_mapping.get(s_code.upper(), {})
+                f_name = s.subject_name or mapped_info.get("course_name")
+
+                if (
+                    s_code.casefold() == query_norm
+                    or (f_name and f_name.strip().casefold() == query_norm)
+                ):
+                    matched_subject = s
+                    friendly_name = f_name or s_code
+                    break
+
+            if not matched_subject:
+                return {
+                    "available": False,
+                    "message": f"Subject {subject_code} was not found in your verified attendance data.",
+                }
+
+            A = matched_subject.cumulative_attended
+            C = matched_subject.cumulative_conducted
+
+            if C == 0:
+                return {
+                    "available": True,
+                    "subject_code": matched_subject.subject_code,
+                    "subject_name": friendly_name,
+                    "attended": A,
+                    "conducted": C,
+                    "current_percentage": 0.0,
+                    "target_percentage": target,
+                    "safe_bunks": 0,
+                    "projected_percentage_after_bunk": 0.0,
+                    "status": "no_classes_conducted",
+                    "captured_at": snapshot.captured_at.isoformat()
+                    if hasattr(snapshot.captured_at, "isoformat")
+                    else str(snapshot.captured_at),
+                }
+
+            curr_pct = round_percentage((A / C) * 100.0)
+            if curr_pct < target or t_ratio <= 0:
+                safe_bunks = 0
+                proj_pct = curr_pct
+                status = "below_target"
+            else:
+                safe_bunks = max(0, int((A - t_ratio * C) / t_ratio))
+                proj_pct = round_percentage((A / (C + safe_bunks)) * 100.0)
+                status = "safe_to_bunk" if safe_bunks > 0 else "at_target"
+
+            return {
+                "available": True,
+                "is_overall": False,
+                "subject_code": matched_subject.subject_code,
+                "subject_name": friendly_name,
+                "attended": A,
+                "conducted": C,
+                "current_percentage": curr_pct,
+                "target_percentage": target,
+                "safe_bunks": safe_bunks,
+                "projected_percentage_after_bunk": proj_pct,
+                "status": status,
+                "captured_at": snapshot.captured_at.isoformat()
+                if hasattr(snapshot.captured_at, "isoformat")
+                else str(snapshot.captured_at),
+            }
+
+        # Case 2: Overall and per-subject breakdown
+        (
+            overall_att,
+            overall_cond,
+            overall_pct,
+            _legacy_reconciled,
+            _diff,
+            _target_status,
+            _gap,
+        ) = self._reconcile_snapshot_overall(snapshot, target)
+
+        if overall_cond == 0 or t_ratio <= 0:
+            overall_safe_bunks = 0
+            overall_proj_pct = 0.0
+            overall_status = "no_classes_conducted"
+        elif overall_pct < target:
+            overall_safe_bunks = 0
+            overall_proj_pct = overall_pct
+            overall_status = "below_target"
+        else:
+            overall_safe_bunks = max(0, int((overall_att - t_ratio * overall_cond) / t_ratio))
+            overall_proj_pct = round_percentage(
+                (overall_att / (overall_cond + overall_safe_bunks)) * 100.0
+            )
+            overall_status = "safe_to_bunk" if overall_safe_bunks > 0 else "at_target"
+
+        subject_bunks = []
+        for s in snapshot.subjects:
+            s_code = s.subject_code.strip()
+            mapped_info = tt_mapping.get(s_code.upper(), {})
+            f_name = s.subject_name or mapped_info.get("course_name") or s_code
+
+            s_a = s.cumulative_attended
+            s_c = s.cumulative_conducted
+
+            if s_c == 0:
+                s_bunk = 0
+                s_pct = 0.0
+                s_proj = 0.0
+                s_status = "no_classes_conducted"
+            else:
+                s_pct = round_percentage((s_a / s_c) * 100.0)
+                if s_pct < target or t_ratio <= 0:
+                    s_bunk = 0
+                    s_proj = s_pct
+                    s_status = "below_target"
+                else:
+                    s_bunk = max(0, int((s_a - t_ratio * s_c) / t_ratio))
+                    s_proj = round_percentage((s_a / (s_c + s_bunk)) * 100.0)
+                    s_status = "safe_to_bunk" if s_bunk > 0 else "at_target"
+
+            subject_bunks.append({
+                "subject_code": s_code,
+                "subject_name": f_name,
+                "attended": s_a,
+                "conducted": s_c,
+                "current_percentage": s_pct,
+                "safe_bunks": s_bunk,
+                "projected_percentage_after_bunk": s_proj,
+                "status": s_status,
+            })
+
+        return {
+            "available": True,
+            "is_overall": True,
+            "attended": overall_att,
+            "conducted": overall_cond,
+            "current_percentage": overall_pct,
+            "target_percentage": target,
+            "safe_bunks": overall_safe_bunks,
+            "projected_percentage_after_bunk": overall_proj_pct,
+            "status": overall_status,
+            "subjects": subject_bunks,
+            "captured_at": snapshot.captured_at.isoformat()
+            if hasattr(snapshot.captured_at, "isoformat")
+            else str(snapshot.captured_at),
+        }
+
+    async def simulate_day_absence(
+        self,
+        student_id: str,
+        day: str = "tomorrow",
+        timetable_service=None,
+    ) -> dict[str, Any]:
+        """
+        Simulate absence for an entire day based on scheduled classes in CONFIRMED timetable.
+
+        Aggregates multiple periods per subject, predicts impact on individual subjects
+        and overall attendance, and reports a 3-tier safety hierarchy:
+        (overall_safe, subjects_safe, is_safe).
+        """
+        from app.models.student import Student
+        from app.models.timetable import ActivityType, LabBatch, TimetableStatus
+
+        uid = UUID(str(student_id))
+
+        if timetable_service is None:
+            from app.intelligence.services.timetable_service import TimetableService
+            timetable_service = TimetableService(self.session)
+
+        # Check confirmed timetable
+        confirmed_tt = await timetable_service.get_confirmed_timetable(uid)
+        if not confirmed_tt:
+            pending_tt = await timetable_service.get_pending_timetable(uid)
+            if pending_tt:
+                return {
+                    "available": False,
+                    "error_code": "TIMETABLE_REVIEW_PENDING",
+                    "message": (
+                        "Timetable review pending. Only confirmed timetables are queryable "
+                        "for day-leave simulations. Please review and confirm your timetable first."
+                    ),
+                }
+            return {
+                "available": False,
+                "error_code": "NO_TIMETABLE",
+                "message": (
+                    "No confirmed timetable found. Please upload and confirm your timetable "
+                    "to simulate day-leave."
+                ),
+            }
+
+        # Student context for timezone & lab batch
+        if hasattr(self, "student_repo") and self.student_repo:
+            student = await self.student_repo.get_by_id(uid)
+        else:
+            stmt = select(Student).where(Student.id == uid)
+            res = await self.session.execute(stmt)
+            student = res.scalar_one_or_none()
+
+        tz_name = student.timezone if student and student.timezone else "Asia/Kolkata"
+        try:
+            tz = zoneinfo.ZoneInfo(tz_name)
+        except Exception:
+            tz = zoneinfo.ZoneInfo("Asia/Kolkata")
+
+        today_dt = datetime.now(tz).date()
+
+        # Parse date from day identifier
+        if isinstance(day, date):
+            target_date = day
+        else:
+            day_clean = str(day).strip().casefold()
+            if day_clean == "today":
+                target_date = today_dt
+            elif day_clean == "tomorrow":
+                target_date = today_dt + timedelta(days=1)
+            else:
+                weekday_map = {
+                    "monday": 0,
+                    "tuesday": 1,
+                    "wednesday": 2,
+                    "thursday": 3,
+                    "friday": 4,
+                    "saturday": 5,
+                    "sunday": 6,
+                }
+                if day_clean in weekday_map:
+                    target_idx = weekday_map[day_clean]
+                    diff = (target_idx - today_dt.weekday()) % 7
+                    target_date = (
+                        today_dt + timedelta(days=7)
+                        if diff == 0
+                        else today_dt + timedelta(days=diff)
+                    )
+                else:
+                    try:
+                        target_date = date.fromisoformat(str(day).strip())
+                    except Exception:
+                        target_date = today_dt + timedelta(days=1)
+
+        day_name = target_date.strftime("%A")
+
+        # Sunday check
+        if target_date.weekday() == 6:
+            return {
+                "available": True,
+                "date": target_date.isoformat(),
+                "day_name": day_name,
+                "scheduled_classes_count": 0,
+                "is_weekend": True,
+                "is_safe": True,
+                "overall_safe": True,
+                "subjects_safe": True,
+                "message": "It's Sunday! No classes are scheduled.",
+            }
+
+        # Filter entries for target date & lab batch
+        all_entries = await timetable_service.entry_repo.get_for_timetable(
+            confirmed_tt.id
+        )
+        student_batch = student.lab_batch if student else LabBatch.UNKNOWN
+
+        day_entries = []
+        for e in all_entries:
+            if e.day_of_week != target_date.weekday():
+                continue
+            if e.activity_type == ActivityType.BREAK:
+                continue
+            if (
+                student_batch != LabBatch.UNKNOWN
+                and e.lab_batch is not None
+                and e.lab_batch != LabBatch.UNKNOWN
+                and e.lab_batch != student_batch
+            ):
+                continue
+            day_entries.append(e)
+
+        if not day_entries:
+            return {
+                "available": True,
+                "date": target_date.isoformat(),
+                "day_name": day_name,
+                "scheduled_classes_count": 0,
+                "is_safe": True,
+                "overall_safe": True,
+                "subjects_safe": True,
+                "message": f"No classes are scheduled on {day_name} ({target_date.strftime('%d %b')}).",
+            }
+
+        # Fetch attendance snapshot
+        snapshot = await self.get_latest_snapshot(str(uid), auto_sync=True)
+        if not snapshot:
+            return {
+                "available": False,
+                "message": (
+                    "I couldn't verify your current attendance data, so I can't safely "
+                    "simulate day-leave right now."
+                ),
+            }
+
+        target = await self._get_student_target(uid)
+        tt_mapping = await self._get_confirmed_timetable_mapping(uid)
+
+        # Aggregate repeated periods by subject
+        subject_counts: dict[str, int] = {}
+        for e in day_entries:
+            key = (
+                e.course_code.strip()
+                if e.course_code
+                else e.activity_name.strip()
+            )
+            subject_counts[key] = subject_counts.get(key, 0) + 1
+
+        total_scheduled_classes = sum(subject_counts.values())
+
+        # Match scheduled items to snapshot subjects
+        affected_subjects = []
+        for raw_key, count in subject_counts.items():
+            matched_sub = None
+            f_name = raw_key
+            for s in snapshot.subjects:
+                s_code = s.subject_code.strip()
+                mapped_info = tt_mapping.get(s_code.upper(), {})
+                candidate_name = s.subject_name or mapped_info.get("course_name")
+                if (
+                    s_code.casefold() == raw_key.casefold()
+                    or (candidate_name and candidate_name.strip().casefold() == raw_key.casefold())
+                ):
+                    matched_sub = s
+                    f_name = candidate_name or s_code
+                    break
+
+            if matched_sub:
+                curr_att = matched_sub.cumulative_attended
+                curr_cond = matched_sub.cumulative_conducted
+                curr_pct = round_percentage((curr_att / curr_cond) * 100.0) if curr_cond > 0 else 0.0
+
+                proj_cond = curr_cond + count
+                proj_att = curr_att  # absent
+                proj_pct = round_percentage((proj_att / proj_cond) * 100.0) if proj_cond > 0 else 0.0
+                is_sub_safe = proj_pct >= target
+
+                affected_subjects.append({
+                    "subject_code": matched_sub.subject_code,
+                    "subject_name": f_name,
+                    "scheduled_periods": count,
+                    "current_percentage": curr_pct,
+                    "projected_percentage": proj_pct,
+                    "is_safe": is_sub_safe,
+                })
+            else:
+                affected_subjects.append({
+                    "subject_code": raw_key,
+                    "subject_name": raw_key,
+                    "scheduled_periods": count,
+                    "current_percentage": None,
+                    "projected_percentage": None,
+                    "is_safe": True,
+                })
+
+        # Calculate overall impact
+        (
+            overall_att,
+            overall_cond,
+            overall_pct,
+            _legacy_reconciled,
+            _diff,
+            _target_status,
+            _gap,
+        ) = self._reconcile_snapshot_overall(snapshot, target)
+
+        proj_overall_cond = overall_cond + total_scheduled_classes
+        proj_overall_att = overall_att
+        proj_overall_pct = (
+            round_percentage((proj_overall_att / proj_overall_cond) * 100.0)
+            if proj_overall_cond > 0
+            else 0.0
+        )
+
+        overall_safe = proj_overall_pct >= target
+        subjects_safe = all(
+            s["is_safe"] for s in affected_subjects if s["current_percentage"] is not None
+        )
+        is_safe = overall_safe and subjects_safe
+
+        return {
+            "available": True,
+            "date": target_date.isoformat(),
+            "day_name": day_name,
+            "scheduled_classes_count": total_scheduled_classes,
+            "current_overall_percentage": overall_pct,
+            "projected_overall_percentage": proj_overall_pct,
+            "target_percentage": target,
+            "overall_safe": overall_safe,
+            "subjects_safe": subjects_safe,
+            "is_safe": is_safe,
+            "affected_subjects": affected_subjects,
+            "captured_at": snapshot.captured_at.isoformat()
+            if hasattr(snapshot.captured_at, "isoformat")
+            else str(snapshot.captured_at),
+        }
+
+    async def get_attendance_extremes(self, student_id: str) -> dict[str, Any]:
+        """
+        Get subjects with highest and lowest attendance with multi-course tie handling.
+        """
+        snapshot = await self.get_latest_snapshot(student_id, auto_sync=True)
+        if not snapshot or not snapshot.subjects:
+            return {
+                "available": False,
+                "message": "No verified attendance data available to compute extremes.",
+            }
+
+        target = await self._get_student_target(student_id)
+        tt_mapping = await self._get_confirmed_timetable_mapping(student_id)
+
+        sub_list = []
+        for s in snapshot.subjects:
+            code = s.subject_code.strip()
+            mapped = tt_mapping.get(code.upper(), {})
+            name = s.subject_name or mapped.get("course_name") or code
+            pct = (
+                round_percentage(s.cumulative_percentage())
+                if s.cumulative_conducted > 0
+                else 0.0
+            )
+            sub_list.append({
+                "subject_code": code,
+                "subject_name": name,
+                "attended": s.cumulative_attended,
+                "conducted": s.cumulative_conducted,
+                "percentage": pct,
+            })
+
+        if not sub_list:
+            return {
+                "available": False,
+                "message": "No subject attendance records found.",
+            }
+
+        min_pct = min(s["percentage"] for s in sub_list)
+        max_pct = max(s["percentage"] for s in sub_list)
+
+        lowest = [s for s in sub_list if abs(s["percentage"] - min_pct) < 1e-4]
+        highest = [s for s in sub_list if abs(s["percentage"] - max_pct) < 1e-4]
+
+        below_target = [s for s in sub_list if s["percentage"] < target]
+        at_or_above_target = [s for s in sub_list if s["percentage"] >= target]
+
+        (
+            overall_att,
+            overall_cond,
+            overall_pct,
+            _legacy_reconciled,
+            _diff,
+            _target_status,
+            _gap,
+        ) = self._reconcile_snapshot_overall(snapshot, target)
+
+        return {
+            "available": True,
+            "overall_percentage": overall_pct,
+            "target_percentage": target,
+            "lowest": lowest,
+            "highest": highest,
+            "below_target": below_target,
+            "at_or_above_target": at_or_above_target,
+            "total_subjects": len(sub_list),
+            "captured_at": snapshot.captured_at.isoformat()
+            if hasattr(snapshot.captured_at, "isoformat")
+            else str(snapshot.captured_at),
+        }
 
     async def get_all_subject_codes(self, student_id: str):
         """Get all subject codes for a student."""
