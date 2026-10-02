@@ -4,6 +4,7 @@
 
 | Commit | Date | Purpose | Subsystem | Verification |
 |--------|------|---------|-----------|--------------|
+| `e043673` | 2026-10-02 | Dual overall/monthly attendance, multi-turn dialogue state & course mapping | Intelligence, Attendance, Portal | 423 tests pass |
 | `dc82254` | 2026-10-02 | Align Doctus integration with App workspace, STDINFO widget, and undefined semId flow | Portal, Sync, Parser | 416 tests pass |
 | `a72e07e` | 2026-10-02 | Direct GetStdAttPer attendance retrieval, timetable semId resolution, and redirect diagnostics | Portal, Sync, Parser | 416 tests pass |
 | `1427eee` | 2026-10-01 | Reproduce browser document request on /Student/Dashboard and validate semId | Portal, Sync, Parser | 414 tests pass |

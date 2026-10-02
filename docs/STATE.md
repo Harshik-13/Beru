@@ -3,7 +3,7 @@
 ## Current State
 
 - **Last updated:** 2026-10-02
-- **Current commit:** `a72e07e`
+- **Current commit:** `5fc3bfd`
 - **Current branch:** master
 
 ## Overall Project Status
@@ -168,6 +168,7 @@ None.
 
 | Commit | Description |
 |--------|-------------|
+| `e043673` | Dual overall/monthly attendance, multi-turn dialogue state & course mapping |
 | `fdaea24` | Fix LLM async promise hallucination and normalize weekday tool arguments |
 | `cdbfef3` | Fix duplicate slash-lab entries during timetable extraction |
 | `77f9271` | Fix MultipleResultsFound on timetable queries with limit(1) |
