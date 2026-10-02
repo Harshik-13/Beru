@@ -1,5 +1,53 @@
 # CHANGELOG.md — Beru
 
+## 2026-10-02 — Post-Commit Greenlet Safety in Portal Sync, Read-Time Legacy Snapshot Reconciliation & Natural Attendance Target Reporting
+
+### Task / Change
+Resolved `MissingGreenlet` exception in live portal sync by capturing snapshot primitives and in-memory DTO subject counts before `session.commit()`; implemented non-mutating read-time compatibility fallback for legacy snapshots stored prior to parser fix; established single source of truth for attendance target arithmetic (`target_difference`, `target_status`, `target_gap_percentage`) in `AttendanceService`; and eliminated complicated jargon ("margin", "deficit", "cushion") in favor of clear natural language status indicators (`• Status: ⚠️ {gap}% more needed to reach {target}%`, `• Status: ✅ At {target}% target`, and `• Status: ✅ {diff}% above {target}% target`).
+
+### Why
+1. In live testing, after `DoctusParser` successfully parsed the student's real cumulative attendance (`178/306 = 58.17%`) into `AttendanceSnapshot(38f0aeb4)`, `PortalSyncService.sync_attendance` evaluated `len(snapshot.subjects)` *after* `await self.session.commit()`. Under SQLAlchemy 2.x async ORM, `commit()` expires all model instance attributes; accessing the un-loaded relationship post-commit triggered `MissingGreenlet: greenlet_spawn has not been called`.
+2. As designed for resilience, `get_or_sync_attendance` caught the error and gracefully fell back to the most recent cached snapshot in PostgreSQL (`53e096a1`), which was captured before the parser fix when `overall_conducted = 6, overall_attended = 6` (`100.0%`).
+3. Legacy snapshots created before the parser fix remain in the database with truncated overall aggregates (`6/6`) even though their subject rows accurately record cumulative counts (`178/306`).
+4. Students and testers found the label `• Margin: ⚠️ -16.8%` and terms like "deficit" or "cushion" confusing and academic. Clarified requirement: replace with natural language indicating how much more percentage is needed to hit the target, while preserving backend deterministic math and avoiding hardcoded persona phrases.
+
+### What Changed
+- `backend/app/integrations/portal/sync_service.py`:
+  - Captured `snapshot_id`, `captured_at`, `overall_percentage`, and `len(attendance.subjects)` (from in-memory `PortalAttendance` DTO) prior to `await self.session.commit()`.
+- `backend/app/intelligence/services/attendance_service.py`:
+  - Added `target_percentage`, `target_difference`, `target_status`, `target_gap_percentage`, and `legacy_snapshot_reconciled` to `OverallAttendanceResult` dataclass and its `to_dict()`.
+  - Implemented `_reconcile_snapshot_overall(snapshot, target)`: checks if `sum_cond > 0 and 0 <= sum_att <= sum_cond and snapshot.overall_conducted < sum_cond`. If so, uses subject sums on read, logs a diagnostic warning, and sets `legacy_snapshot_reconciled=True` without mutating the database row. If `overall_conducted >= sum_cond`, preserves portal aggregates as authoritative.
+  - Computes deterministic target fields: `target_difference = round(pct - target, 2)`, `target_gap_percentage = round(abs(diff), 2)`, `target_status` (`"below"`, `"at_target"`, `"above"`).
+  - Integrated `_reconcile_snapshot_overall` into both `get_overall_attendance` and `get_attendance_summary`.
+- `backend/app/intelligence/tools/attendance_tools.py`:
+  - Forwarded `target_percentage`, `target_difference`, `target_status`, `target_gap_percentage`, and `legacy_snapshot_reconciled` in tool return dictionaries and registered schemas.
+- `backend/app/intelligence/rendering/attendance_renderer.py`:
+  - Rewrote `render_overall` and `render_summary` to format status as:
+    - Below target: `• Status: ⚠️ {gap:.1f}% more needed to reach {target:.0f}%`
+    - At target: `• Status: ✅ At {target:.0f}% target`
+    - Above target: `• Status: ✅ {diff:.1f}% above {target:.0f}% target`
+  - Completely eliminated bare `• Margin: ...` label and "deficit" jargon.
+  - Rewrote `render_below_target` to format as `{idx}. {name}: {pct} — ⚠️ {deficit}% more needed to reach {target}%`.
+- `backend/app/intelligence/services/context_builder.py` & `backend/app/intelligence/conversation/policy.py`:
+  - Guided LLM to strictly report verified target progress differences from tool results without computing its own arithmetic or using rigid phrase matching.
+- `backend/tests/test_golden_outputs.py`:
+  - Updated golden summary test to assert the new plain status line.
+- `backend/tests/test_portal_sync_and_freshness.py`:
+  - Added unit tests for plain language status rendering across all three target boundaries (below, at_target, above).
+  - Added unit tests verifying non-mutating read-time legacy snapshot reconciliation and authoritative aggregate preservation.
+
+### Security Considerations
+- Pre-commit value extraction prevents async greenlet crashes without expanding session scope or risking transaction leaks.
+- Read-time legacy snapshot reconciliation strictly avoids mutating database records, ensuring database immutability rules remain intact.
+- Target arithmetic remains 100% deterministic in the backend security boundary; the LLM is prohibited from computing attendance numbers.
+
+### Verification
+- Full test suite: 428 passing tests across the entire repository.
+- Unit tests in `test_portal_sync_and_freshness.py` verify greenlet safety, legacy reconciliation, authoritative preservation, and renderer output.
+- Commit: `b196cea`
+
+---
+
 ## 2026-10-02 — Dual Overall & Monthly Attendance Reporting, Dialogue State Tracking & Dynamic Course Mapping
 
 ### Task / Change

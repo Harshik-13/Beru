@@ -173,6 +173,13 @@ async def get_overall_attendance(
         "semester_id": result.semester_id,
         "provenance": getattr(result, "provenance", "portal_snapshot_fresh"),
         "notice": getattr(result, "notice", None),
+        "target_percentage": getattr(result, "target_percentage", 75.0),
+        "target_difference": getattr(result, "target_difference", 0.0),
+        "target_status": getattr(result, "target_status", "at_target"),
+        "target_gap_percentage": getattr(result, "target_gap_percentage", 0.0),
+        "legacy_snapshot_reconciled": getattr(
+            result, "legacy_snapshot_reconciled", False
+        ),
     }
 
 
@@ -225,6 +232,13 @@ async def get_attendance_summary(
             "cumulative_attended": result.overall.get("attended", 0),
             "cumulative_conducted": result.overall.get("conducted", 0),
             "cumulative_percentage": result.overall.get("percentage", 0.0),
+            "target_percentage": result.overall.get("target_percentage", 75.0),
+            "target_difference": result.overall.get("target_difference", 0.0),
+            "target_status": result.overall.get("target_status", "at_target"),
+            "target_gap_percentage": result.overall.get("target_gap_percentage", 0.0),
+            "legacy_snapshot_reconciled": result.overall.get(
+                "legacy_snapshot_reconciled", False
+            ),
         }
         if isinstance(result.overall, dict)
         else {
@@ -234,6 +248,15 @@ async def get_attendance_summary(
             "cumulative_attended": getattr(result.overall, "attended", 0),
             "cumulative_conducted": getattr(result.overall, "conducted", 0),
             "cumulative_percentage": getattr(result.overall, "percentage", 0.0),
+            "target_percentage": getattr(result.overall, "target_percentage", 75.0),
+            "target_difference": getattr(result.overall, "target_difference", 0.0),
+            "target_status": getattr(result.overall, "target_status", "at_target"),
+            "target_gap_percentage": getattr(
+                result.overall, "target_gap_percentage", 0.0
+            ),
+            "legacy_snapshot_reconciled": getattr(
+                result.overall, "legacy_snapshot_reconciled", False
+            ),
         }
     )
 
@@ -490,6 +513,11 @@ ATTENDANCE_TOOL_DEFINITIONS = [
                 "captured_at": {"type": ["string", "null"]},
                 "source": {"type": ["string", "null"]},
                 "semester_id": {"type": ["string", "null"]},
+                "target_percentage": {"type": ["number", "null"]},
+                "target_difference": {"type": ["number", "null"]},
+                "target_status": {"type": ["string", "null"]},
+                "target_gap_percentage": {"type": ["number", "null"]},
+                "legacy_snapshot_reconciled": {"type": ["boolean", "null"]},
                 "message": {"type": ["string", "null"]},
             },
         },

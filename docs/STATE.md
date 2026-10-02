@@ -3,7 +3,7 @@
 ## Current State
 
 - **Last updated:** 2026-10-02
-- **Current commit:** `8f88a69`
+- **Current commit:** `b196cea`
 - **Current branch:** master
 
 ## Overall Project Status
@@ -38,6 +38,14 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 - Dual Attendance Reporting (Overall Cumulative & Monthly):
   - Doctus HTML Parser (`DoctusParser._parse_overall_and_monthly`): Independently extracts monthly and cumulative metrics from EduPrime total rows (e.g., `Total | 6 / 6 (100) | 178 / 306 (58.17)`), disambiguating Fraction-First (`X / Y (P%)`) and Percentage-First (`P% (X / Y)`) forms, capturing current monthly period (e.g. `October, 2026`), and reconciling subject sums without overwriting portal-calculated aggregates.
   - Domain Model & Renderer: `OverallAttendanceResult` and `PortalAttendance` DTO carry `monthly_attended`, `monthly_conducted`, `monthly_percentage`, and `monthly_period`. `AttendanceRenderer` renders both Overall Attendance (cumulative) and Current Month Attendance with badge indicators.
+- Async Greenlet Safety in Portal Sync (`PortalSyncService.sync_attendance`):
+  - Pre-commit extraction of `snapshot_id`, `captured_at`, `overall_percentage`, and in-memory DTO `len(attendance.subjects)` before `await self.session.commit()`. Eliminates `MissingGreenlet` exceptions triggered by async lazy-loading of expired relationship attributes post-commit.
+- Read-Time Legacy Snapshot Reconciliation (`AttendanceService._reconcile_snapshot_overall`):
+  - Non-mutating read-time compatibility fallback: For legacy snapshots stored prior to parser fix where overall aggregates were truncated (e.g. `6/6` instead of `178/306`), validates `0 <= sum_att <= sum_cond`, `sum_cond > 0`, and `snapshot.overall_conducted < sum_cond`. Reconciles authoritative totals from verified subject rows at read time, logs a diagnostic warning, and sets `legacy_snapshot_reconciled=True`. When `overall_conducted >= sum_cond`, portal aggregates remain strictly authoritative.
+- Deterministic Target Metrics & Plain Natural Language Reporting (`AttendanceService` & `AttendanceRenderer`):
+  - Single backend source of truth for target arithmetic: calculates `target_percentage`, `target_difference` (`percentage - target`), `target_status` (`below`, `at_target`, `above`), and `target_gap_percentage` (`abs(target_difference)`).
+  - Clean natural language formatting: Completely removed confusing jargon ("margin", "deficit", "cushion"). Formatted as `• Status: ⚠️ {gap:.1f}% more needed to reach {target:.0f}%` (when below), `• Status: ✅ At {target:.0f}% target` (when at target), and `• Status: ✅ {diff:.1f}% above {target:.0f}% target` (when above).
+  - LLM guidance in `ContextBuilder` and `ConversationalResponsePolicy`: Instructs LLM to rely strictly on verified tool results for target progress without performing LLM-side arithmetic or hardcoded persona matching.
 - Dynamic Course Mapping & Friendly Name Resolution (`app/intelligence/tools/timetable_tools.py` & `TimetableService`):
   - `get_course_mapping`: Reads confirmed timetable entries to correlate course codes (e.g. `25PC1CS201`) with friendly names (`OOPJ`) dynamically. Flags conflicting names with `status="conflict"` and alternatives rather than guessing.
   - Atomic Query Synthesis: Added `get_course_mapping` to `ATOMIC_QUERY_TOOLS` for natural-language synthesis answering "What does 25PC1CS201 stand for?". Removed `get_subject_codes` from tool definitions to prevent raw code dumps.
@@ -92,8 +100,8 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 
 ## TESTED
 
-- 423 tests pass (3 warnings related to unawaited test mocks in telegram message handler)
-- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence (real LLM provider, aliases, tool execution, multi-turn dialogue state, raw output prevention), models, portal, student profile, telegram isolation, telegram message handler (media download, photo through extractor, multi-turn context), telegram startup, timetable, whatsapp isolation, timetable end-to-end onboarding suite (`test_timetable_onboarding_e2e.py`: 19 tests), golden output test suite (`test_golden_outputs.py`: 14 tests), semantic-invariance and analytics suite (`test_semantic_invariance.py`: 13 tests), conversational synthesis suite (`test_conversational_synthesis.py`: 6 tests), conversational multi-turn suite (`test_conversational_multi_turn.py`: 3 tests), raw output prevention suite (`test_raw_output_prevention.py`: 3 tests), and the live portal integration & freshness test suites (48 tests in `test_portal.py`, plus tests across `test_portal_security.py`, `test_portal_onboarding.py`, `test_portal_semantic_routing.py`, and `test_portal_sync_and_freshness.py`)
+- 428 tests pass (3 warnings related to unawaited test mocks in telegram message handler)
+- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence (real LLM provider, aliases, tool execution, multi-turn dialogue state, raw output prevention), models, portal, student profile, telegram isolation, telegram message handler (media download, photo through extractor, multi-turn context), telegram startup, timetable, whatsapp isolation, timetable end-to-end onboarding suite (`test_timetable_onboarding_e2e.py`: 19 tests), golden output test suite (`test_golden_outputs.py`: 14 tests), semantic-invariance and analytics suite (`test_semantic_invariance.py`: 13 tests), conversational synthesis suite (`test_conversational_synthesis.py`: 6 tests), conversational multi-turn suite (`test_conversational_multi_turn.py`: 3 tests), raw output prevention suite (`test_raw_output_prevention.py`: 3 tests), and the live portal integration & freshness test suites (17 tests in `test_portal_sync_and_freshness.py` verifying keyed locks, 4-hr TTL, redirect notices, post-commit greenlet safety, plain target status rendering, and non-mutating read-time legacy snapshot reconciliation, plus 48 tests in `test_portal.py` and portal security/onboarding suites)
 - Flaky bug fixed: `test_get_next_class` clock flakiness resolved with deterministic `from_time`
 - Ruff: clean on all source files
 - Mypy: clean on all source files

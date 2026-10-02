@@ -5,6 +5,7 @@ All arithmetic is deterministic and performed in the backend.
 The LLM never performs attendance arithmetic.
 """
 
+import logging
 from dataclasses import dataclass
 from datetime import date, datetime
 from math import ceil
@@ -13,6 +14,8 @@ from uuid import UUID
 
 from sqlalchemy import desc, select
 from sqlalchemy.orm import selectinload
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +34,11 @@ class OverallAttendanceResult:
     monthly_conducted: int | None = None
     monthly_percentage: float | None = None
     monthly_period: str | None = None
+    target_percentage: float = 75.0
+    target_difference: float = 0.0
+    target_status: str = "at_target"
+    target_gap_percentage: float = 0.0
+    legacy_snapshot_reconciled: bool = False
 
     def to_dict(self):
         return {
@@ -44,6 +52,11 @@ class OverallAttendanceResult:
             "monthly_conducted": self.monthly_conducted,
             "monthly_percentage": self.monthly_percentage,
             "monthly_period": self.monthly_period,
+            "target_percentage": self.target_percentage,
+            "target_difference": self.target_difference,
+            "target_status": self.target_status,
+            "target_gap_percentage": self.target_gap_percentage,
+            "legacy_snapshot_reconciled": self.legacy_snapshot_reconciled,
             "captured_at": self.captured_at.isoformat()
             if hasattr(self.captured_at, "isoformat")
             else str(self.captured_at),
@@ -393,6 +406,82 @@ class AttendanceService:
         )
         return result.scalar_one_or_none()
 
+    def _reconcile_snapshot_overall(
+        self,
+        snapshot: Any,
+        target_percentage: float = 75.0,
+    ) -> tuple[int, int, float, bool, float, str, float]:
+        """
+        Derive authoritative overall attendance and target metrics at read time.
+
+        If a legacy snapshot has broken overall aggregates (e.g. conducted < sum(subjects.conducted)),
+        this read-time fallback reconstructs overall numbers from valid subject cumulative records
+        without mutating the database row.
+
+        Returns:
+            (attended, conducted, percentage, legacy_reconciled,
+             target_difference, target_status, target_gap_percentage)
+        """
+        attended = snapshot.overall_attended
+        conducted = snapshot.overall_conducted
+        legacy_reconciled = False
+
+        if snapshot.subjects:
+            sum_att = sum(
+                s.cumulative_attended
+                for s in snapshot.subjects
+                if s.cumulative_attended is not None
+            )
+            sum_cond = sum(
+                s.cumulative_conducted
+                for s in snapshot.subjects
+                if s.cumulative_conducted is not None
+            )
+            # Reconcile only if subject sums are structurally valid and exceed truncated overall conducted
+            if (
+                sum_cond > 0
+                and 0 <= sum_att <= sum_cond
+                and snapshot.overall_conducted < sum_cond
+            ):
+                logger.warning(
+                    "Read-time legacy snapshot reconciliation triggered for snapshot %s: "
+                    "overall_conducted (%s) < subject sum conducted (%s). "
+                    "Falling back to subject cumulative totals (%s/%s) on read.",
+                    snapshot.id,
+                    snapshot.overall_conducted,
+                    sum_cond,
+                    sum_att,
+                    sum_cond,
+                )
+                attended = sum_att
+                conducted = sum_cond
+                legacy_reconciled = True
+
+        pct = (
+            round_percentage(calculate_percentage(attended, conducted))
+            if conducted > 0
+            else 0.0
+        )
+
+        diff = round(pct - target_percentage, 2)
+        gap = round(abs(diff), 2)
+        if diff < -0.05:
+            status = "below"
+        elif diff > 0.05:
+            status = "above"
+        else:
+            status = "at_target"
+
+        return (
+            attended,
+            conducted,
+            pct,
+            legacy_reconciled,
+            diff,
+            status,
+            gap,
+        )
+
     async def get_overall_attendance(
         self,
         student_id: str,
@@ -419,6 +508,17 @@ class AttendanceService:
         if not snapshot:
             return None
 
+        target = await self._get_student_target(student_id)
+        (
+            attended,
+            conducted,
+            pct,
+            legacy_reconciled,
+            diff,
+            status,
+            gap,
+        ) = self._reconcile_snapshot_overall(snapshot, target)
+
         # Aggregate monthly metrics from snapshot subjects if available
         has_monthly = any(s.monthly_conducted is not None for s in snapshot.subjects)
         monthly_att = (
@@ -439,9 +539,9 @@ class AttendanceService:
         monthly_period = next((s.monthly_period for s in snapshot.subjects if s.monthly_period), None)
 
         return OverallAttendanceResult(
-            attended=snapshot.overall_attended,
-            conducted=snapshot.overall_conducted,
-            percentage=round_percentage(snapshot.overall_percentage()),
+            attended=attended,
+            conducted=conducted,
+            percentage=pct,
             captured_at=snapshot.captured_at,
             source=snapshot.source.value,
             semester_id=snapshot.semester_id,
@@ -451,6 +551,11 @@ class AttendanceService:
             monthly_conducted=monthly_cond,
             monthly_percentage=monthly_pct,
             monthly_period=monthly_period,
+            target_percentage=target,
+            target_difference=diff,
+            target_status=status,
+            target_gap_percentage=gap,
+            legacy_snapshot_reconciled=legacy_reconciled,
         )
 
     async def get_subject_attendance(self, student_id: str, subject_code: str):
@@ -592,10 +697,20 @@ class AttendanceService:
         )
         monthly_period = next((s.monthly_period for s in snapshot.subjects if s.monthly_period), None)
 
+        (
+            overall_att,
+            overall_cond,
+            overall_pct,
+            legacy_reconciled,
+            diff,
+            status,
+            gap,
+        ) = self._reconcile_snapshot_overall(snapshot, target)
+
         overall = OverallAttendanceResult(
-            attended=snapshot.overall_attended,
-            conducted=snapshot.overall_conducted,
-            percentage=round_percentage(snapshot.overall_percentage()),
+            attended=overall_att,
+            conducted=overall_cond,
+            percentage=overall_pct,
             captured_at=snapshot.captured_at,
             source=snapshot.source.value,
             semester_id=snapshot.semester_id,
@@ -605,6 +720,11 @@ class AttendanceService:
             monthly_conducted=monthly_cond,
             monthly_percentage=monthly_pct,
             monthly_period=monthly_period,
+            target_percentage=target,
+            target_difference=diff,
+            target_status=status,
+            target_gap_percentage=gap,
+            legacy_snapshot_reconciled=legacy_reconciled,
         )
 
         return AttendanceSummaryResult(

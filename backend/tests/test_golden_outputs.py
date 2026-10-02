@@ -443,7 +443,7 @@ def test_golden_attendance_summary():
     assert "<b>Attendance Summary:</b>" in output
     assert "• <b>Overall:</b> <code>82.5%</code> (66/80 classes attended)" in output
     assert "• <b>Target:</b> <code>75.0%</code>" in output
-    assert f"• <b>Status:</b> {CHECK_MARK} Above target (+7.5% margin)" in output
+    assert f"• <b>Status:</b> {CHECK_MARK} 7.5% above 75% target" in output
     assert "<b>Subject Breakdown:</b>" in output
     assert f"1. <b>OS:</b> <code>85.0%</code> (17/20) — {CHECK_MARK} Met" in output
     warning_str = (

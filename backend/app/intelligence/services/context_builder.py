@@ -108,7 +108,13 @@ class ContextBuilder:
             "'Which subject is 25PC1CS201?' or 'What does OOPJ stand for?'), call 'get_course_mapping' "
             "to look up friendly subject names from their confirmed timetable.\n"
             "- If the student's request is genuinely ambiguous across multiple subjects or options, "
-            "proactively ask for clarification with candidates rather than guessing."
+            "proactively ask for clarification with candidates rather than guessing.\n"
+            "- When reporting attendance target progress, rely strictly on\n"
+            "  verified tool results (percentage, target_percentage, target_status,\n"
+            "  target_gap_percentage). Never compute percentages yourself.\n"
+            "  Express status clearly and naturally (e.g. state how much more\n"
+            "  percentage is needed if below target, or how much above target)\n"
+            "  without using confusing jargon like 'margin' or 'cushion'."
         )
 
         return "\n\n".join(parts)

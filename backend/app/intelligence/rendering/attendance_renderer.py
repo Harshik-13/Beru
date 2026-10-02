@@ -117,17 +117,38 @@ class AttendanceRenderer:
         """Render complete attendance summary."""
         overall = result.get("overall", {})
         subjects = result.get("subjects", [])
-        target = student_context.profile.attendance_target or 75.0
+        target = float(
+            overall.get("target_percentage")
+            or student_context.profile.attendance_target
+            or 75.0
+        )
 
         cum_pct = float(overall.get("cumulative_percentage", 0.0))
         attended = overall.get("cumulative_attended", 0)
         conducted = overall.get("cumulative_conducted", 0)
 
-        diff = cum_pct - target
-        if diff >= 0:
-            status_text = f"{CHECK_MARK} Above target (+{diff:.1f}% margin)"
+        target_status = overall.get("target_status")
+        target_diff = overall.get("target_difference")
+        target_gap = overall.get("target_gap_percentage")
+
+        if target_status is None or target_diff is None or target_gap is None:
+            diff = round(cum_pct - target, 2)
+            gap = round(abs(diff), 2)
+            if diff < -0.05:
+                target_status = "below"
+            elif diff > 0.05:
+                target_status = "above"
+            else:
+                target_status = "at_target"
+            target_diff = diff
+            target_gap = gap
+
+        if target_status == "below":
+            status_text = f"{WARNING_SIGN} {target_gap:.1f}% more needed to reach {target:.0f}%"
+        elif target_status == "at_target":
+            status_text = f"{CHECK_MARK} At {target:.0f}% target"
         else:
-            status_text = f"{WARNING_SIGN} Below target ({diff:.1f}% deficit)"
+            status_text = f"{CHECK_MARK} {target_diff:.1f}% above {target:.0f}% target"
 
         lines: list[str] = [
             "<b>Attendance Summary:</b>",
@@ -190,10 +211,34 @@ class AttendanceRenderer:
         cum_pct = float(result.get("cumulative_percentage", 0.0))
         attended = result.get("cumulative_attended", 0)
         conducted = result.get("cumulative_conducted", 0)
-        target = student_context.profile.attendance_target or 75.0
+        target = float(
+            result.get("target_percentage")
+            or student_context.profile.attendance_target
+            or 75.0
+        )
 
-        diff = cum_pct - target
-        status_icon = CHECK_MARK if diff >= 0 else WARNING_SIGN
+        target_status = result.get("target_status")
+        target_diff = result.get("target_difference")
+        target_gap = result.get("target_gap_percentage")
+
+        if target_status is None or target_diff is None or target_gap is None:
+            diff = round(cum_pct - target, 2)
+            gap = round(abs(diff), 2)
+            if diff < -0.05:
+                target_status = "below"
+            elif diff > 0.05:
+                target_status = "above"
+            else:
+                target_status = "at_target"
+            target_diff = diff
+            target_gap = gap
+
+        if target_status == "below":
+            status_text = f"{WARNING_SIGN} {target_gap:.1f}% more needed to reach {target:.0f}%"
+        elif target_status == "at_target":
+            status_text = f"{CHECK_MARK} At {target:.0f}% target"
+        else:
+            status_text = f"{CHECK_MARK} {target_diff:.1f}% above {target:.0f}% target"
 
         lines: list[str] = [
             "<b>Overall Attendance:</b>",
@@ -203,7 +248,7 @@ class AttendanceRenderer:
                 f"({attended}/{conducted} attended)"
             ),
             f"• <b>Target:</b> {format_percentage(target)}",
-            f"• <b>Margin:</b> {status_icon} {diff:+.1f}%",
+            f"• <b>Status:</b> {status_text}",
         ]
 
         # Add current month attendance if available
@@ -303,13 +348,19 @@ class AttendanceRenderer:
             lines.append(msg)
             return "\n".join(lines).strip()
 
+        target = float(
+            result.get("target_percentage")
+            or student_context.profile.attendance_target
+            or 75.0
+        )
         for idx, sub in enumerate(subjects, 1):
             name = sub.get("subject_name") or sub.get("subject_code", "Course")
             pct = float(sub.get("cumulative_percentage", 0.0))
             defic = float(sub.get("deficit", 0.0))
+            t_pct = float(sub.get("target_percentage") or target)
             lines.append(
                 f"{idx}. <b>{name}:</b> {format_percentage(pct)} — "
-                f"{WARNING_SIGN} {defic:.1f}% deficit"
+                f"{WARNING_SIGN} {defic:.1f}% more needed to reach {t_pct:.0f}%"
             )
 
         badge_footer = self._format_provenance_badge(result)

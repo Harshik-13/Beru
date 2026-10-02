@@ -348,14 +348,27 @@ class PortalSyncService:
                 credential.portal,
                 PortalCredentialStatus.CONNECTED,
             )
+
+            # Pre-commit capture of snapshot primitives and in-memory DTO subject count.
+            # Committing expires ORM attributes, and accessing relationship snapshot.subjects
+            # post-commit triggers MissingGreenlet under AsyncSession.
+            snapshot_id_str = str(snapshot.id)
+            captured_at_str = (
+                snapshot.captured_at.isoformat()
+                if snapshot.captured_at
+                else now.isoformat()
+            )
+            overall_pct_val = snapshot.overall_percentage()
+            subject_cnt_val = len(attendance.subjects)
+
             await self.session.commit()
 
             return PortalSyncResult(
                 success=True,
-                snapshot_id=str(snapshot.id),
-                captured_at=snapshot.captured_at.isoformat(),
-                overall_percentage=snapshot.overall_percentage(),
-                subject_count=len(snapshot.subjects),
+                snapshot_id=snapshot_id_str,
+                captured_at=captured_at_str,
+                overall_percentage=overall_pct_val,
+                subject_count=subject_cnt_val,
                 message="Attendance synced successfully",
             )
 

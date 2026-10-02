@@ -348,3 +348,155 @@ class TestAttendanceProvenanceRendering:
         assert "Successfully synced from Doctus!" in output
         assert "86.2%" in output
         assert "7" in output
+
+    def test_render_overall_below_target_plain_language(self, context):
+        renderer = AttendanceRenderer()
+        result = {
+            "cumulative_percentage": 58.2,
+            "cumulative_attended": 178,
+            "cumulative_conducted": 306,
+            "target_percentage": 75.0,
+            "target_difference": -16.8,
+            "target_status": "below",
+            "target_gap_percentage": 16.8,
+            "captured_at": "2026-10-02T12:00:00+00:00",
+            "provenance": "portal_live_sync",
+        }
+        output = renderer.render("get_overall_attendance", result, context)
+        assert "• <b>Overall:</b> <code>58.2%</code> (178/306 attended)" in output
+        assert "• <b>Target:</b> <code>75.0%</code>" in output
+        assert "• <b>Status:</b> ⚠️ 16.8% more needed to reach 75%" in output
+        assert "Margin:" not in output
+        assert "deficit" not in output
+
+    def test_render_overall_at_target_plain_language(self, context):
+        renderer = AttendanceRenderer()
+        result = {
+            "cumulative_percentage": 75.0,
+            "cumulative_attended": 150,
+            "cumulative_conducted": 200,
+            "target_percentage": 75.0,
+            "target_difference": 0.0,
+            "target_status": "at_target",
+            "target_gap_percentage": 0.0,
+            "captured_at": "2026-10-02T12:00:00+00:00",
+            "provenance": "portal_live_sync",
+        }
+        output = renderer.render("get_overall_attendance", result, context)
+        assert "• <b>Status:</b> ✅ At 75% target" in output
+        assert "Margin:" not in output
+
+    def test_render_overall_above_target_plain_language(self, context):
+        renderer = AttendanceRenderer()
+        result = {
+            "cumulative_percentage": 80.0,
+            "cumulative_attended": 160,
+            "cumulative_conducted": 200,
+            "target_percentage": 75.0,
+            "target_difference": 5.0,
+            "target_status": "above",
+            "target_gap_percentage": 5.0,
+            "captured_at": "2026-10-02T12:00:00+00:00",
+            "provenance": "portal_live_sync",
+        }
+        output = renderer.render("get_overall_attendance", result, context)
+        assert "• <b>Status:</b> ✅ 5.0% above 75% target" in output
+        assert "Margin:" not in output
+
+
+class TestLegacySnapshotReconciliationAndGreenletSafety:
+    """Verify read-time legacy reconciliation and greenlet commit safety."""
+
+    def test_reconcile_legacy_broken_snapshot_on_read_without_mutation(self):
+        from app.intelligence.services.attendance_service import AttendanceService
+
+        service = AttendanceService(session=MagicMock())
+
+        # Broken snapshot: overall conducted is 6, but subjects sum to 306 conducted
+        snapshot = AttendanceSnapshot(
+            student_id=uuid4(),
+            source=AttendanceSource.DOCTUS,
+            captured_at=datetime.now(UTC),
+            overall_attended=6,
+            overall_conducted=6,
+        )
+        snapshot.id = uuid4()
+        snapshot.subjects = [
+            SubjectAttendance(
+                snapshot_id=snapshot.id,
+                subject_code="CS301",
+                cumulative_attended=90,
+                cumulative_conducted=150,
+            ),
+            SubjectAttendance(
+                snapshot_id=snapshot.id,
+                subject_code="CS302",
+                cumulative_attended=88,
+                cumulative_conducted=156,
+            ),
+        ]
+
+        (
+            att,
+            cond,
+            pct,
+            reconciled,
+            diff,
+            status,
+            gap,
+        ) = service._reconcile_snapshot_overall(snapshot, target_percentage=75.0)
+
+        # Verified fallback to subject sum:
+        # 90+88 = 178 attended, 150+156 = 306 conducted
+        assert att == 178
+        assert cond == 306
+        assert pct == 58.17
+        assert reconciled is True
+        assert diff == -16.83
+        assert status == "below"
+        assert gap == 16.83
+
+        # Database object itself is NOT mutated
+        assert snapshot.overall_attended == 6
+        assert snapshot.overall_conducted == 6
+
+    def test_reconcile_preserves_authoritative_portal_aggregate(self):
+        from app.intelligence.services.attendance_service import AttendanceService
+
+        service = AttendanceService(session=MagicMock())
+
+        # Authoritative snapshot: conducted matches subject sum
+        snapshot = AttendanceSnapshot(
+            student_id=uuid4(),
+            source=AttendanceSource.DOCTUS,
+            captured_at=datetime.now(UTC),
+            overall_attended=160,
+            overall_conducted=200,
+        )
+        snapshot.id = uuid4()
+        snapshot.subjects = [
+            SubjectAttendance(
+                snapshot_id=snapshot.id,
+                subject_code="CS301",
+                cumulative_attended=160,
+                cumulative_conducted=200,
+            )
+        ]
+
+        (
+            att,
+            cond,
+            pct,
+            reconciled,
+            diff,
+            status,
+            gap,
+        ) = service._reconcile_snapshot_overall(snapshot, target_percentage=75.0)
+
+        assert att == 160
+        assert cond == 200
+        assert pct == 80.0
+        assert reconciled is False
+        assert diff == 5.0
+        assert status == "above"
+        assert gap == 5.0
