@@ -172,6 +172,8 @@ class ScheduleRenderer:
             return self.render_room_details(result, student_context)
         elif tool_name == "query_schedule_analytics":
             return self.render_schedule_analytics(result, student_context)
+        elif tool_name == "get_course_mapping":
+            return self.render_course_mapping(result, student_context)
 
         return self.render_generic_timetable(result, student_context)
 
@@ -638,9 +640,37 @@ class ScheduleRenderer:
         msg = result.get("message", "Schedule analytics computed.")
         return f"<b>Schedule Analytics:</b>\n\n{msg}"
 
+    def render_course_mapping(
+        self, result: dict[str, Any], student_context: StudentContext
+    ) -> str:
+        """Render course codes to friendly subject names mapping."""
+        mappings = result.get("mappings", [])
+        if not mappings:
+            return (
+                "<b>Course Mapping:</b>\n\n"
+                "No course code mappings are currently available from your confirmed timetable."
+            )
+
+        lines = ["<b>Course Mapping:</b>", ""]
+        for m in mappings:
+            code = m.get("course_code", "")
+            name = m.get("course_name", "")
+            status = m.get("status")
+            if status == "conflict":
+                lines.append(
+                    f"• <code>{code}</code> → <b>{name}</b> <i>(ambiguous entries in timetable)</i>"
+                )
+            else:
+                lines.append(f"• <code>{code}</code> → <b>{name}</b>")
+
+        return "\n".join(lines).strip()
+
     def render_generic_timetable(
         self, result: dict[str, Any], student_context: StudentContext
     ) -> str:
         """Fallback renderer for other timetable tools."""
-        msg = result.get("message") or str(result)
+        if isinstance(result, dict) and "message" in result:
+            msg = str(result["message"])
+        else:
+            msg = "Timetable details updated."
         return f"<b>Timetable Update:</b>\n\n{msg}"

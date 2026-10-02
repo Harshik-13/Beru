@@ -55,3 +55,6 @@ class PortalAttendance:
     overall_percentage_from_portal: float | None
     subjects: tuple[PortalSubjectAttendance, ...]
     monthly_period: str | None = None
+    monthly_attended: int | None = None
+    monthly_conducted: int | None = None
+    monthly_percentage_from_portal: float | None = None

@@ -107,7 +107,7 @@ TelegramMessageHandler._handle_message(message)
 
 - `ToolRegistry` in `app/intelligence/tools/registry.py`
 - All confirmed timetable tools and verified attendance tools auto-registered at startup via `register_builtin_tools()`
-- Tools: `confirm_timetable`, `get_today_schedule`, `get_tomorrow_schedule`, `get_next_class`, `get_first_class_tomorrow`, `get_timetable_status`, `needs_lab_batch`, `set_lab_batch`, `get_extracted_timetable`, `update_timetable_entry`, `add_timetable_entry`, `delete_timetable_entry`, `get_overall_attendance`, `get_subject_attendance`, `get_attendance_summary`, `get_subjects_below_target`, `simulate_absence`, `calculate_classes_needed`, `get_attendance_snapshot_info`, `get_subject_codes`, `sync_attendance`
+- Tools: `confirm_timetable`, `get_today_schedule`, `get_tomorrow_schedule`, `get_next_class`, `get_first_class_tomorrow`, `get_timetable_status`, `needs_lab_batch`, `set_lab_batch`, `get_extracted_timetable`, `update_timetable_entry`, `add_timetable_entry`, `delete_timetable_entry`, `find_activity_details`, `find_faculty_details`, `find_room_details`, `query_schedule_analytics`, `get_course_mapping`, `get_overall_attendance`, `get_subject_attendance`, `get_attendance_summary`, `get_subjects_below_target`, `simulate_absence`, `calculate_classes_needed`, `get_attendance_snapshot_info`, `sync_attendance`
 - Phase 1: Photo uploads routed through existing `HybridTimetableExtractor` (no new OCR/vision provider)
 - Phase 2: Review tools (`get_extracted_timetable`, `update/add/delete_timetable_entry`) for corrections during REVIEW_REQUIRED; context builder blocks schedule queries from pending timetables
 - Phase 3: `set_briefing_time`, `get_week_schedule`, `get_schedule_for_weekday`, `get_timetable_metadata` tools; course_metadata mapped onto entries during extraction
@@ -119,7 +119,7 @@ Beru uses a hybrid response generation architecture balancing conversational nat
 ```
 Verified Tool Result
        │
-       ├── Atomic Query (find_activity_details, find_faculty_details, find_room_details)
+       ├── Atomic Query (find_activity_details, find_faculty_details, find_room_details, get_course_mapping)
        │     └── Conversational Synthesis (ConversationalResponsePolicy) ──► Natural Response
        │
        └── Structured Collection (schedules, attendance math, analytics, briefings)
@@ -156,6 +156,8 @@ ResponseStyleLayer (Telegram HTML Sanitization & Entity Escaping) ──► Tele
 
 **AttendanceService** (`app/intelligence/services/attendance_service.py`):
 - Deterministic calculations: percentage, simulation, recovery
+- Dual attendance metrics: Overall cumulative and monthly totals (`monthly_attended`, `monthly_conducted`, `monthly_percentage`, `monthly_period`)
+- Dynamic subject code correlation from confirmed timetable via `_get_confirmed_timetable_mapping`
 - Simulation formula: `((x + (N - m)) / (y + N)) * 100`
 - No LLM involvement in arithmetic
 - Snapshots with provenance (source, captured_at, semester_id)

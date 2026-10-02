@@ -54,6 +54,8 @@
 8. **4-Hour Freshness Engine** — Attendance snapshots are fresh for 4 hours (`FRESHNESS_TTL = 4h`). Stale data triggers a background sync to Doctus. Concurrency is guarded per-student by `KeyedLockManager` to prevent duplicate portal requests.
 9. **Provenance Tracking** — Every attendance query reports provenance (`PORTAL_LIVE_SYNC`, `PORTAL_SNAPSHOT_FRESH`, `PORTAL_SNAPSHOT_STALE`) and human-readable timestamp metadata.
 10. **Resilient Fallback** — If live Doctus synchronization fails (network error, portal maintenance, session expiry), the system falls back to the latest verified cached snapshot with a warning note, rather than failing the user query.
+11. **Dual Attendance Reporting** — Beru must report both overall (cumulative) attendance and current monthly attendance (e.g. October, 2026) when answering general attendance inquiries.
+12. **Natural Conversational Continuity & Course Mapping** — Conversational follow-ups (e.g. "Per subject?") must resolve omitted entities from bounded dialogue state without brittle keyword matching; queries asking what course codes stand for must correlate codes to friendly names from confirmed timetables via `get_course_mapping` and report alternatives if conflicting entries exist.
 
 ### Timetable Requirements
 

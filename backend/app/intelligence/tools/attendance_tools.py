@@ -141,9 +141,11 @@ class RecoveryResult:
         }
 
 
-async def get_overall_attendance(service, student_id: str):
+async def get_overall_attendance(
+    service, student_id: str, semester_id: str | None = None
+):
     """Get overall attendance for the authenticated student."""
-    result = await service.get_overall_attendance(student_id)
+    result = await service.get_overall_attendance(student_id, semester_id=semester_id)
     if not result:
         return {
             "available": False,
@@ -160,6 +162,10 @@ async def get_overall_attendance(service, student_id: str):
         "cumulative_attended": result.attended,
         "cumulative_conducted": result.conducted,
         "cumulative_percentage": result.percentage,
+        "monthly_attended": result.monthly_attended,
+        "monthly_conducted": result.monthly_conducted,
+        "monthly_percentage": result.monthly_percentage,
+        "monthly_period": result.monthly_period,
         "captured_at": result.captured_at.isoformat()
         if hasattr(result.captured_at, "isoformat")
         else str(result.captured_at),
@@ -198,9 +204,11 @@ async def get_subject_attendance(service, student_id: str, subject_code: str):
     }
 
 
-async def get_attendance_summary(service, student_id: str):
+async def get_attendance_summary(
+    service, student_id: str, semester_id: str | None = None
+):
     """Get complete attendance summary."""
-    result = await service.get_attendance_summary(student_id)
+    result = await service.get_attendance_summary(student_id, semester_id=semester_id)
     if not result:
         return {
             "available": False,
@@ -456,11 +464,15 @@ async def get_subject_codes(service, student_id: str):
 ATTENDANCE_TOOL_DEFINITIONS = [
     {
         "name": "get_overall_attendance",
-        "description": "Get the student's overall attendance percentage.",
+        "description": "Get the student's overall attendance percentage and current month attendance.",
         "arguments_schema": {
             "type": "object",
             "properties": {
                 "student_id": {"type": "string", "format": "uuid"},
+                "semester_id": {
+                    "type": "string",
+                    "description": "Optional semester ID to view attendance for a specific semester.",
+                },
             },
             "required": ["student_id"],
         },
@@ -471,6 +483,10 @@ ATTENDANCE_TOOL_DEFINITIONS = [
                 "attended": {"type": ["integer", "null"]},
                 "conducted": {"type": ["integer", "null"]},
                 "percentage": {"type": ["number", "null"]},
+                "monthly_attended": {"type": ["integer", "null"]},
+                "monthly_conducted": {"type": ["integer", "null"]},
+                "monthly_percentage": {"type": ["number", "null"]},
+                "monthly_period": {"type": ["string", "null"]},
                 "captured_at": {"type": ["string", "null"]},
                 "source": {"type": ["string", "null"]},
                 "semester_id": {"type": ["string", "null"]},
@@ -518,11 +534,19 @@ ATTENDANCE_TOOL_DEFINITIONS = [
     },
     {
         "name": "get_attendance_summary",
-        "description": "Get complete attendance summary including all subjects.",
+        "description": (
+            "Get complete subject-wise attendance breakdown and summary. "
+            "Use this whenever the student asks for subject breakdown, per-subject attendance, "
+            "or detailed attendance stats."
+        ),
         "arguments_schema": {
             "type": "object",
             "properties": {
                 "student_id": {"type": "string", "format": "uuid"},
+                "semester_id": {
+                    "type": "string",
+                    "description": "Optional semester ID to view attendance for a specific semester.",
+                },
             },
             "required": ["student_id"],
         },
@@ -545,6 +569,7 @@ ATTENDANCE_TOOL_DEFINITIONS = [
                             "cumulative_attended": {"type": "integer"},
                             "cumulative_conducted": {"type": "integer"},
                             "cumulative_percentage": {"type": "number"},
+                            "classes_needed": {"type": ["integer", "null"]},
                         },
                     },
                 },
@@ -676,26 +701,6 @@ ATTENDANCE_TOOL_DEFINITIONS = [
         },
     },
     {
-        "name": "get_subject_codes",
-        "description": "Get all subject codes from verified attendance data.",
-        "arguments_schema": {
-            "type": "object",
-            "properties": {
-                "student_id": {"type": "string", "format": "uuid"},
-            },
-            "required": ["student_id"],
-        },
-        "result_schema": {
-            "type": "object",
-            "properties": {
-                "subject_codes": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                },
-            },
-        },
-    },
-    {
         "name": "sync_attendance",
         "description": (
             "Sync attendance data from the Doctus portal. "
@@ -772,13 +777,17 @@ async def execute_attendance_tool(
             "message": msg,
         }
     elif tool_name == "get_overall_attendance":
-        return await get_overall_attendance(attendance_service, student_id)
+        return await get_overall_attendance(
+            attendance_service, student_id, kwargs.get("semester_id")
+        )
     elif tool_name == "get_subject_attendance":
         return await get_subject_attendance(
             attendance_service, student_id, kwargs["subject_code"]
         )
     elif tool_name == "get_attendance_summary":
-        return await get_attendance_summary(attendance_service, student_id)
+        return await get_attendance_summary(
+            attendance_service, student_id, kwargs.get("semester_id")
+        )
     elif tool_name == "get_subjects_below_target":
         return await get_subjects_below_target(
             attendance_service, student_id, kwargs["target_percentage"]
@@ -813,7 +822,9 @@ async def execute_attendance_tool(
     elif tool_name == "get_attendance_snapshot_info":
         return await get_attendance_snapshot_info(attendance_service, student_id)
     elif tool_name == "get_subject_codes":
-        return await get_subject_codes(attendance_service, student_id)
+        return await get_attendance_summary(
+            attendance_service, student_id, kwargs.get("semester_id")
+        )
     elif tool_name == "sync_attendance":
         return await sync_attendance(
             attendance_service, student_id, kwargs.get("semester_id")

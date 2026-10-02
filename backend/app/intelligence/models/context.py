@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+import re
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 if TYPE_CHECKING:
@@ -103,6 +104,13 @@ class ConversationContext:
 
     onboarding_state: str | None = None
 
+    # Bounded dialogue metadata
+    last_domain: str | None = None
+    last_intent: str | None = None
+    last_tool: str | None = None
+    last_entity: str | None = None
+    last_semester: str | None = None
+
     def add_message(self, role: str, content: str) -> ConversationContext:
         """Add a message to history, returning new context."""
         message = {
@@ -125,6 +133,11 @@ class ConversationContext:
             pending_clarification=self.pending_clarification,
             recent_tool_results=self.recent_tool_results,
             onboarding_state=self.onboarding_state,
+            last_domain=self.last_domain,
+            last_intent=self.last_intent,
+            last_tool=self.last_tool,
+            last_entity=self.last_entity,
+            last_semester=self.last_semester,
         )
 
     def set_active_intent(self, intent: str) -> ConversationContext:
@@ -140,6 +153,11 @@ class ConversationContext:
             pending_clarification=self.pending_clarification,
             recent_tool_results=self.recent_tool_results,
             onboarding_state=self.onboarding_state,
+            last_domain=self.last_domain,
+            last_intent=self.last_intent,
+            last_tool=self.last_tool,
+            last_entity=self.last_entity,
+            last_semester=self.last_semester,
         )
 
     def add_referenced_entity(self, entity: ReferencedEntity) -> ConversationContext:
@@ -158,6 +176,11 @@ class ConversationContext:
             pending_clarification=self.pending_clarification,
             recent_tool_results=self.recent_tool_results,
             onboarding_state=self.onboarding_state,
+            last_domain=self.last_domain,
+            last_intent=self.last_intent,
+            last_tool=self.last_tool,
+            last_entity=self.last_entity,
+            last_semester=self.last_semester,
         )
 
     def resolve_entity(
@@ -190,6 +213,11 @@ class ConversationContext:
             pending_clarification=self.pending_clarification,
             recent_tool_results=self.recent_tool_results,
             onboarding_state=self.onboarding_state,
+            last_domain=self.last_domain,
+            last_intent=self.last_intent,
+            last_tool=self.last_tool,
+            last_entity=self.last_entity,
+            last_semester=self.last_semester,
         )
 
     def set_pending_clarification(
@@ -207,6 +235,11 @@ class ConversationContext:
             pending_clarification=clarification,
             recent_tool_results=self.recent_tool_results,
             onboarding_state=self.onboarding_state,
+            last_domain=self.last_domain,
+            last_intent=self.last_intent,
+            last_tool=self.last_tool,
+            last_entity=self.last_entity,
+            last_semester=self.last_semester,
         )
 
     def clear_pending_clarification(self) -> ConversationContext:
@@ -222,6 +255,11 @@ class ConversationContext:
             pending_clarification=None,
             recent_tool_results=self.recent_tool_results,
             onboarding_state=self.onboarding_state,
+            last_domain=self.last_domain,
+            last_intent=self.last_intent,
+            last_tool=self.last_tool,
+            last_entity=self.last_entity,
+            last_semester=self.last_semester,
         )
 
     def add_tool_result(self, tool_result: ToolResultRef) -> ConversationContext:
@@ -240,12 +278,78 @@ class ConversationContext:
             pending_clarification=self.pending_clarification,
             recent_tool_results=new_results,
             onboarding_state=self.onboarding_state,
+            last_domain=self.last_domain,
+            last_intent=self.last_intent,
+            last_tool=self.last_tool,
+            last_entity=self.last_entity,
+            last_semester=self.last_semester,
+        )
+
+    def update_dialogue_state(
+        self,
+        domain: str | None = None,
+        intent: str | None = None,
+        tool: str | None = None,
+        entity: str | None = None,
+        semester: str | None = None,
+    ) -> ConversationContext:
+        return ConversationContext(
+            student_id=self.student_id,
+            conversation_id=self.conversation_id,
+            created_at=self.created_at,
+            updated_at=datetime.now(UTC),
+            recent_messages=self.recent_messages,
+            max_history=self.max_history,
+            active_intent=intent if intent is not None else self.active_intent,
+            referenced_entities=self.referenced_entities,
+            pending_clarification=self.pending_clarification,
+            recent_tool_results=self.recent_tool_results,
+            onboarding_state=self.onboarding_state,
+            last_domain=domain if domain is not None else self.last_domain,
+            last_intent=intent if intent is not None else self.last_intent,
+            last_tool=tool if tool is not None else self.last_tool,
+            last_entity=entity if entity is not None else self.last_entity,
+            last_semester=semester if semester is not None else self.last_semester,
         )
 
     def resolve_pending_clarification(self, answer: str) -> ConversationContext:
         """Resolve pending clarification with user's answer."""
         # The actual resolution logic will be in the service layer
         return self.clear_pending_clarification()
+
+
+def sanitize_result_summary(result: Any, max_len: int = 150) -> str:
+    """Sanitize result into a compact structural summary without sensitive data."""
+    if isinstance(result, dict):
+        clean = {}
+        for k, v in result.items():
+            if str(k).lower() in (
+                "token",
+                "password",
+                "cookie",
+                "encrypted_password",
+                "raw_html",
+                "data",
+                "cb",
+                "session",
+                "secret",
+            ):
+                continue
+            if isinstance(v, (str, int, float, bool)) or v is None:
+                clean[k] = v
+            elif isinstance(v, (list, tuple)):
+                clean[k] = f"[{len(v)} items]"
+            elif isinstance(v, dict):
+                clean[k] = f"{{{len(v)} keys}}"
+        text = str(clean)
+    else:
+        text = str(result)
+
+    # Strip HTML tags
+    text = re.sub(r"<[^>]+>", "", text)
+    # Scrub sensitive key-value patterns
+    text = re.sub(r"(?i)\b(auth|token|cookie|password|secret|session)[=:]\s*[\w.-]+", r"\1=[REDACTED]", text)
+    return text[:max_len]
 
 
 @dataclass(frozen=True, slots=True)

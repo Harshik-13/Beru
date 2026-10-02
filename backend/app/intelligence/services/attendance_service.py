@@ -8,6 +8,8 @@ The LLM never performs attendance arithmetic.
 from dataclasses import dataclass
 from datetime import date, datetime
 from math import ceil
+from typing import Any
+from uuid import UUID
 
 from sqlalchemy import desc, select
 from sqlalchemy.orm import selectinload
@@ -25,6 +27,10 @@ class OverallAttendanceResult:
     semester_id: str | None
     provenance: str = "portal_snapshot_fresh"
     notice: str | None = None
+    monthly_attended: int | None = None
+    monthly_conducted: int | None = None
+    monthly_percentage: float | None = None
+    monthly_period: str | None = None
 
     def to_dict(self):
         return {
@@ -34,6 +40,10 @@ class OverallAttendanceResult:
             "cumulative_attended": self.attended,
             "cumulative_conducted": self.conducted,
             "cumulative_percentage": self.percentage,
+            "monthly_attended": self.monthly_attended,
+            "monthly_conducted": self.monthly_conducted,
+            "monthly_percentage": self.monthly_percentage,
+            "monthly_period": self.monthly_period,
             "captured_at": self.captured_at.isoformat()
             if hasattr(self.captured_at, "isoformat")
             else str(self.captured_at),
@@ -57,6 +67,7 @@ class SubjectAttendanceResult:
     cumulative_attended: int
     cumulative_conducted: int
     cumulative_percentage: float
+    classes_needed: int | None = None
 
     def to_dict(self):
         return {
@@ -69,6 +80,7 @@ class SubjectAttendanceResult:
             "cumulative_attended": self.cumulative_attended,
             "cumulative_conducted": self.cumulative_conducted,
             "cumulative_percentage": self.cumulative_percentage,
+            "classes_needed": self.classes_needed,
         }
 
 
@@ -315,28 +327,59 @@ class AttendanceService:
         from uuid import UUID
         return await self.sync_service.sync_attendance(UUID(student_id), semester_id)
 
-    async def get_latest_snapshot(self, student_id: str, auto_sync: bool = False):
-        """Get the latest attendance snapshot for a student."""
-        from uuid import UUID
+    async def _get_student_target(self, student_id: str | UUID) -> float:
+        """Get student attendance target from DB or default to 75.0."""
+        from app.models.student import Student
+
+        try:
+            uid = UUID(str(student_id))
+            stmt = select(Student.attendance_target).where(Student.id == uid)
+            res = await self.session.execute(stmt)
+            target = res.scalar_one_or_none()
+            return float(target) if target is not None else 75.0
+        except Exception:
+            return 75.0
+
+    async def _get_confirmed_timetable_mapping(
+        self, student_id: str | UUID
+    ) -> dict[str, dict[str, Any]]:
+        """Get course code mapping from student's confirmed timetable."""
+        from app.intelligence.services.timetable_service import TimetableService
+
+        try:
+            tt_svc = TimetableService(self.session)
+            mapping_list = await tt_svc.get_course_mapping(UUID(str(student_id)))
+            return {item["course_code"]: item for item in mapping_list}
+        except Exception:
+            return {}
+
+    async def get_latest_snapshot(
+        self,
+        student_id: str,
+        semester_id: str | None = None,
+        auto_sync: bool = False,
+    ):
+        """Get the latest attendance snapshot for a student, optionally filtered by semester."""
         from app.models.attendance import AttendanceSnapshot
 
         if auto_sync and self.sync_service:
             try:
                 snapshot, _prov, _notice = await self.sync_service.get_or_sync_attendance(
-                    UUID(student_id)
+                    UUID(student_id),
+                    semester_id=semester_id,
                 )
                 if snapshot:
                     return snapshot
             except Exception:
                 pass
 
-        result = await self.session.execute(
-            select(AttendanceSnapshot)
-            .where(AttendanceSnapshot.student_id == student_id)
-            .order_by(desc(AttendanceSnapshot.captured_at))
-            .limit(1)
-            .options(selectinload(AttendanceSnapshot.subjects))
+        stmt = select(AttendanceSnapshot).where(AttendanceSnapshot.student_id == student_id)
+        if semester_id:
+            stmt = stmt.where(AttendanceSnapshot.semester_id == semester_id)
+        stmt = stmt.order_by(desc(AttendanceSnapshot.captured_at)).limit(1).options(
+            selectinload(AttendanceSnapshot.subjects)
         )
+        result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
     async def get_snapshot_by_id(self, snapshot_id: str):
@@ -350,9 +393,13 @@ class AttendanceService:
         )
         return result.scalar_one_or_none()
 
-    async def get_overall_attendance(self, student_id: str, auto_sync: bool = True):
+    async def get_overall_attendance(
+        self,
+        student_id: str,
+        semester_id: str | None = None,
+        auto_sync: bool = True,
+    ):
         """Get overall attendance for a student, auto-syncing if stale and portal connected."""
-        from uuid import UUID
         snapshot = None
         provenance = "portal_snapshot_fresh"
         notice = None
@@ -360,16 +407,36 @@ class AttendanceService:
         if auto_sync and self.sync_service:
             try:
                 snapshot, prov_enum, notice = await self.sync_service.get_or_sync_attendance(
-                    UUID(student_id)
+                    UUID(student_id),
+                    semester_id=semester_id,
                 )
                 provenance = prov_enum.value
             except Exception:
-                snapshot = await self.get_latest_snapshot(student_id)
+                snapshot = await self.get_latest_snapshot(student_id, semester_id=semester_id)
         else:
-            snapshot = await self.get_latest_snapshot(student_id)
+            snapshot = await self.get_latest_snapshot(student_id, semester_id=semester_id)
 
         if not snapshot:
             return None
+
+        # Aggregate monthly metrics from snapshot subjects if available
+        has_monthly = any(s.monthly_conducted is not None for s in snapshot.subjects)
+        monthly_att = (
+            sum(s.monthly_attended for s in snapshot.subjects if s.monthly_attended is not None)
+            if has_monthly
+            else None
+        )
+        monthly_cond = (
+            sum(s.monthly_conducted for s in snapshot.subjects if s.monthly_conducted is not None)
+            if has_monthly
+            else None
+        )
+        monthly_pct = (
+            round_percentage((monthly_att / monthly_cond) * 100.0)
+            if has_monthly and monthly_cond and monthly_cond > 0
+            else None
+        )
+        monthly_period = next((s.monthly_period for s in snapshot.subjects if s.monthly_period), None)
 
         return OverallAttendanceResult(
             attended=snapshot.overall_attended,
@@ -380,19 +447,48 @@ class AttendanceService:
             semester_id=snapshot.semester_id,
             provenance=provenance,
             notice=notice,
+            monthly_attended=monthly_att,
+            monthly_conducted=monthly_cond,
+            monthly_percentage=monthly_pct,
+            monthly_period=monthly_period,
         )
 
     async def get_subject_attendance(self, student_id: str, subject_code: str):
-        """Get attendance for a specific subject."""
+        """Get attendance for a specific subject, matching by code or friendly name."""
         snapshot = await self.get_latest_snapshot(student_id, auto_sync=True)
         if not snapshot:
             return None
 
+        target = await self._get_student_target(student_id)
+        tt_mapping = await self._get_confirmed_timetable_mapping(student_id)
+        query_norm = subject_code.strip().casefold()
+
         for subject in snapshot.subjects:
-            if subject.subject_code == subject_code:
+            s_code = subject.subject_code.strip()
+            mapped_info = tt_mapping.get(s_code.upper(), {})
+            friendly_name = subject.subject_name or mapped_info.get("course_name")
+
+            # Check normalized exact match on code or friendly name
+            code_match = s_code.casefold() == query_norm
+            name_match = friendly_name and friendly_name.strip().casefold() == query_norm
+
+            if code_match or name_match:
+                classes_needed = None
+                if subject.cumulative_conducted > 0:
+                    pct = subject.cumulative_percentage()
+                    if pct < target:
+                        rec = calculate_recovery(
+                            subject.cumulative_attended,
+                            subject.cumulative_conducted,
+                            target,
+                        )
+                        classes_needed = rec.classes_needed
+                    else:
+                        classes_needed = 0
+
                 return SubjectAttendanceResult(
                     subject_code=subject.subject_code,
-                    subject_name=subject.subject_name,
+                    subject_name=friendly_name,
                     monthly_attended=subject.monthly_attended,
                     monthly_conducted=subject.monthly_conducted,
                     monthly_percentage=(
@@ -406,12 +502,17 @@ class AttendanceService:
                     cumulative_percentage=round_percentage(
                         subject.cumulative_percentage()
                     ),
+                    classes_needed=classes_needed,
                 )
         return None
 
-    async def get_attendance_summary(self, student_id: str, auto_sync: bool = True):
+    async def get_attendance_summary(
+        self,
+        student_id: str,
+        semester_id: str | None = None,
+        auto_sync: bool = True,
+    ):
         """Get complete attendance summary for a student, auto-syncing if stale and portal connected."""
-        from uuid import UUID
         snapshot = None
         provenance = "portal_snapshot_fresh"
         notice = None
@@ -419,48 +520,96 @@ class AttendanceService:
         if auto_sync and self.sync_service:
             try:
                 snapshot, prov_enum, notice = await self.sync_service.get_or_sync_attendance(
-                    UUID(student_id)
+                    UUID(student_id),
+                    semester_id=semester_id,
                 )
                 provenance = prov_enum.value
             except Exception:
-                snapshot = await self.get_latest_snapshot(student_id)
+                snapshot = await self.get_latest_snapshot(student_id, semester_id=semester_id)
         else:
-            snapshot = await self.get_latest_snapshot(student_id)
+            snapshot = await self.get_latest_snapshot(student_id, semester_id=semester_id)
 
         if not snapshot:
             return None
 
-        subjects = tuple(
-            SubjectAttendanceResult(
-                subject_code=s.subject_code,
-                subject_name=s.subject_name,
-                monthly_attended=s.monthly_attended,
-                monthly_conducted=s.monthly_conducted,
-                monthly_percentage=(
-                    round_percentage(s.monthly_percentage())
-                    if s.monthly_percentage() is not None
-                    else None
-                ),
-                monthly_period=s.monthly_period,
-                cumulative_attended=s.cumulative_attended,
-                cumulative_conducted=s.cumulative_conducted,
-                cumulative_percentage=round_percentage(s.cumulative_percentage()),
+        target = await self._get_student_target(student_id)
+        tt_mapping = await self._get_confirmed_timetable_mapping(student_id)
+
+        subject_results = []
+        for s in snapshot.subjects:
+            s_code = s.subject_code.strip()
+            mapped_info = tt_mapping.get(s_code.upper(), {})
+            friendly_name = s.subject_name or mapped_info.get("course_name")
+
+            classes_needed = None
+            if s.cumulative_conducted > 0:
+                pct = s.cumulative_percentage()
+                if pct < target:
+                    rec = calculate_recovery(
+                        s.cumulative_attended,
+                        s.cumulative_conducted,
+                        target,
+                    )
+                    classes_needed = rec.classes_needed
+                else:
+                    classes_needed = 0
+
+            subject_results.append(
+                SubjectAttendanceResult(
+                    subject_code=s.subject_code,
+                    subject_name=friendly_name,
+                    monthly_attended=s.monthly_attended,
+                    monthly_conducted=s.monthly_conducted,
+                    monthly_percentage=(
+                        round_percentage(s.monthly_percentage())
+                        if s.monthly_percentage() is not None
+                        else None
+                    ),
+                    monthly_period=s.monthly_period,
+                    cumulative_attended=s.cumulative_attended,
+                    cumulative_conducted=s.cumulative_conducted,
+                    cumulative_percentage=round_percentage(s.cumulative_percentage()),
+                    classes_needed=classes_needed,
+                )
             )
-            for s in snapshot.subjects
+
+        # Aggregate monthly metrics
+        has_monthly = any(s.monthly_conducted is not None for s in snapshot.subjects)
+        monthly_att = (
+            sum(s.monthly_attended for s in snapshot.subjects if s.monthly_attended is not None)
+            if has_monthly
+            else None
+        )
+        monthly_cond = (
+            sum(s.monthly_conducted for s in snapshot.subjects if s.monthly_conducted is not None)
+            if has_monthly
+            else None
+        )
+        monthly_pct = (
+            round_percentage((monthly_att / monthly_cond) * 100.0)
+            if has_monthly and monthly_cond and monthly_cond > 0
+            else None
+        )
+        monthly_period = next((s.monthly_period for s in snapshot.subjects if s.monthly_period), None)
+
+        overall = OverallAttendanceResult(
+            attended=snapshot.overall_attended,
+            conducted=snapshot.overall_conducted,
+            percentage=round_percentage(snapshot.overall_percentage()),
+            captured_at=snapshot.captured_at,
+            source=snapshot.source.value,
+            semester_id=snapshot.semester_id,
+            provenance=provenance,
+            notice=notice,
+            monthly_attended=monthly_att,
+            monthly_conducted=monthly_cond,
+            monthly_percentage=monthly_pct,
+            monthly_period=monthly_period,
         )
 
         return AttendanceSummaryResult(
-            overall=OverallAttendanceResult(
-                attended=snapshot.overall_attended,
-                conducted=snapshot.overall_conducted,
-                percentage=round_percentage(snapshot.overall_percentage()),
-                captured_at=snapshot.captured_at,
-                source=snapshot.source.value,
-                semester_id=snapshot.semester_id,
-                provenance=provenance,
-                notice=notice,
-            ),
-            subjects=subjects,
+            overall=overall,
+            subjects=tuple(subject_results),
             captured_at=snapshot.captured_at,
             source=snapshot.source.value,
             semester_id=snapshot.semester_id,

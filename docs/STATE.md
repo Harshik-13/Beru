@@ -35,8 +35,19 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 - Telegram message handler (idempotency, request-scoped DB sessions, identity resolution, request-scoped domain services, conversation pipeline, HTML parse mode default, credential onboarding flow interception)
 - LLM provider abstraction (OpenAI-compatible + Mock; aliases for OpenRouter, Groq, OpenAI, NVIDIA, Ollama)
 - Real LLM provider integration (wired in lifespan, dict/object message support, safe tool argument parsing, adaptive HTTP 429 backoff with Retry-After header parsing and non-crashing logger)
-- Conversation service (intent interpretation → tool dispatch → hybrid presentation pipeline: conversational synthesis for atomic queries via ConversationalResponsePolicy; decoupled ResponseRendererRegistry dispatch for structured collections; strict anti-async-hallucination instruction)
-- Tool registry (automatic registration of all 21 timetable and 8 attendance tools)
+- Dual Attendance Reporting (Overall Cumulative & Monthly):
+  - Doctus HTML Parser (`DoctusParser._parse_overall_and_monthly`): Independently extracts monthly and cumulative metrics from EduPrime total rows (e.g., `Total | 6 / 6 (100) | 178 / 306 (58.17)`), disambiguating Fraction-First (`X / Y (P%)`) and Percentage-First (`P% (X / Y)`) forms, capturing current monthly period (e.g. `October, 2026`), and reconciling subject sums without overwriting portal-calculated aggregates.
+  - Domain Model & Renderer: `OverallAttendanceResult` and `PortalAttendance` DTO carry `monthly_attended`, `monthly_conducted`, `monthly_percentage`, and `monthly_period`. `AttendanceRenderer` renders both Overall Attendance (cumulative) and Current Month Attendance with badge indicators.
+- Dynamic Course Mapping & Friendly Name Resolution (`app/intelligence/tools/timetable_tools.py` & `TimetableService`):
+  - `get_course_mapping`: Reads confirmed timetable entries to correlate course codes (e.g. `25PC1CS201`) with friendly names (`OOPJ`) dynamically. Flags conflicting names with `status="conflict"` and alternatives rather than guessing.
+  - Atomic Query Synthesis: Added `get_course_mapping` to `ATOMIC_QUERY_TOOLS` for natural-language synthesis answering "What does 25PC1CS201 stand for?". Removed `get_subject_codes` from tool definitions to prevent raw code dumps.
+- Natural Multi-Turn Dialogue State Tracking (`app/intelligence/models/context.py` & `ConversationService`):
+  - Bounded Dialogue Metadata: Tracks `last_domain`, `last_intent`, `last_tool`, `last_entity`, and `last_semester` on `ConversationContext`.
+  - Contextual System Prompt Injection: Injects recent turn metadata into LLM system prompt so follow-up queries (e.g. "Per subject?") resolve omitted subjects and parameters via natural language reasoning without keyword matching.
+- Defense-in-Depth Raw Output Prevention & Sanitization:
+  - `sanitize_result_summary`: Strips HTML tags and redacts sensitive keys/values (passwords, tokens, cookies, raw HTML) before storing in conversation history.
+  - Conversation Interceptor: Catch-all check in `ConversationService` catches any raw dictionary or list strings starting and ending with `{}`/`[]` and forces fallback through deterministic renderers.
+- Tool registry (automatic registration of all 22 timetable and 8 attendance tools)
 - Conversational Synthesis & Persona Architecture (`app/intelligence/conversation/` & `app/intelligence/models/`):
   - Self-Model Persona Ownership: Permanently moved `"Sir"` into Beru's self-model (`honorific: str = "Sir"` in `BeruIdentity`), with dedicated `respectful_persona` behavioral principle.
   - `ConversationalResponsePolicy`: Codified 7 conversational rules (answer actual question first, use only relevant verified details, avoid database card dumps, address student naturally as Sir, maintain multi-turn continuity, preserve ambiguity, eliminate premature promises).
@@ -81,8 +92,8 @@ Personal Alpha phase. Telegram bot is live and functional. Core intelligence pip
 
 ## TESTED
 
-- 414 tests pass (3 warnings related to unawaited test mocks in telegram message handler)
-- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence (real LLM provider, aliases, tool execution), models, portal, student profile, telegram isolation, telegram message handler (media download, photo through extractor, multi-turn context), telegram startup, timetable, whatsapp isolation, timetable end-to-end onboarding suite (`test_timetable_onboarding_e2e.py`: 19 tests), golden output test suite (`test_golden_outputs.py`: 14 tests), semantic-invariance and analytics suite (`test_semantic_invariance.py`: 13 tests), conversational synthesis suite (`test_conversational_synthesis.py`: 6 tests), and the live portal integration & freshness test suites (47 tests in `test_portal.py`, plus tests across `test_portal_security.py`, `test_portal_onboarding.py`, `test_portal_semantic_routing.py`, and `test_portal_sync_and_freshness.py`)
+- 423 tests pass (3 warnings related to unawaited test mocks in telegram message handler)
+- Test coverage: attendance, auth, briefing, briefing delivery, briefing scheduler, health, intelligence (real LLM provider, aliases, tool execution, multi-turn dialogue state, raw output prevention), models, portal, student profile, telegram isolation, telegram message handler (media download, photo through extractor, multi-turn context), telegram startup, timetable, whatsapp isolation, timetable end-to-end onboarding suite (`test_timetable_onboarding_e2e.py`: 19 tests), golden output test suite (`test_golden_outputs.py`: 14 tests), semantic-invariance and analytics suite (`test_semantic_invariance.py`: 13 tests), conversational synthesis suite (`test_conversational_synthesis.py`: 6 tests), conversational multi-turn suite (`test_conversational_multi_turn.py`: 3 tests), raw output prevention suite (`test_raw_output_prevention.py`: 3 tests), and the live portal integration & freshness test suites (48 tests in `test_portal.py`, plus tests across `test_portal_security.py`, `test_portal_onboarding.py`, `test_portal_semantic_routing.py`, and `test_portal_sync_and_freshness.py`)
 - Flaky bug fixed: `test_get_next_class` clock flakiness resolved with deterministic `from_time`
 - Ruff: clean on all source files
 - Mypy: clean on all source files

@@ -144,7 +144,16 @@ class AttendanceRenderer:
         if subjects:
             lines.append("<b>Subject Breakdown:</b>")
             for idx, sub in enumerate(subjects, 1):
-                name = sub.get("subject_name") or sub.get("subject_code", "Course")
+                name = sub.get("subject_name")
+                code = sub.get("subject_code")
+                if name and code and name != code:
+                    display_label = f"{name} ({code})"
+                elif name:
+                    display_label = name
+                elif code:
+                    display_label = code
+                else:
+                    display_label = "Course"
                 s_pct = float(sub.get("cumulative_percentage", 0.0))
                 s_att = sub.get("cumulative_attended", 0)
                 s_cond = sub.get("cumulative_conducted", 0)
@@ -164,7 +173,7 @@ class AttendanceRenderer:
 
                 pct_str = format_percentage(s_pct)
                 lines.append(
-                    f"{idx}. <b>{name}:</b> {pct_str} ({s_att}/{s_cond}) \u2014 {badge}"
+                    f"{idx}. <b>{display_label}:</b> {pct_str} ({s_att}/{s_cond}) — {badge}"
                 )
 
         badge_footer = self._format_provenance_badge(result)
@@ -190,12 +199,31 @@ class AttendanceRenderer:
             "<b>Overall Attendance:</b>",
             "",
             (
-                f"• <b>Current:</b> {format_percentage(cum_pct)} "
+                f"• <b>Overall:</b> {format_percentage(cum_pct)} "
                 f"({attended}/{conducted} attended)"
             ),
             f"• <b>Target:</b> {format_percentage(target)}",
             f"• <b>Margin:</b> {status_icon} {diff:+.1f}%",
         ]
+
+        # Add current month attendance if available
+        monthly_att = result.get("monthly_attended")
+        monthly_cond = result.get("monthly_conducted")
+        monthly_pct = result.get("monthly_percentage")
+        monthly_period = result.get("monthly_period")
+        if monthly_att is not None and monthly_cond is not None and monthly_cond > 0:
+            pct_val = (
+                monthly_pct
+                if monthly_pct is not None
+                else round((monthly_att / monthly_cond) * 100.0, 2)
+            )
+            period_label = (
+                f" ({monthly_period})" if monthly_period else " (This Month)"
+            )
+            lines.append(
+                f"• <b>Monthly{period_label}:</b> {format_percentage(pct_val)} "
+                f"({monthly_att}/{monthly_cond} attended)"
+            )
 
         badge_footer = self._format_provenance_badge(result)
         if badge_footer:
@@ -319,5 +347,8 @@ class AttendanceRenderer:
         self, result: dict[str, Any], student_context: StudentContext
     ) -> str:
         """Fallback for generic attendance tool results."""
-        msg = result.get("message", str(result))
+        if isinstance(result, dict) and "message" in result:
+            msg = str(result["message"])
+        else:
+            msg = "Attendance details processed successfully."
         return f"<b>Attendance Update:</b>\n\n{msg}"

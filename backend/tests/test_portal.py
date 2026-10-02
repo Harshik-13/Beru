@@ -926,3 +926,54 @@ class TestAuthenticatedSessionContinuity:
         assert attendance.overall_percentage_from_portal == 66.19
         assert any("semId=94" in u for u in requested_urls)
 
+    def test_parse_attendance_table_with_monthly_and_cumulative_totals(self):
+        """Verify DoctusParser correctly distinguishes monthly and cumulative totals and captures header month."""
+        html = """
+        <select id='StdSemPop'>
+            <option value="102" selected>BT25290203</option>
+        </select>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Subject Code</th>
+                    <th>October, 2026</th>
+                    <th>Cumulative</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>25PC1CS201</td>
+                    <td>2 / 2</td>
+                    <td>24 / 35</td>
+                </tr>
+                <tr>
+                    <td>25PC1CY201</td>
+                    <td>4 / 4</td>
+                    <td>154 / 271</td>
+                </tr>
+                <tr>
+                    <th>Total</th>
+                    <th>6 / 6 (100.00)</th>
+                    <th>178 / 306 (58.17)</th>
+                </tr>
+            </tbody>
+        </table>
+        """
+        att = DoctusParser.parse_attendance(html)
+        assert att.semester_id == "102"
+        # Overall must be the cumulative metric, NOT the monthly metric
+        assert att.overall_attended == 178
+        assert att.overall_conducted == 306
+        assert att.overall_percentage_from_portal == 58.17
+        # Monthly metrics
+        assert att.monthly_attended == 6
+        assert att.monthly_conducted == 6
+        assert att.monthly_percentage_from_portal == 100.0
+        assert att.monthly_period == "October, 2026"
+        # Subjects
+        assert len(att.subjects) == 2
+        assert att.subjects[0].subject_code == "25PC1CS201"
+        assert att.subjects[0].monthly_period == "October, 2026"
+        assert att.subjects[0].monthly_attended == 2
+        assert att.subjects[0].cumulative_attended == 24
+

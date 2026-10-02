@@ -163,6 +163,7 @@ def create_default_renderer_registry() -> ResponseRendererRegistry:
         "find_faculty_details",
         "find_room_details",
         "query_schedule_analytics",
+        "get_course_mapping",
     }
     registry.register_many(timetable_tools, schedule_renderer)
 

@@ -1030,6 +1030,22 @@ async def query_schedule_analytics(
     return {"status": "none", "message": f"Unsupported metric: {metric}"}
 
 
+async def get_course_mapping(
+    service: "TimetableService",
+    student_id: str,
+) -> dict:
+    """Get mapping of course codes to friendly subject names from confirmed timetable."""
+    from uuid import UUID
+
+    uid = UUID(student_id)
+    mappings = await service.get_course_mapping(uid)
+    return {
+        "status": "success",
+        "mappings": mappings,
+        "count": len(mappings),
+    }
+
+
 # Tool definitions for registry
 TIMETABLE_TOOL_DEFINITIONS = [
     {
@@ -1695,6 +1711,42 @@ TIMETABLE_TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "name": "get_course_mapping",
+        "description": (
+            "Look up course codes and their friendly subject names (e.g. 25PC1CS201 -> OOPJ, "
+            "25PC1CY201 -> CN) from the student's confirmed timetable. Use this when the student asks "
+            "what a course code stands for, which code corresponds to which subject, or to resolve course abbreviations."
+        ),
+        "arguments_schema": {
+            "type": "object",
+            "properties": {
+                "student_id": {"type": "string", "format": "uuid"},
+            },
+            "required": ["student_id"],
+        },
+        "result_schema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string"},
+                "mappings": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "course_code": {"type": "string"},
+                            "course_name": {"type": "string"},
+                            "activity_type": {"type": "string"},
+                            "status": {"type": "string"},
+                            "source": {"type": "string"},
+                            "alternatives": {"type": "array", "items": {"type": "string"}},
+                        },
+                    },
+                },
+                "count": {"type": "integer"},
+            },
+        },
+    },
 ]
 
 
@@ -1768,4 +1820,6 @@ async def execute_timetable_tool(
         return await find_room_details(service, student_id, **kwargs)
     if tool_name == "query_schedule_analytics":
         return await query_schedule_analytics(service, student_id, **kwargs)
+    if tool_name == "get_course_mapping":
+        return await get_course_mapping(service, student_id)
     raise ValueError(f"Unknown timetable tool: {tool_name}")

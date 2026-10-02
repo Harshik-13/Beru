@@ -24,6 +24,7 @@ ATOMIC_QUERY_TOOLS: frozenset[str] = frozenset({
     "find_activity_details",
     "find_faculty_details",
     "find_room_details",
+    "get_course_mapping",
 })
 
 if TYPE_CHECKING:
@@ -498,6 +499,7 @@ class ConversationService:
                 "find_faculty_details",
                 "find_room_details",
                 "query_schedule_analytics",
+                "get_course_mapping",
             }
 
             # Attendance tools that may need TimetableService or AttendanceService
@@ -510,7 +512,6 @@ class ConversationService:
                 "get_subjects_below_target",
                 "calculate_classes_needed",
                 "get_attendance_snapshot_info",
-                "get_subject_codes",
                 "sync_attendance",
             }
 
@@ -553,14 +554,47 @@ class ConversationService:
                     arguments=clean_arguments,
                 )
 
-            # Format tool result
+            # Format tool result with sanitized summary (scrubs tokens, passwords, cookies, raw HTML)
+            from app.intelligence.models.context import (
+                ReferencedEntity,
+                sanitize_result_summary,
+            )
+
             tool_result = ToolResultRef(
                 tool_name=tool_req["name"],
                 arguments=clean_arguments,
-                result_summary=str(result)[:200],
+                result_summary=sanitize_result_summary(result),
                 success=True,
             )
             new_conv = student_context.conversation.add_tool_result(tool_result)
+
+            # Update bounded dialogue state on verified successful tool execution
+            tool_name = tool_req["name"]
+            domain = "attendance" if tool_name in attendance_tools else "timetable"
+            sem_id = clean_arguments.get("semester_id") or (
+                result.get("semester_id") if isinstance(result, dict) else None
+            )
+            entity_val = (
+                clean_arguments.get("subject_code")
+                or clean_arguments.get("course_code")
+                or clean_arguments.get("activity_name")
+            )
+            new_conv = new_conv.update_dialogue_state(
+                domain=domain,
+                intent=tool_name,
+                tool=tool_name,
+                entity=entity_val,
+                semester=sem_id,
+            )
+            if sem_id:
+                new_conv = new_conv.add_referenced_entity(
+                    ReferencedEntity(
+                        entity_type="semester",
+                        identifier=str(sem_id),
+                        display_name=f"Semester {sem_id}",
+                        resolved_id=str(sem_id),
+                    )
+                )
 
             # Route response generation based on tool category:
             # 1. Atomic query tools -> Conversational synthesis using LLM + ConversationalResponsePolicy
@@ -596,6 +630,24 @@ class ConversationService:
                         user_message=user_message,
                     )
             else:
+                response = self.renderer_registry.render(
+                    tool_name=tool_req["name"],
+                    result=result,
+                    student_context=student_context,
+                    user_message=user_message,
+                )
+
+            # Defense-in-depth: Ensure raw dictionary or list string never leaks to student
+            stripped_resp = response.strip()
+            if (
+                (stripped_resp.startswith("{") and stripped_resp.endswith("}"))
+                or (stripped_resp.startswith("[") and stripped_resp.endswith("]"))
+                or stripped_resp.startswith("{'subject_codes'")
+            ):
+                logger.warning(
+                    "Raw data structure detected in response for tool %s. Rerendering via fallback.",
+                    tool_req["name"],
+                )
                 response = self.renderer_registry.render(
                     tool_name=tool_req["name"],
                     result=result,

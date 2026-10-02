@@ -97,6 +97,20 @@ class ContextBuilder:
             "- Use bold labels (<b>Time:</b>, <b>Room:</b>) and keep emojis minimal (functional alerts only)."
         )
 
+        # Natural Language Conversational Guidance
+        parts.append(
+            "Conversational Interpretation & Reasoning Principles:\n"
+            "- Infer intent naturally from conversation context without requiring specific keywords.\n"
+            "- When a student asks follow-up questions such as 'Per subject?', 'Break it down', "
+            "or 'Show subjects', resolve the omitted subject from context (e.g. if the previous turn "
+            "was about attendance, select 'get_attendance_summary' with inherited semester).\n"
+            "- When a student asks about course codes, course abbreviations, or subject names (e.g. "
+            "'Which subject is 25PC1CS201?' or 'What does OOPJ stand for?'), call 'get_course_mapping' "
+            "to look up friendly subject names from their confirmed timetable.\n"
+            "- If the student's request is genuinely ambiguous across multiple subjects or options, "
+            "proactively ask for clarification with candidates rather than guessing."
+        )
+
         return "\n\n".join(parts)
 
     def _format_student_context(self, ctx: StudentContext) -> str:
@@ -166,6 +180,21 @@ class ContextBuilder:
     def _format_conversation_context(self, ctx: StudentContext) -> str:
         conv = ctx.conversation
         lines = ["Conversation Context:"]
+
+        # Dialogue State
+        dialogue_items = []
+        if conv.last_domain:
+            dialogue_items.append(f"Domain: {conv.last_domain}")
+        if conv.last_intent:
+            dialogue_items.append(f"Last Intent: {conv.last_intent}")
+        if conv.last_tool:
+            dialogue_items.append(f"Last Tool: {conv.last_tool}")
+        if conv.last_entity:
+            dialogue_items.append(f"Last Entity: {conv.last_entity}")
+        if conv.last_semester:
+            dialogue_items.append(f"Semester: {conv.last_semester}")
+        if dialogue_items:
+            lines.append(f"  Dialogue State: {' | '.join(dialogue_items)}")
 
         # Recent messages
         if ctx.conversation.recent_messages:

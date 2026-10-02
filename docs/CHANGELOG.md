@@ -1,6 +1,62 @@
 # CHANGELOG.md — Beru
 
-## 2026-10-02 — Doctus App Workspace, STDINFO Widget Discovery & Undefined semId Attendance Alignment
+## 2026-10-02 — Dual Overall & Monthly Attendance Reporting, Dialogue State Tracking & Dynamic Course Mapping
+
+### Task / Change
+Implemented independent extraction and dual reporting of cumulative overall attendance and current month attendance (e.g. October, 2026); resolved Doctus parser aggregate collision; added bounded dialogue state tracking (`last_domain`, `last_intent`, `last_tool`, `last_entity`, `last_semester`) for natural follow-up reasoning ("Per subject?") without keyword matching; implemented `get_course_mapping` dynamic timetable code correlation with conflict reporting; removed `get_subject_codes` from tool definitions; and established defense-in-depth raw output interception and secret redaction.
+
+### Why
+1. Live portal inspection established that EduPrime attendance widgets provide two aggregate fractions in the total row: monthly totals (e.g. `6 / 6 (100)`) and cumulative totals (e.g. `178 / 306 (58.17)`). The legacy parser grabbed the first fraction via regex, mistakenly reporting current monthly attendance as the student's overall attendance.
+2. Natural conversational follow-up turns like "Per subject?" or "Break it down" were previously stateless, failing to infer the omitted subject/domain without brittle keyword matching.
+3. Students asking what a course code stands for had no focused lookup tool, causing either full weekly schedule dumps or exposing raw subject code dictionaries.
+4. Credential and portal security required robust secret redaction from conversation history and runtime interception against raw dict/JSON leaks to Telegram.
+
+### What Changed
+- `backend/app/integrations/portal/dto.py`:
+  - Added `monthly_attended`, `monthly_conducted`, `monthly_percentage_from_portal`, and `monthly_period` to `PortalAttendance`.
+- `backend/app/integrations/portal/parser.py`:
+  - Implemented `_parse_overall_and_monthly` to parse monthly and cumulative attendance independently.
+  - Added disambiguation for Fraction-First (`X / Y (P%)`) and Percentage-First (`P% (X / Y)`) totals.
+  - Added extraction of monthly header period (e.g. `October, 2026`).
+  - Preserved portal-computed aggregates while reconciling subject sums.
+- `backend/app/integrations/portal/sync_service.py`:
+  - Corrected credential repo argument order in `update_status` and `update_sync_timestamp`.
+- `backend/app/intelligence/models/context.py`:
+  - Added `last_domain`, `last_intent`, `last_tool`, `last_entity`, and `last_semester` to `ConversationContext`.
+  - Added `update_dialogue_state()` method.
+  - Implemented `sanitize_result_summary()` with HTML stripping and pattern redaction for sensitive keys and tokens.
+- `backend/app/intelligence/services/attendance_service.py`:
+  - Added `monthly_attended`, `monthly_conducted`, `monthly_percentage`, `monthly_period` to `OverallAttendanceResult`.
+  - Added `classes_needed` to `SubjectAttendanceResult`.
+  - Added `_get_confirmed_timetable_mapping` to correlate attendance subject codes with confirmed timetable names.
+- `backend/app/intelligence/services/timetable_service.py`:
+  - Implemented `get_course_mapping(student_id)`: correlates codes to friendly names from confirmed timetable entries; marks conflicting entries with `status="conflict"` and alternatives instead of guessing.
+- `backend/app/intelligence/tools/timetable_tools.py`:
+  - Added `get_course_mapping` function, registered in `TIMETABLE_TOOL_DEFINITIONS`, and wired in `execute_timetable_tool`.
+- `backend/app/intelligence/tools/attendance_tools.py`:
+  - Removed `get_subject_codes` from tool definitions.
+  - Added `semester_id` support and forwarded monthly attendance fields.
+- `backend/app/intelligence/rendering/attendance_renderer.py`:
+  - Updated overall attendance card to render both Overall Attendance (cumulative) and Current Month Attendance with badge indicators.
+  - Updated subject breakdown to display `Name (Code)`.
+- `backend/app/intelligence/rendering/schedule_renderer.py`:
+  - Added `render_course_mapping` for course code lookups and conflicts.
+- `backend/app/intelligence/rendering/registry.py`:
+  - Registered `get_course_mapping` in timetable tools.
+- `backend/app/intelligence/services/context_builder.py`:
+  - Injected dialogue state and multi-turn conversational reasoning guidelines into the system prompt.
+- `backend/app/intelligence/services/conversation.py`:
+  - Added `get_course_mapping` to `ATOMIC_QUERY_TOOLS` for natural conversational synthesis.
+  - Automatically records dialogue state upon successful tool execution.
+  - Added defense-in-depth interceptor catching raw dict/JSON output and forcing fallback rerendering.
+- `backend/tests/`:
+  - Added `test_conversational_multi_turn.py` (multi-turn follow-ups, course mapping, conflict reporting).
+  - Added `test_raw_output_prevention.py` (data scrubbing, fallback renderer defense).
+  - Added `test_parse_attendance_table_with_monthly_and_cumulative_totals` in `test_portal.py`.
+
+### Verification
+- 423/423 full repository tests passing (`pytest backend/tests/ -q`).
+- Zero regressions in existing timetable, briefing, portal, and security suites.
 
 ### Task / Change
 Replaced hypothetical `/Student/Dashboard` route with verified `/App` workspace and `/Shared/Widget/STDINFO` widget extraction; stored protected student ID strictly in-memory within `DoctusSession` for the sync lifecycle without persistence or roll-number leakage; implemented unified attendance and semester discovery via `GET /Academic/Shared/GetStdAttPer?studentId=<id>&semId=undefined` (with secondary call only if caller explicitly requests a different semester); added request-specific redirect defense with `follow_redirects=False` halting any 301/302 redirects to `/` or `/Login` before the server can expire the session cookie; and updated the HTML parser to dynamically derive active semester selection and handle multiple attendance text/fraction formats.

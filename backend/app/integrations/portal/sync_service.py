@@ -310,9 +310,10 @@ class PortalSyncService:
                 await adapter.login(credential.roll_number, password)
             except DoctusLoginError as e:
                 await self.credential_repo.update_status(
-                    credential.id,
+                    student_id,
+                    credential.portal,
                     PortalCredentialStatus.RECONNECT_REQUIRED,
-                    failure=True,
+                    last_auth_failure_at=datetime.now(UTC),
                 )
                 await self.session.commit()
                 raise PortalLoginError(
@@ -339,11 +340,13 @@ class PortalSyncService:
             )
 
             now = datetime.now(UTC)
-            await self.credential_repo.update_sync_timestamp(credential.id, now)
+            await self.credential_repo.update_sync_timestamp(
+                student_id, credential.portal, now
+            )
             await self.credential_repo.update_status(
-                credential.id,
+                student_id,
+                credential.portal,
                 PortalCredentialStatus.CONNECTED,
-                failure=False,
             )
             await self.session.commit()
 

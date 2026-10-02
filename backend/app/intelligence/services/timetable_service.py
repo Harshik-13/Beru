@@ -12,6 +12,7 @@ Handles:
 
 from contextlib import suppress
 from datetime import date, datetime, time, timedelta
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -417,3 +418,64 @@ class TimetableService:
                 count += 1
 
         return count
+
+    async def get_course_mapping(self, student_id: UUID) -> list[dict[str, Any]]:
+        """
+        Extract course code to friendly name mappings from the student's CONFIRMED timetable.
+
+        Returns a list of mapping dicts:
+        [
+            {
+                "course_code": str,
+                "course_name": str,
+                "activity_type": str,
+                "status": "resolved" | "conflict",
+                "source": "confirmed_timetable",
+                "alternatives": list[str] (only present if conflict)
+            }
+        ]
+        """
+        timetable = await self.get_confirmed_timetable(student_id)
+        if not timetable:
+            return []
+
+        entries = await self.entry_repo.get_for_timetable(timetable.id)
+        code_entries: dict[str, set[str]] = {}
+        code_types: dict[str, set[str]] = {}
+
+        for entry in entries:
+            code = entry.course_code.strip().upper() if entry.course_code else None
+            name = entry.activity_name.strip() if entry.activity_name else None
+            if not code or not name:
+                continue
+            code_entries.setdefault(code, set()).add(name)
+            act_type = (
+                entry.activity_type.value
+                if hasattr(entry.activity_type, "value")
+                else str(entry.activity_type)
+            )
+            code_types.setdefault(code, set()).add(act_type)
+
+        results = []
+        for code in sorted(code_entries.keys()):
+            names = sorted(code_entries[code])
+            types = list(code_types.get(code, set()))
+            act_type = types[0] if len(types) == 1 else "MIXED"
+            if len(names) == 1:
+                results.append({
+                    "course_code": code,
+                    "course_name": names[0],
+                    "activity_type": act_type,
+                    "status": "resolved",
+                    "source": "confirmed_timetable",
+                })
+            else:
+                results.append({
+                    "course_code": code,
+                    "course_name": " / ".join(names),
+                    "activity_type": act_type,
+                    "status": "conflict",
+                    "source": "confirmed_timetable",
+                    "alternatives": names,
+                })
+        return results
