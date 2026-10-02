@@ -4,6 +4,7 @@
 
 | Commit | Date | Purpose | Subsystem | Verification |
 |--------|------|---------|-----------|--------------|
+| `dc82254` | 2026-10-02 | Align Doctus integration with App workspace, STDINFO widget, and undefined semId flow | Portal, Sync, Parser | 416 tests pass |
 | `a72e07e` | 2026-10-02 | Direct GetStdAttPer attendance retrieval, timetable semId resolution, and redirect diagnostics | Portal, Sync, Parser | 416 tests pass |
 | `1427eee` | 2026-10-01 | Reproduce browser document request on /Student/Dashboard and validate semId | Portal, Sync, Parser | 414 tests pass |
 | `2b2f301` | 2026-10-01 | Align get_semesters to /Student/Dashboard and fix frozen PortalAttendance construction | Portal, Parser, Attendance | 414 tests pass |
