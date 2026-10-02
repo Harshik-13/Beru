@@ -21,6 +21,7 @@ else:
     pass
 
 from app.core.config import settings
+from app.integrations.portal.dto import PortalAttendance, SemesterOption
 from app.integrations.portal.parser import DoctusParser, DoctusParserError
 
 
@@ -95,6 +96,8 @@ class DoctusAdapter:
 
     BASE_URL = settings.portal_base_url.rstrip("/")
     LOGIN_ENDPOINT = "/Login"
+    APP_ENDPOINT = "/App"
+    STDINFO_WIDGET_ENDPOINT = "/Shared/Widget/STDINFO"
     ATTENDANCE_ENDPOINT = "/Academic/Shared/GetStdAttPer"
 
     BROWSER_USER_AGENT = (
@@ -231,20 +234,25 @@ class DoctusAdapter:
                     error_msg = raw_msg.strip()
             raise DoctusLoginError(f"Login failed: {error_msg}")
 
+        self._roll_number = roll_number.strip().upper()
+
         # Retain authenticated navigation/landing path if returned in Data
         if isinstance(data.get("Data"), str) and data["Data"].startswith("/"):
             self._dashboard_path = data["Data"]
 
         # Extract protected student ID from login response dictionary if present;
-        # otherwise fall back to normalized roll number (never treat redirect URLs as ID)
+        # otherwise leave empty to discover in-memory from STDINFO
         protected_student_id = self._extract_protected_student_id_from_response(data)
-        if not protected_student_id:
-            protected_student_id = roll_number.strip().upper()
 
         # Build session using authoritative self._client.cookies
         session = DoctusSession(
             cookies=self._client.cookies,
             protected_student_id=protected_student_id,
+        )
+
+        logger.info(
+            "Login successful. Session cookies established: %s",
+            list(self._client.cookies.keys()),
         )
 
         self._session = session
@@ -264,6 +272,22 @@ class DoctusAdapter:
                     candidate = str(val).strip()
                     if not candidate.startswith("/"):
                         return candidate
+        return ""
+
+    @staticmethod
+    def _extract_protected_student_id_from_stdinfo(text: str) -> str:
+        """
+        Extract protected student ID embedded in STDINFO widget JavaScript.
+
+        Matches function popAtt pattern: Academic/Shared/GetStdAttPer?studentId=<PROTECTED_ID>&semId=
+        """
+        match = re.search(
+            r'Academic/Shared/GetStdAttPer\?studentId=([a-zA-Z0-9_\-]+)',
+            text,
+            re.IGNORECASE,
+        )
+        if match and match.group(1).strip():
+            return match.group(1).strip()
         return ""
 
     def _extract_protected_student_id_from_html(self, html: str) -> str:
@@ -304,114 +328,179 @@ class DoctusAdapter:
 
         return ""
 
-    async def get_semesters(self):
+    def _check_redirect_and_raise(self, response: httpx.Response, endpoint_name: str) -> None:
         """
-        Retrieve available semester options.
+        Detect redirects indicating unauthenticated session challenge or redirect to login.
+        Halts immediately without following redirect, preventing session cookie expiration.
+        """
+        if response.status_code in (301, 302, 303, 307, 308):
+            loc = response.headers.get("location", "/")
+            logger.warning(
+                "%s received redirect (status %s) to %s",
+                endpoint_name,
+                response.status_code,
+                loc,
+            )
+            raise DoctusSessionError(
+                f"College portal session was redirected to {loc}; checking authentication."
+            )
+        if response.history and any(
+            r.status_code in (301, 302, 303, 307, 308) for r in response.history
+        ):
+            first_redirect = response.history[0]
+            loc = first_redirect.headers.get("location", str(response.url))
+            logger.warning(
+                "%s followed redirect (status %s) to %s",
+                endpoint_name,
+                first_redirect.status_code,
+                loc,
+            )
+            raise DoctusSessionError(
+                f"College portal session was redirected to {loc}; checking authentication."
+            )
 
-        Requests the post-login landing route (/Student/Dashboard) with fallback to legacy
-        /Academic/Student/Attendance, extracts internal student ID from HTML if present,
-        and parses semester options.
-
-        Returns:
-            List of SemesterOption objects
+    async def get_app_workspace(self) -> str:
+        """
+        Request /App workspace to establish session context.
+        Uses follow_redirects=False to prevent automated redirection to root.
         """
         if not self._session:
             raise DoctusSessionError("Not authenticated. Call login() first.")
-
         if not self._client:
             raise RuntimeError("Client not initialized")
 
-        target_url = getattr(self, "_dashboard_path", None) or "/Student/Dashboard"
         doc_headers = {
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Upgrade-Insecure-Requests": "1",
             "Referer": f"{self.BASE_URL}{self.LOGIN_ENDPOINT}",
         }
         try:
             response = await self._client.get(
-                target_url,
-                cookies=self._session.cookies,
+                self.APP_ENDPOINT,
                 headers=doc_headers,
+                follow_redirects=False,
             )
-            # If landing route returned 404 and was not already the legacy path, attempt legacy fallback
-            if response.status_code == 404 and target_url != "/Academic/Student/Attendance":
-                response = await self._client.get(
-                    "/Academic/Student/Attendance",
-                    cookies=self._session.cookies,
-                    headers=doc_headers,
-                )
         except httpx.TimeoutException as e:
-            raise DoctusAdapterError("Semester request timed out") from e
+            raise DoctusAdapterError("App workspace request timed out") from e
         except httpx.RequestError as e:
-            raise DoctusAdapterError(f"Semester request failed: {e}") from e
+            raise DoctusAdapterError(f"App workspace request failed: {e}") from e
+
+        self._check_redirect_and_raise(response, "AppWorkspace")
 
         if response.status_code == 401:
             raise DoctusSessionError("Session expired or invalid")
         if response.status_code != 200:
             raise DoctusAdapterError(
-                f"Semester request failed with status {response.status_code}"
+                f"App workspace request failed with status {response.status_code}"
             )
 
-        # Attempt to extract actual internal student ID from the dashboard HTML to enrich session
-        extracted_id = self._extract_protected_student_id_from_html(response.text)
-        if extracted_id and extracted_id != self._session.protected_student_id:
-            self._session = DoctusSession(
-                cookies=self._session.cookies,
-                protected_student_id=extracted_id,
-            )
+        return response.text
 
-        # Parse semester options from the page
-        try:
-            semesters = DoctusParser.parse_semester_options(response.text)
-        except DoctusParserError as e:
-            raise DoctusParseError("Failed to parse semesters", e) from e
-
-        return semesters
-
-    async def get_attendance(self, semester_id: str):
+    async def get_stdinfo_widget(self) -> str:
         """
-        Retrieve attendance data for a specific semester.
-
-        Args:
-            semester_id: The semester identifier from get_semesters()
-
-        Returns:
-            PortalAttendance object
+        Fetch the STDINFO widget from /Shared/Widget/STDINFO to obtain the protected student ID.
+        Stores the extracted student ID in the in-memory DoctusSession for this sync lifecycle.
         """
         if not self._session:
             raise DoctusSessionError("Not authenticated. Call login() first.")
-
         if not self._client:
             raise RuntimeError("Client not initialized")
 
-        # Build attendance request URL with protected student ID
-        protected_student_id = self._extract_protected_student_id()
+        # Establish /App context first if not yet requested
+        if not getattr(self, "_app_visited", False):
+            try:
+                await self.get_app_workspace()
+                self._app_visited = True
+            except Exception as e:
+                logger.debug("Visiting /App resulted in: %s", e)
+
+        headers = {
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": f"{self.BASE_URL}{self.APP_ENDPOINT}",
+            "Accept": "text/html, */*; q=0.01",
+        }
+        try:
+            response = await self._client.get(
+                self.STDINFO_WIDGET_ENDPOINT,
+                headers=headers,
+                follow_redirects=False,
+            )
+        except httpx.TimeoutException as e:
+            raise DoctusAdapterError("STDINFO widget request timed out") from e
+        except httpx.RequestError as e:
+            raise DoctusAdapterError(f"STDINFO widget request failed: {e}") from e
+
+        self._check_redirect_and_raise(response, "STDINFO")
+
+        if response.status_code == 401:
+            raise DoctusSessionError("Session expired or invalid")
+        if response.status_code != 200:
+            raise DoctusAdapterError(
+                f"STDINFO request failed with status {response.status_code}"
+            )
+
+        extracted_id = self._extract_protected_student_id_from_stdinfo(response.text)
+        if not extracted_id:
+            extracted_id = self._extract_protected_student_id_from_html(response.text)
+
+        if extracted_id:
+            self._session = DoctusSession(
+                cookies=self._client.cookies,
+                protected_student_id=extracted_id,
+            )
+            logger.info("Discovered protected student ID from STDINFO widget")
+        else:
+            logger.warning("Could not extract protected student ID from STDINFO widget")
+
+        return extracted_id
+
+    async def get_attendance_and_semesters(
+        self,
+        target_semester_id: str | None = None,
+    ) -> tuple[PortalAttendance, list[SemesterOption]]:
+        """
+        Retrieve attendance data and discover semester options.
+
+        First calls GetStdAttPer with semId=undefined (or target_semester_id if specified),
+        which the portal accepts and returns the #StdSemPop options along with the attendance
+        for the default selected semester.
+
+        If target_semester_id is specified and differs from the discovered default selected
+        semester, makes a second query specifically for that semester.
+        """
+        if not self._session:
+            raise DoctusSessionError("Not authenticated. Call login() first.")
+        if not self._client:
+            raise RuntimeError("Client not initialized")
+
+        # Discover protected student ID if not yet available in-memory
+        protected_student_id = self._session.protected_student_id
+        if not protected_student_id or protected_student_id == getattr(self, "_roll_number", ""):
+            discovered = await self.get_stdinfo_widget()
+            if discovered:
+                protected_student_id = discovered
+
         if not protected_student_id:
-            # Try to extract from the last fetched page (semester page)
-            if not self._session.protected_student_id:
-                # We need to fetch a page to extract it
-                raise DoctusSessionError(
-                    "Protected student ID not available. Call get_semesters() first."
-                )
-            protected_student_id = self._session.protected_student_id
+            raise DoctusSessionError("Protected student ID not available from portal.")
 
-        # Build attendance request URL with protected student ID
-        url = (
-            f"{self.ATTENDANCE_ENDPOINT}?"
-            f"studentId={protected_student_id}&semId={semester_id}"
-        )
+        # Explicit sem_id parameter: 'undefined' for initial discovery/default
+        if target_semester_id is None or target_semester_id.strip() == "":
+            sem_id = "undefined"
+        else:
+            sem_id = target_semester_id.strip()
 
+        attendance_url = f"{self.ATTENDANCE_ENDPOINT}?studentId={protected_student_id}&semId={sem_id}"
         ajax_headers = {
             "X-Requested-With": "XMLHttpRequest",
             "Accept": "application/json, text/javascript, */*; q=0.01",
-            "Referer": f"{self.BASE_URL}/Student/Dashboard",
+            "Referer": f"{self.BASE_URL}{self.APP_ENDPOINT}",
         }
 
         try:
             response = await self._client.get(
-                url,
-                cookies=self._session.cookies,
+                attendance_url,
                 headers=ajax_headers,
+                follow_redirects=False,
             )
         except httpx.TimeoutException as e:
             raise DoctusAdapterError("Attendance request timed out") from e
@@ -425,32 +514,7 @@ class DoctusAdapter:
             response.url,
         )
 
-        # Detect redirects indicating unauthenticated session challenge
-        if response.history and any(
-            r.status_code in (301, 302, 303, 307, 308) for r in response.history
-        ):
-            first_redirect = response.history[0]
-            loc = first_redirect.headers.get("location", str(response.url))
-            logger.warning(
-                "GetStdAttPer request was redirected (status %s) to %s (final url: %s)",
-                first_redirect.status_code,
-                loc,
-                response.url,
-            )
-            raise DoctusSessionError(
-                f"College portal session was redirected to {loc}; checking authentication."
-            )
-
-        if response.status_code in (301, 302, 303, 307, 308):
-            loc = response.headers.get("location", "/")
-            logger.warning(
-                "GetStdAttPer received direct redirect %s to %s",
-                response.status_code,
-                loc,
-            )
-            raise DoctusSessionError(
-                f"College portal session was redirected to {loc}; checking authentication."
-            )
+        self._check_redirect_and_raise(response, "GetStdAttPer")
 
         if response.status_code == 401:
             raise DoctusSessionError("Session expired or invalid")
@@ -459,40 +523,73 @@ class DoctusAdapter:
                 f"Attendance request failed with status {response.status_code}"
             )
 
-        # Parse JSON response
         try:
             data = response.json()
         except ValueError as e:
             raise DoctusAdapterError("Invalid attendance response format") from e
 
-        logger.info(
-            "GetStdAttPer JSON response Status: %s, keys: %s",
-            data.get("Status"),
-            list(data.keys()) if isinstance(data, dict) else [],
-        )
-
-        if data.get("Status") != 1:
-            raise DoctusAdapterError(
-                f"Attendance API returned error: {data.get('Data', 'Unknown error')}"
-            )
+        if not isinstance(data, dict) or data.get("Status") != 1:
+            err_msg = data.get("Data", "Unknown error") if isinstance(data, dict) else "Unknown error"
+            raise DoctusAdapterError(f"Attendance API returned error: {err_msg}")
 
         html = data.get("Data", "")
         if not html:
             raise DoctusAdapterError("Empty attendance data")
 
-        # Parse attendance HTML
-        try:
-            attendance = DoctusParser.parse_attendance(html, semester_id)
-        except DoctusParserError as e:
-            raise DoctusParseError("Failed to parse attendance", e) from e
+        # Parse semester options from the HTML
+        semesters = DoctusParser.parse_semester_options(html)
+        default_selected_sem = next((s for s in semesters if s.is_selected), None)
+        selected_sem_id = default_selected_sem.semester_id if default_selected_sem else (
+            semesters[0].semester_id if semesters else sem_id
+        )
 
+        # Parse attendance from HTML (resolving semester ID dynamically)
+        attendance = DoctusParser.parse_attendance(
+            html,
+            semester_id=selected_sem_id if sem_id == "undefined" else sem_id,
+        )
+
+        # If user explicitly requested a specific semester that differs from default returned,
+        # issue secondary request for that specific semester ID
+        if sem_id != "undefined" and default_selected_sem and sem_id != default_selected_sem.semester_id:
+            logger.info("Fetching explicitly requested non-default semester: %s", sem_id)
+            specific_url = f"{self.ATTENDANCE_ENDPOINT}?studentId={protected_student_id}&semId={sem_id}"
+            try:
+                spec_response = await self._client.get(
+                    specific_url,
+                    headers=ajax_headers,
+                    follow_redirects=False,
+                )
+            except Exception as e:
+                raise DoctusAdapterError(f"Secondary attendance request failed: {e}") from e
+
+            self._check_redirect_and_raise(spec_response, "GetStdAttPer(specific)")
+            if spec_response.status_code == 200:
+                spec_data = spec_response.json()
+                if isinstance(spec_data, dict) and spec_data.get("Status") == 1:
+                    spec_html = spec_data.get("Data", "")
+                    if spec_html:
+                        attendance = DoctusParser.parse_attendance(spec_html, semester_id=sem_id)
+
+        return attendance, semesters
+
+    async def get_semesters(self) -> list[SemesterOption]:
+        """
+        Retrieve available semester options.
+        """
+        _, semesters = await self.get_attendance_and_semesters()
+        return semesters
+
+    async def get_attendance(self, semester_id: str) -> PortalAttendance:
+        """
+        Retrieve attendance data for a specific semester.
+        """
+        attendance, _ = await self.get_attendance_and_semesters(target_semester_id=semester_id)
         return attendance
 
     def _extract_protected_student_id(self) -> str:
         """
         Extract the protected student ID from the session.
-
-        Returns the already-extracted ID.
         """
         if not self._session:
             return ""

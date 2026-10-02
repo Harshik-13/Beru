@@ -49,7 +49,7 @@ class DoctusParser:
         for option in select.find_all("option"):
             sem_id = option.get("value")
             if sem_id:
-                is_selected = option.get("selected") is not None
+                is_selected = "selected" in option.attrs or option.get("selected") is not None
                 options.append(
                     SemesterOption(
                         semester_id=sem_id,
@@ -60,15 +60,28 @@ class DoctusParser:
         return options
 
     @staticmethod
-    def parse_attendance(html: str, semester_id: str) -> PortalAttendance:
+    def parse_attendance(html: str, semester_id: str | None = None) -> PortalAttendance:
         """
         Parse the attendance HTML table into normalized DTO.
+
+        If semester_id is not supplied or is 'undefined', dynamically extracts
+        the selected semester from the HTML (#StdSemPop).
 
         Expected structure:
         - Overall attendance displayed prominently
         - Subject-wise table with monthly and cumulative columns
         """
         soup = BeautifulSoup(html, "html.parser")
+
+        # Resolve semester_id dynamically if omitted or 'undefined'
+        if not semester_id or semester_id == "undefined":
+            discovered_options = DoctusParser.parse_semester_options(html)
+            selected_option = next((s for s in discovered_options if s.is_selected), None)
+            if not selected_option and discovered_options:
+                selected_option = discovered_options[0]
+            resolved_semester_id = selected_option.semester_id if selected_option else "default"
+        else:
+            resolved_semester_id = semester_id
 
         # Find the main attendance table
         tables = soup.find_all("table")
@@ -102,7 +115,7 @@ class DoctusParser:
 
         return PortalAttendance(
             source="doctus",
-            semester_id=semester_id,
+            semester_id=resolved_semester_id,
             overall_attended=overall_attended,
             overall_conducted=overall_conducted,
             overall_percentage_from_portal=portal_pct,
@@ -116,27 +129,53 @@ class DoctusParser:
         """
         Parse overall attendance from the page.
 
-        Looks for patterns like "57.39" or "163 / 284 (57.39)"
+        Looks for patterns like "178 / 306 (58.17)", "Overall Attendance: 58.17% (178 / 306)",
+        "Overall Attendance 58.17", or "58.17%"
         """
         text = soup.get_text()
 
-        # Look for pattern like "163 / 284 (57.39)" or just "57.39"
-        # Pattern: X / Y (Z.ZZ)
-        pattern1 = r"(\d+)\s*/\s*(\d+)\s*\(([\d.]+)\)"
-        match = re.search(pattern1, text)
-        if match:
-            attended = int(match.group(1))
-            conducted = int(match.group(2))
-            pct = float(match.group(3))
-            return attended, conducted, pct
+        # 1. Pattern: X / Y (Z.ZZ)
+        match1 = re.search(r"(\d+)\s*/\s*(\d+)\s*\(([\d.]+)\)", text)
+        if match1:
+            return int(match1.group(1)), int(match1.group(2)), float(match1.group(3))
 
-        # Pattern: just percentage
-        pattern2 = r"(\d+\.\d+)\s*%"
-        match = re.search(pattern2, text)
-        if match:
-            pct = float(match.group(1))
-            # Can't determine counts from percentage alone
-            return 0, 0, pct
+        attended = 0
+        conducted = 0
+        pct = None
+
+        # 2. Check for percentage around Overall Attendance or general percentage
+        oa_match = re.search(
+            r"Overall\s+Attendance\s*[:\n\r\t]*\s*([\d.]+)\s*%?",
+            text,
+            re.IGNORECASE,
+        )
+        if oa_match:
+            try:
+                pct = float(oa_match.group(1))
+            except ValueError:
+                pass
+
+        if pct is None:
+            pct_match = re.search(r"(\d+\.\d+)\s*%", text)
+            if pct_match:
+                try:
+                    pct = float(pct_match.group(1))
+                except ValueError:
+                    pass
+
+        # 3. Check for fraction (e.g. (178 / 306) or 178 / 306)
+        frac_match = re.search(r"\(?\s*(\d+)\s*/\s*(\d+)\s*\)?", text)
+        if frac_match:
+            try:
+                att = int(frac_match.group(1))
+                cond = int(frac_match.group(2))
+                if att <= cond:
+                    attended, conducted = att, cond
+            except ValueError:
+                pass
+
+        if attended > 0 or conducted > 0 or pct is not None:
+            return attended, conducted, pct
 
         return 0, 0, None
 

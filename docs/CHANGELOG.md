@@ -1,5 +1,42 @@
 # CHANGELOG.md — Beru
 
+## 2026-10-02 — Doctus App Workspace, STDINFO Widget Discovery & Undefined semId Attendance Alignment
+
+### Task / Change
+Replaced hypothetical `/Student/Dashboard` route with verified `/App` workspace and `/Shared/Widget/STDINFO` widget extraction; stored protected student ID strictly in-memory within `DoctusSession` for the sync lifecycle without persistence or roll-number leakage; implemented unified attendance and semester discovery via `GET /Academic/Shared/GetStdAttPer?studentId=<id>&semId=undefined` (with secondary call only if caller explicitly requests a different semester); added request-specific redirect defense with `follow_redirects=False` halting any 301/302 redirects to `/` or `/Login` before the server can expire the session cookie; and updated the HTML parser to dynamically derive active semester selection and handle multiple attendance text/fraction formats.
+
+### Why
+Live portal investigation confirmed that:
+1. Modern EduPrime lands at `https://automation.vnrvjiet.ac.in/App`, not `/Student/Dashboard`.
+2. The protected internal student identifier required by `GetStdAttPer` is embedded in the `STDINFO` widget JavaScript (`function popAtt()`), and roll numbers are rejected with 401/302.
+3. The initial browser attendance call intentionally uses `semId=undefined`, which EduPrime accepts, returning the `#StdSemPop` selector and full attendance data for the default selected semester.
+4. Following an unexpected redirect to `/` causes the portal to send `Set-Cookie: relic_VNRVJIET=; expires=Thu, 01 Jan 1970`, expiring the authenticated session cookie.
+
+### What Changed
+- `backend/app/integrations/portal/doctus.py`:
+  - Added route constants `APP_ENDPOINT = "/App"` and `STDINFO_WIDGET_ENDPOINT = "/Shared/Widget/STDINFO"`.
+  - Added `_extract_protected_student_id_from_stdinfo()` regex parser.
+  - Added `_check_redirect_and_raise()` for request-specific redirect interception halting redirects to root/login.
+  - Added `get_app_workspace()` and `get_stdinfo_widget()` to discover protected student ID in-memory.
+  - Implemented `get_attendance_and_semesters(target_semester_id)` supporting initial `sem_id = "undefined"`.
+  - Updated `get_semesters()` and `get_attendance()` to delegate to `get_attendance_and_semesters()`.
+- `backend/app/integrations/portal/parser.py`:
+  - Updated `parse_semester_options()` to reliably detect boolean `selected` attribute.
+  - Updated `parse_attendance()` to dynamically extract the active semester ID from `#StdSemPop` when omitted or `undefined`.
+  - Enhanced `_parse_overall_attendance()` to extract fraction counts (`attended / conducted`) regardless of whether they precede or follow the percentage string.
+- `backend/app/integrations/portal/sync_service.py`:
+  - Streamlined `sync_attendance()` to call `adapter.get_attendance_and_semesters()` directly, saving round trips and eliminating invalid route redirects.
+- `backend/tests/test_portal.py`:
+  - Updated mocked suite to test `/App`, `/Shared/Widget/STDINFO`, and `semId=undefined`.
+  - Added tests for `_extract_protected_student_id_from_stdinfo`, dynamic semester derivation, and explicit non-default semester queries.
+
+### Verification
+- 48/48 portal unit tests passed (`pytest backend/tests/test_portal.py -v`).
+- 12/12 portal sync and freshness tests passed (`pytest backend/tests/test_portal_sync_and_freshness.py -v`).
+- 416/416 full repository regression tests passed cleanly (`pytest backend/tests/ -q`).
+
+---
+
 ## 2026-10-02 — Direct GetStdAttPer Attendance Alignment & Timetable Semester Resolution
 
 ### Task / Change

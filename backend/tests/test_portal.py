@@ -683,7 +683,7 @@ class TestAuthenticatedSessionContinuity:
 
     @pytest.mark.asyncio
     async def test_authenticated_session_continuity(self):
-        """Verify login session cookies are passed to downstream get_semesters call at /Student/Dashboard."""
+        """Verify login session cookies and flow to /App, STDINFO, and GetStdAttPer."""
         captured_requests = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -697,20 +697,34 @@ class TestAuthenticatedSessionContinuity:
             if request.method == "POST" and request.url.path == "/Login":
                 return httpx.Response(
                     200,
-                    json={"Status": 1, "Data": "/Student/Dashboard"},
+                    json={"Status": 1, "Data": "/App"},
                     headers={"Set-Cookie": ".AspNetCore.Cookies=aspnet_auth_xyz; path=/"},
                 )
-            if request.method == "GET" and request.url.path == "/Student/Dashboard":
-                html = """
-                <html>
-                    <body>
-                        <select id="StdSemPop">
-                            <option value="102">BT25290203</option>
-                        </select>
-                    </body>
-                </html>
+            if request.method == "GET" and request.url.path == "/App":
+                return httpx.Response(200, text="<html><body>Workspace</body></html>")
+            if request.method == "GET" and request.url.path == "/Shared/Widget/STDINFO":
+                js = """
+                function popAtt() {
+                    Helper.httpGet({
+                        url: "Academic/Shared/GetStdAttPer?studentId=prot_test_999&semId=" + $("#StdSemPop").val(),
+                        cb: function (result) { $("#popattdiv").html(result.Data); }
+                    });
+                }
                 """
-                return httpx.Response(200, text=html)
+                return httpx.Response(200, text=js)
+            if request.method == "GET" and request.url.path == "/Academic/Shared/GetStdAttPer":
+                html = """
+                <select id="StdSemPop" onchange="popAtt()">
+                    <option value=102 selected>BT25290203</option>
+                    <option value=94>BT25290102</option>
+                </select>
+                <div>Overall Attendance: 58.17% (178 / 306)</div>
+                <table>
+                    <tr><th>Subject Code</th><th>Cumulative</th></tr>
+                    <tr><td>25BS1MT204</td><td>9 / 27</td></tr>
+                </table>
+                """
+                return httpx.Response(200, json={"Status": 1, "Data": html})
             return httpx.Response(404)
 
         adapter = DoctusAdapter()
@@ -721,53 +735,46 @@ class TestAuthenticatedSessionContinuity:
 
         # Step 1 & 2: Login
         session = await adapter.login("25071A6231", "valid_pass")
-        assert session.protected_student_id == "25071A6231"
+        assert session is not None
 
-        # Step 3 & 4: Call get_semesters() using the established session
+        # Step 3: Call get_semesters() which discovers STDINFO and calls GetStdAttPer with semId=undefined
         semesters = await adapter.get_semesters()
-        assert len(semesters) == 1
+        assert len(semesters) == 2
         assert semesters[0].semester_id == "102"
+        assert semesters[0].is_selected is True
+        assert semesters[1].semester_id == "94"
 
-        # Step 5: Verify downstream request went to /Student/Dashboard as document GET
-        sem_request = captured_requests[-1]
-        assert sem_request.url.path == "/Student/Dashboard"
-        assert "x-requested-with" not in sem_request.headers
-        assert "text/html" in sem_request.headers.get("accept", "")
-        cookie_header = sem_request.headers.get("cookie", "")
+        # Verify in-memory protected student ID
+        assert adapter._session.protected_student_id == "prot_test_999"
+
+        # Verify initial attendance request sent semId=undefined
+        att_req = next(r for r in captured_requests if r.url.path == "/Academic/Shared/GetStdAttPer")
+        assert att_req.url.params.get("studentId") == "prot_test_999"
+        assert att_req.url.params.get("semId") == "undefined"
+        assert att_req.headers.get("x-requested-with") == "XMLHttpRequest"
+        cookie_header = att_req.headers.get("cookie", "")
         assert "OM5.Antiforgery=csrf_abc123" in cookie_header
         assert ".AspNetCore.Cookies=aspnet_auth_xyz" in cookie_header
 
     @pytest.mark.asyncio
-    async def test_login_success_with_redirect_url_data(self):
-        """Verify login succeeds when Data is a redirect URL and falls back to roll number."""
-        def handler(request: httpx.Request) -> httpx.Response:
-            if request.method == "GET" and request.url.path == "/Login":
-                return httpx.Response(
-                    200,
-                    text='<input name="__RequestVerificationToken" type="hidden" value="tok" />',
-                    headers={"Set-Cookie": "OM5.Antiforgery=cookie1; path=/"},
-                )
-            if request.method == "POST" and request.url.path == "/Login":
-                return httpx.Response(
-                    200,
-                    json={"Status": 1, "Data": "/Student/Dashboard"},
-                    headers={"Set-Cookie": ".AspNetCore.Cookies=cookie2; path=/"},
-                )
-            return httpx.Response(404)
-
-        adapter = DoctusAdapter()
-        adapter._client = httpx.AsyncClient(
-            transport=httpx.MockTransport(handler),
-            base_url=adapter.BASE_URL,
-        )
-
-        session = await adapter.login("25071a6231", "pass")
-        assert session.protected_student_id == "25071A6231"
-        assert session.protected_student_id != "/Student/Dashboard"
+    async def test_extract_protected_student_id_from_stdinfo(self):
+        """Verify regex extraction of protected student ID from STDINFO popAtt function."""
+        sample_js = """
+        function popAtt() {
+            Helper.httpGet({
+                url: "Academic/Shared/GetStdAttPer?studentId=SECURE_STUDENT_XYZ_777&semId=" + $("#StdSemPop").val(),
+                cb: function (result) {
+                    $("#popattdiv").html(result.Data);
+                }
+            });
+        }
+        """
+        extracted = DoctusAdapter._extract_protected_student_id_from_stdinfo(sample_js)
+        assert extracted == "SECURE_STUDENT_XYZ_777"
 
     @pytest.mark.asyncio
-    async def test_session_enriched_by_html_id_discovery(self):
-        """Verify session.protected_student_id is enriched when get_semesters discovers internal StdId in dashboard HTML."""
+    async def test_get_attendance_and_semesters_unified(self):
+        """Verify get_attendance_and_semesters returns both attendance and semester options in one call."""
         def handler(request: httpx.Request) -> httpx.Response:
             if request.method == "GET" and request.url.path == "/Login":
                 return httpx.Response(
@@ -775,108 +782,27 @@ class TestAuthenticatedSessionContinuity:
                     text='<input name="__RequestVerificationToken" type="hidden" value="tok" />',
                 )
             if request.method == "POST" and request.url.path == "/Login":
+                return httpx.Response(200, json={"Status": 1, "Data": "/App"})
+            if request.method == "GET" and request.url.path == "/App":
+                return httpx.Response(200, text="<html>App</html>")
+            if request.method == "GET" and request.url.path == "/Shared/Widget/STDINFO":
                 return httpx.Response(
                     200,
-                    json={"Status": 1, "Data": "/Student/Dashboard"},
-                )
-            if request.method == "GET" and request.url.path == "/Student/Dashboard":
-                html = """
-                <html>
-                    <body>
-                        <input type="hidden" name="StdId" value="internal_std_9999" />
-                        <select id="StdSemPop">
-                            <option value="102">BT25290203</option>
-                        </select>
-                    </body>
-                </html>
-                """
-                return httpx.Response(200, text=html)
-            return httpx.Response(404)
-
-        adapter = DoctusAdapter()
-        adapter._client = httpx.AsyncClient(
-            transport=httpx.MockTransport(handler),
-            base_url=adapter.BASE_URL,
-        )
-
-        # Login initially sets temporary fallback to normalized roll number
-        session = await adapter.login("25071a6231", "pass")
-        assert session.protected_student_id == "25071A6231"
-
-        # get_semesters discovers the internal StdId and enriches the session
-        await adapter.get_semesters()
-        assert adapter._session.protected_student_id == "internal_std_9999"
-
-    @pytest.mark.asyncio
-    async def test_get_semesters_fallback_to_legacy_attendance_route(self):
-        """Verify get_semesters falls back to /Academic/Student/Attendance if /Student/Dashboard is 404."""
-        requested_paths = []
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            requested_paths.append(request.url.path)
-            if request.method == "GET" and request.url.path == "/Login":
-                return httpx.Response(
-                    200,
-                    text='<input name="__RequestVerificationToken" type="hidden" value="tok" />',
-                )
-            if request.method == "POST" and request.url.path == "/Login":
-                return httpx.Response(
-                    200,
-                    json={"Status": 1, "Data": "/Student/Dashboard"},
-                )
-            if request.method == "GET" and request.url.path == "/Student/Dashboard":
-                return httpx.Response(404, text="Not Found")
-            if request.method == "GET" and request.url.path == "/Academic/Student/Attendance":
-                html = """
-                <html>
-                    <body>
-                        <select id="StdSemPop">
-                            <option value="105">BT25290205</option>
-                        </select>
-                    </body>
-                </html>
-                """
-                return httpx.Response(200, text=html)
-            return httpx.Response(404)
-
-        adapter = DoctusAdapter()
-        adapter._client = httpx.AsyncClient(
-            transport=httpx.MockTransport(handler),
-            base_url=adapter.BASE_URL,
-        )
-
-        await adapter.login("25071a6231", "pass")
-        semesters = await adapter.get_semesters()
-        assert len(semesters) == 1
-        assert semesters[0].semester_id == "105"
-        assert "/Student/Dashboard" in requested_paths
-        assert "/Academic/Student/Attendance" in requested_paths
-
-    @pytest.mark.asyncio
-    async def test_get_attendance_uses_verified_parameterized_endpoint(self):
-        """Verify get_attendance calls /Academic/Shared/GetStdAttPer?studentId={id}&semId={sem_id}."""
-        captured_requests = []
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            captured_requests.append(request)
-            if request.method == "GET" and request.url.path == "/Login":
-                return httpx.Response(
-                    200,
-                    text='<input name="__RequestVerificationToken" type="hidden" value="tok" />',
-                )
-            if request.method == "POST" and request.url.path == "/Login":
-                return httpx.Response(
-                    200,
-                    json={"Status": 1, "Data": {"UserId": "std_param_test"}},
+                    text='url: "Academic/Shared/GetStdAttPer?studentId=prot_stud_444&semId="',
                 )
             if request.method == "GET" and request.url.path == "/Academic/Shared/GetStdAttPer":
-                return httpx.Response(
-                    200,
-                    json={
-                        "Status": 1,
-                        "Data": "<table><tr><th>Subject</th><th>Attended</th><th>Conducted</th></tr><tr><td>CS101</td><td>20</td><td>25</td></tr></table>",
-                    },
-                )
+                html = """
+                <select id='StdSemPop' onchange='popAtt()'>
+                    <option value=102 selected>BT25290203</option>
+                    <option value=94>BT25290102</option>
+                </select>
+                <div>Overall Attendance: 58.17% (178 / 306)</div>
+                <table>
+                    <tr><th>Subject Code</th><th>Cumulative</th></tr>
+                    <tr><td>25PC1CS201</td><td>19 / 37</td></tr>
+                </table>
+                """
+                return httpx.Response(200, json={"Status": 1, "Data": html})
             return httpx.Response(404)
 
         adapter = DoctusAdapter()
@@ -886,14 +812,16 @@ class TestAuthenticatedSessionContinuity:
         )
 
         await adapter.login("25071a6231", "pass")
-        attendance = await adapter.get_attendance("99")
+        attendance, semesters = await adapter.get_attendance_and_semesters()
 
-        assert attendance is not None
-        assert captured_requests[-1].url.path == "/Academic/Shared/GetStdAttPer"
-        assert captured_requests[-1].url.params.get("studentId") == "std_param_test"
-        assert captured_requests[-1].url.params.get("semId") == "99"
-        assert captured_requests[-1].headers.get("x-requested-with") == "XMLHttpRequest"
-        assert "/Student/Dashboard" in captured_requests[-1].headers.get("referer", "")
+        assert len(semesters) == 2
+        assert semesters[0].semester_id == "102"
+        assert attendance.semester_id == "102"
+        assert attendance.overall_attended == 178
+        assert attendance.overall_conducted == 306
+        assert attendance.overall_percentage_from_portal == 58.17
+        assert len(attendance.subjects) == 1
+        assert attendance.subjects[0].subject_code == "25PC1CS201"
 
     @pytest.mark.asyncio
     async def test_get_attendance_redirect_raises_session_error(self):
@@ -905,9 +833,13 @@ class TestAuthenticatedSessionContinuity:
                     text='<input name="__RequestVerificationToken" type="hidden" value="tok" />',
                 )
             if request.method == "POST" and request.url.path == "/Login":
+                return httpx.Response(200, json={"Status": 1, "Data": "/App"})
+            if request.method == "GET" and request.url.path == "/App":
+                return httpx.Response(200, text="<html>App</html>")
+            if request.method == "GET" and request.url.path == "/Shared/Widget/STDINFO":
                 return httpx.Response(
                     200,
-                    json={"Status": 1, "Data": "/Student/Dashboard"},
+                    text='url: "Academic/Shared/GetStdAttPer?studentId=prot_test&semId="',
                 )
             if request.method == "GET" and request.url.path == "/Academic/Shared/GetStdAttPer":
                 return httpx.Response(
@@ -926,4 +858,71 @@ class TestAuthenticatedSessionContinuity:
         await adapter.login("25071a6231", "pass")
         with pytest.raises(DoctusSessionError, match="redirected"):
             await adapter.get_attendance("3")
+
+    @pytest.mark.asyncio
+    async def test_parse_attendance_derives_semester_dynamically(self):
+        """Verify DoctusParser.parse_attendance derives semester ID from HTML when omitted."""
+        html = """
+        <select id='StdSemPop'>
+            <option value=81>BT25290101</option>
+            <option value=102 selected>BT25290203</option>
+        </select>
+        Overall Attendance: 65.5% (200 / 305)
+        """
+        att = DoctusParser.parse_attendance(html)
+        assert att.semester_id == "102"
+        assert att.overall_attended == 200
+        assert att.overall_conducted == 305
+        assert att.overall_percentage_from_portal == 65.5
+
+    @pytest.mark.asyncio
+    async def test_get_attendance_explicit_non_default_semester(self):
+        """Verify get_attendance makes secondary call when non-default semester is requested."""
+        requested_urls = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requested_urls.append(str(request.url))
+            if request.method == "GET" and request.url.path == "/Login":
+                return httpx.Response(200, text='<input name="__RequestVerificationToken" value="tok" />')
+            if request.method == "POST" and request.url.path == "/Login":
+                return httpx.Response(200, json={"Status": 1, "Data": "/App"})
+            if request.method == "GET" and request.url.path == "/App":
+                return httpx.Response(200, text="App")
+            if request.method == "GET" and request.url.path == "/Shared/Widget/STDINFO":
+                return httpx.Response(200, text='url: "Academic/Shared/GetStdAttPer?studentId=prot_sec&semId="')
+            if request.method == "GET" and request.url.path == "/Academic/Shared/GetStdAttPer":
+                sem_id = request.url.params.get("semId")
+                if sem_id == "undefined":
+                    html = """
+                    <select id='StdSemPop'>
+                        <option value=102 selected>BT25290203</option>
+                        <option value=94>BT25290102</option>
+                    </select>
+                    Overall: 58.0% (178 / 306)
+                    """
+                else:
+                    html = """
+                    <select id='StdSemPop'>
+                        <option value=102>BT25290203</option>
+                        <option value=94 selected>BT25290102</option>
+                    </select>
+                    Overall: 66.19% (327 / 494)
+                    """
+                return httpx.Response(200, json={"Status": 1, "Data": html})
+            return httpx.Response(404)
+
+        adapter = DoctusAdapter()
+        adapter._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=adapter.BASE_URL,
+        )
+
+        await adapter.login("25071a6231", "pass")
+        attendance = await adapter.get_attendance("94")
+
+        assert attendance.semester_id == "94"
+        assert attendance.overall_attended == 327
+        assert attendance.overall_conducted == 494
+        assert attendance.overall_percentage_from_portal == 66.19
+        assert any("semId=94" in u for u in requested_urls)
 

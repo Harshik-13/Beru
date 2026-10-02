@@ -321,52 +321,21 @@ class PortalSyncService:
             except DoctusAdapterError as e:
                 raise PortalSyncError(f"Portal communication error: {e}") from e
 
-            # Step 3: Determine target semester (dynamically from confirmed timetable or fallback to '3')
-            target_semester_id = semester_id
-            if not target_semester_id:
-                try:
-                    confirmed_tt = await self.timetable_repo.get_confirmed_for_student(student_id)
-                    if confirmed_tt and confirmed_tt.year and confirmed_tt.semester:
-                        target_semester_id = str((confirmed_tt.year - 1) * 2 + confirmed_tt.semester)
-                except Exception as tt_err:
-                    logger.debug("Could not infer semester from timetable: %s", tt_err)
-            if not target_semester_id:
-                target_semester_id = "3"
-
-            # Opportunistic discovery from portal
+            # Step 3: Fetch attendance and discover semesters via unified flow
             try:
-                semesters = await adapter.get_semesters()
-                if semesters:
-                    available_sem_ids = {s.semester_id for s in semesters}
-                    default_sem = next((s for s in semesters if s.is_selected), semesters[0])
-                    if target_semester_id not in available_sem_ids:
-                        logger.info(
-                            "Inferred semester %s not in discovered %s; using default %s",
-                            target_semester_id,
-                            available_sem_ids,
-                            default_sem.semester_id,
-                        )
-                        target_semester_id = default_sem.semester_id
-            except Exception as e:
-                logger.info(
-                    "Semester discovery bypassed or redirected (%s); proceeding directly with target semId=%s",
-                    e,
-                    target_semester_id,
+                attendance, semesters = await adapter.get_attendance_and_semesters(
+                    target_semester_id=semester_id
                 )
-
-            # Step 4: Fetch attendance data adhering strictly to canonical PortalAttendance contract
-            try:
-                attendance = await adapter.get_attendance(target_semester_id)
             except DoctusSessionError as e:
                 raise PortalSyncError(f"Portal session error: {e}") from e
             except DoctusAdapterError as e:
                 raise PortalSyncError(f"Attendance fetch failed: {e}") from e
 
-            # Step 6: Persist attendance data
+            # Step 4: Persist attendance data
             snapshot = await self._persist_attendance(
                 student_id=student_id,
                 attendance=attendance,
-                semester_id=target_semester_id,
+                semester_id=attendance.semester_id,
             )
 
             now = datetime.now(UTC)
