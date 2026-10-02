@@ -232,6 +232,18 @@ class ConversationService:
             if isinstance(req, list) and not req:
                 del schema["required"]
 
+            # Providers like Groq strictly enforce types on tool arguments.
+            # If an optional parameter is passed as null by the LLM, the schema must accept null.
+            if isinstance(props, dict):
+                required_props = set(schema.get("required", []))
+                for prop_name, prop_def in props.items():
+                    if prop_name not in required_props and isinstance(prop_def, dict):
+                        t = prop_def.get("type")
+                        if isinstance(t, str) and t != "null":
+                            prop_def["type"] = [t, "null"]
+                        elif isinstance(t, list) and "null" not in t:
+                            prop_def["type"] = list(t) + ["null"]
+
         return {
             "type": "function",
             "function": {
@@ -244,11 +256,18 @@ class ConversationService:
     def _parse_intent_response(self, response: LLMResponse) -> IntentResult:
         if response.tool_calls:
             tc = response.tool_calls[0]
+            clean_args = {}
+            if isinstance(tc.arguments, dict):
+                for k, v in tc.arguments.items():
+                    if v is not None:
+                        clean_args[k] = v
+            else:
+                clean_args = tc.arguments
             return IntentResult(
                 tool_request={
                     "id": tc.id,
                     "name": tc.name,
-                    "arguments": tc.arguments,
+                    "arguments": clean_args,
                 },
                 confidence=0.9,
             )

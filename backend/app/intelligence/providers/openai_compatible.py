@@ -257,6 +257,12 @@ class OpenAICompatibleLLMProvider(LLMProvider):
                         await asyncio.sleep(delay)
                         continue
                 # Client errors (4xx except 429) - don't retry
+                logger.error(
+                    "HTTP %s from %s: %s",
+                    e.response.status_code,
+                    self.provider_name,
+                    e.response.text,
+                )
                 raise
             except httpx.RequestError as e:
                 last_error = e

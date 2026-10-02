@@ -49,10 +49,13 @@ Implemented independent extraction and dual reporting of cumulative overall atte
   - Added `get_course_mapping` to `ATOMIC_QUERY_TOOLS` for natural conversational synthesis.
   - Automatically records dialogue state upon successful tool execution.
   - Added defense-in-depth interceptor catching raw dict/JSON output and forcing fallback rerendering.
-- `backend/tests/`:
-  - Added `test_conversational_multi_turn.py` (multi-turn follow-ups, course mapping, conflict reporting).
-  - Added `test_raw_output_prevention.py` (data scrubbing, fallback renderer defense).
-  - Added `test_parse_attendance_table_with_monthly_and_cumulative_totals` in `test_portal.py`.
+- `backend/app/intelligence/providers/openai_compatible.py`:
+  - Added logging of response body text when `HTTPStatusError` occurs so provider errors are transparently diagnosed.
+- `backend/app/intelligence/services/conversation.py`:
+  - Enhanced `_tool_def_to_openai` to automatically allow `"null"` for optional parameters, preventing provider schema validation rejections (HTTP 400) when models pass `null`.
+  - Cleaned `_parse_intent_response` to strip `None` values from tool arguments.
+- `backend/app/intelligence/tools/attendance_tools.py`:
+  - Updated `semester_id` argument schema in `get_overall_attendance` and `get_attendance_summary` to explicitly permit `["string", "null"]`.
 
 ### Verification
 - 423/423 full repository tests passing (`pytest backend/tests/ -q`).

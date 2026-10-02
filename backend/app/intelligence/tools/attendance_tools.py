@@ -470,7 +470,7 @@ ATTENDANCE_TOOL_DEFINITIONS = [
             "properties": {
                 "student_id": {"type": "string", "format": "uuid"},
                 "semester_id": {
-                    "type": "string",
+                    "type": ["string", "null"],
                     "description": "Optional semester ID to view attendance for a specific semester.",
                 },
             },
@@ -544,7 +544,7 @@ ATTENDANCE_TOOL_DEFINITIONS = [
             "properties": {
                 "student_id": {"type": "string", "format": "uuid"},
                 "semester_id": {
-                    "type": "string",
+                    "type": ["string", "null"],
                     "description": "Optional semester ID to view attendance for a specific semester.",
                 },
             },
