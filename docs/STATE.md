@@ -3,7 +3,7 @@
 ## Current State
 
 - **Last updated:** 2026-10-02
-- **Current commit:** `5fc3bfd`
+- **Current commit:** `8f88a69`
 - **Current branch:** master
 
 ## Overall Project Status
@@ -168,6 +168,7 @@ None.
 
 | Commit | Description |
 |--------|-------------|
+| `e33cac9` | Allow null for optional tool arguments preventing Groq 400 validation error |
 | `e043673` | Dual overall/monthly attendance, multi-turn dialogue state & course mapping |
 | `fdaea24` | Fix LLM async promise hallucination and normalize weekday tool arguments |
 | `cdbfef3` | Fix duplicate slash-lab entries during timetable extraction |
