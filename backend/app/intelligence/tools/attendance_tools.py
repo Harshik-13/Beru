@@ -12,16 +12,19 @@ from typing import Any
 from uuid import UUID
 
 from app.intelligence.services.scenario_resolver import (
+    InvalidSessionCountError,
     LabBatchAmbiguityError,
     NoConfirmedTimetableError,
     ScenarioConflictError,
     ScenarioResolver,
+    SessionConflictError,
     SubjectNotFoundError,
 )
 from app.intelligence.services.simulation_service import AttendanceSimulationService
 from app.repositories.attendance import AttendanceSnapshotRepository
 from app.repositories.student import StudentRepository
-from app.repositories.timetable import TimetableRepository
+from app.repositories.timetable import TimetableEntryRepository, TimetableRepository
+
 
 logger = logging.getLogger(__name__)
 
@@ -255,7 +258,7 @@ async def get_subject_attendance(service, student_id: str, subject_code: str):
 
 
 async def get_attendance_summary(
-    service, student_id: str, semester_id: str | None = None
+    service, student_id: str, semester_id: str | None = None, view: str = "all"
 ):
     """Get complete attendance summary."""
     result = await service.get_attendance_summary(student_id, semester_id=semester_id)
@@ -303,8 +306,18 @@ async def get_attendance_summary(
         }
     )
 
+    # Determine authoritative monthly period across subjects if any
+    monthly_period = None
+    for s in result.subjects:
+        m_per = getattr(s, "monthly_period", None) or (s.get("monthly_period") if isinstance(s, dict) else None)
+        if m_per:
+            monthly_period = m_per
+            break
+
     return {
         "available": True,
+        "view": view,
+        "monthly_period": monthly_period,
         "overall": overall_dict,
         "subjects": [
             s.to_dict() if hasattr(s, "to_dict") else s for s in result.subjects
@@ -514,17 +527,27 @@ async def simulate_schedule_scenario(
     days_to_attend: list[str] | None = None,
     skip_next_n_days: int | None = None,
     attend_next_n_days: int | None = None,
+    partial_day_scenarios: list[dict] | None = None,
     custom_today: date | None = None,
 ):
-    """Simulate multi-day, date range, or mixed attendance scenarios."""
-    session = getattr(attendance_service, "session", getattr(attendance_service, "db", None))
-    snapshot_repo = getattr(attendance_service, "snapshot_repo", None) or AttendanceSnapshotRepository(session)
-    timetable_repo = getattr(timetable_service, "timetable_repo", None) or TimetableRepository(session)
-    student_repo = getattr(attendance_service, "student_repo", None) or StudentRepository(session)
+    """Simulate multi-day, date range, mixed, or partial-day attendance scenarios."""
+    session = getattr(attendance_service, "session", getattr(timetable_service, "session", getattr(attendance_service, "db", None)))
+    snapshot_repo = getattr(attendance_service, "snapshot_repo", None) or (AttendanceSnapshotRepository(session) if session else None)
+    timetable_repo = getattr(timetable_service, "timetable_repo", None) or (TimetableRepository(session) if session else None)
+    entry_repo = getattr(timetable_service, "entry_repo", None) or (TimetableEntryRepository(session) if session else None)
+    student_repo = getattr(attendance_service, "student_repo", None) or (StudentRepository(session) if session else None)
 
-    resolver = ScenarioResolver(timetable_repo, student_repo)
+    resolver = ScenarioResolver(
+        timetable_repo=timetable_repo,
+        student_repo=student_repo,
+        entry_repo=entry_repo,
+    )
     sim_svc = AttendanceSimulationService(
-        session, snapshot_repo, timetable_repo, student_repo
+        session=session,
+        snapshot_repo=snapshot_repo,
+        timetable_repo=timetable_repo,
+        student_repo=student_repo,
+        entry_repo=entry_repo,
     )
 
     try:
@@ -534,16 +557,29 @@ async def simulate_schedule_scenario(
             days_to_attend=days_to_attend,
             skip_next_n_days=skip_next_n_days,
             attend_next_n_days=attend_next_n_days,
+            partial_day_scenarios=partial_day_scenarios,
             custom_today=custom_today,
         )
-        if not resolved.actions:
+        if not resolved.session_actions:
             return {
                 "available": False,
                 "error_code": "EMPTY_SCENARIO",
-                "message": "No days or instructional sessions were specified to simulate.",
+                "message": "No days or instructional sessions were specified or found to simulate.",
             }
         result = await sim_svc.simulate_schedule_scenario(resolved)
         return result.to_dict()
+    except InvalidSessionCountError as e:
+        return {
+            "available": False,
+            "error_code": "INVALID_SESSION_COUNT",
+            "message": str(e),
+        }
+    except SessionConflictError as e:
+        return {
+            "available": False,
+            "error_code": "SESSION_CONFLICT",
+            "message": str(e),
+        }
     except ScenarioConflictError as e:
         return {
             "available": False,
@@ -593,14 +629,23 @@ async def simulate_subject_periods(
             "message": "Please specify at least one period to attend or miss.",
         }
 
-    session = getattr(attendance_service, "session", getattr(attendance_service, "db", None))
-    snapshot_repo = getattr(attendance_service, "snapshot_repo", None) or AttendanceSnapshotRepository(session)
-    timetable_repo = getattr(timetable_service, "timetable_repo", None) or TimetableRepository(session)
-    student_repo = getattr(attendance_service, "student_repo", None) or StudentRepository(session)
+    session = getattr(attendance_service, "session", getattr(timetable_service, "session", getattr(attendance_service, "db", None)))
+    snapshot_repo = getattr(attendance_service, "snapshot_repo", None) or (AttendanceSnapshotRepository(session) if session else None)
+    timetable_repo = getattr(timetable_service, "timetable_repo", None) or (TimetableRepository(session) if session else None)
+    entry_repo = getattr(timetable_service, "entry_repo", None) or (TimetableEntryRepository(session) if session else None)
+    student_repo = getattr(attendance_service, "student_repo", None) or (StudentRepository(session) if session else None)
 
-    resolver = ScenarioResolver(timetable_repo, student_repo)
+    resolver = ScenarioResolver(
+        timetable_repo=timetable_repo,
+        student_repo=student_repo,
+        entry_repo=entry_repo,
+    )
     sim_svc = AttendanceSimulationService(
-        session, snapshot_repo, timetable_repo, student_repo
+        session=session,
+        snapshot_repo=snapshot_repo,
+        timetable_repo=timetable_repo,
+        student_repo=student_repo,
+        entry_repo=entry_repo,
     )
 
     try:
@@ -842,6 +887,30 @@ ATTENDANCE_TOOL_DEFINITIONS = [
                     "type": ["integer", "null"],
                     "description": "Relative count of upcoming instructional days with timetable classes to attend.",
                 },
+                "partial_day_scenarios": {
+                    "type": ["array", "null"],
+                    "description": (
+                        "List of partial-day scenario objects (e.g. skipping specific periods on a day, "
+                        "such as 'skip first 3 classes on Monday and attend the rest'). "
+                        "Each object contains: 'date' (e.g. 'Monday', 'tomorrow'), "
+                        "'skip_first_n_periods' (int, e.g. 3), 'skip_last_n_periods' (int), "
+                        "'periods_to_skip' (list of 1-based period numbers, e.g. [1, 2, 3]), "
+                        "'periods_to_attend' (list of 1-based period numbers), "
+                        "'attend_remaining' (bool, defaults to true)."
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "date": {"type": "string"},
+                            "skip_first_n_periods": {"type": ["integer", "null"]},
+                            "skip_last_n_periods": {"type": ["integer", "null"]},
+                            "periods_to_skip": {"type": ["array", "null"], "items": {"type": "integer"}},
+                            "periods_to_attend": {"type": ["array", "null"], "items": {"type": "integer"}},
+                            "attend_remaining": {"type": "boolean"},
+                        },
+                        "required": ["date"],
+                    },
+                },
             },
             "required": ["student_id"],
         },
@@ -985,7 +1054,8 @@ ATTENDANCE_TOOL_DEFINITIONS = [
         "description": (
             "Get complete subject-wise attendance breakdown and summary. "
             "Use this whenever the student asks for subject breakdown, per-subject attendance, "
-            "or detailed attendance stats."
+            "or this month's attendance breakdown across subjects. "
+            "Set view='monthly' when the student asks for 'this month attendance breakdown' or monthly subjects."
         ),
         "arguments_schema": {
             "type": "object",
@@ -994,6 +1064,11 @@ ATTENDANCE_TOOL_DEFINITIONS = [
                 "semester_id": {
                     "type": ["string", "null"],
                     "description": "Optional semester ID to view attendance for a specific semester.",
+                },
+                "view": {
+                    "type": ["string", "null"],
+                    "enum": ["all", "monthly", "cumulative"],
+                    "description": "View mode: 'all' (default), 'monthly' (for current month breakdown), or 'cumulative'.",
                 },
             },
             "required": ["student_id"],
@@ -1249,6 +1324,7 @@ async def execute_attendance_tool(
             days_to_attend=kwargs.get("days_to_attend"),
             skip_next_n_days=kwargs.get("skip_next_n_days"),
             attend_next_n_days=kwargs.get("attend_next_n_days"),
+            partial_day_scenarios=kwargs.get("partial_day_scenarios"),
             custom_today=kwargs.get("custom_today"),
         )
     elif tool_name == "simulate_subject_periods":
@@ -1281,7 +1357,7 @@ async def execute_attendance_tool(
         )
     elif tool_name == "get_attendance_summary":
         return await get_attendance_summary(
-            attendance_service, student_id, kwargs.get("semester_id")
+            attendance_service, student_id, kwargs.get("semester_id"), view=kwargs.get("view", "all")
         )
     elif tool_name == "get_subjects_below_target":
         return await get_subjects_below_target(

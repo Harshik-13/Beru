@@ -339,6 +339,10 @@ class AttendanceRenderer:
                 lines.append(f"• {d_desc}")
             lines.append("")
 
+        if result.get("message"):
+            lines.append(f"• <b>Details:</b> {result['message']}")
+            lines.append("")
+
         lines.append(f"• <b>Total Periods:</b> <code>{total_periods}</code>")
         lines.append(
             f"• <b>Overall Attendance:</b> {format_percentage(curr_pct)} → "
@@ -544,17 +548,76 @@ class AttendanceRenderer:
         return "\n".join(lines).strip()
 
     def render_summary(
-        self, result: dict[str, Any], student_context: StudentContext
+        self, result: dict[str, Any], student_context: Any = None
     ) -> str:
-        """Render complete attendance summary."""
+        """Render complete attendance summary (supports view='all', 'monthly', or 'cumulative')."""
         overall = result.get("overall", {})
         subjects = result.get("subjects", [])
+        view = result.get("view", "all")
         target = float(
             overall.get("target_percentage")
-            or student_context.profile.attendance_target
+            or (student_context.profile.attendance_target if student_context and hasattr(student_context, "profile") else 75.0)
             or 75.0
         )
 
+        monthly_period = next(
+            (s.get("monthly_period") for s in subjects if s.get("monthly_period")),
+            overall.get("monthly_period") or result.get("monthly_period"),
+        )
+
+        # Monthly-only view
+        if view == "monthly":
+            m_att_total = overall.get("monthly_attended")
+            m_cond_total = overall.get("monthly_conducted")
+            m_pct_total = overall.get("monthly_percentage")
+            period_str = f" ({monthly_period})" if monthly_period else ""
+
+            lines = [
+                f"<b>Monthly Attendance Breakdown{period_str}</b>",
+                "",
+            ]
+            if m_cond_total is not None and m_cond_total > 0 and m_pct_total is not None:
+                lines.append(
+                    f"• <b>Month Total:</b> {format_percentage(float(m_pct_total))} "
+                    f"({m_att_total}/{m_cond_total} classes attended)"
+                )
+                lines.append("")
+
+            if subjects:
+                lines.append("<b>Subject Breakdown:</b>")
+                for idx, sub in enumerate(subjects, 1):
+                    name = sub.get("subject_name")
+                    code = sub.get("subject_code")
+                    if name and code and name != code:
+                        display_label = f"{name} ({code})"
+                    elif name:
+                        display_label = name
+                    elif code:
+                        display_label = code
+                    else:
+                        display_label = "Course"
+
+                    m_cond = sub.get("monthly_conducted")
+                    m_att = sub.get("monthly_attended")
+                    m_pct = sub.get("monthly_percentage")
+
+                    if m_cond is None or m_cond == 0:
+                        lines.append(f"{idx}. <b>{display_label}:</b> 0/0 (no classes conducted this month)")
+                    else:
+                        pct_val = float(m_pct) if m_pct is not None else 0.0
+                        icon = CHECK_MARK if pct_val >= target else WARNING_SIGN
+                        lines.append(
+                            f"{idx}. <b>{display_label}:</b> {format_percentage(pct_val)} ({m_att}/{m_cond}) — {icon}"
+                        )
+
+            badge_footer = self._format_provenance_badge(result)
+            if badge_footer:
+                lines.append("")
+                lines.append(badge_footer)
+
+            return "\n".join(lines).strip()
+
+        # Cumulative / All view
         cum_pct = float(overall.get("cumulative_percentage", 0.0))
         attended = overall.get("cumulative_attended", 0)
         conducted = overall.get("cumulative_conducted", 0)

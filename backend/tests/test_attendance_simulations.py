@@ -26,10 +26,14 @@ from app.intelligence.services.attendance_service import (
     reconcile_snapshot_overall,
 )
 from app.intelligence.services.scenario_resolver import (
+    InvalidSessionCountError,
     LabBatchAmbiguityError,
     NoConfirmedTimetableError,
+    PartialDayRequest,
+    ResolvedSessionAction,
     ScenarioConflictError,
     ScenarioResolver,
+    SessionConflictError,
     SimulationAction,
     SubjectNotFoundError,
 )
@@ -788,3 +792,264 @@ class TestToolExecutionAndRendering:
         text = renderer.render_subject_periods(result)
         assert "Operating Systems" in text
         assert "Simulation" in text
+
+
+# ==============================================================================
+# 9. Strict Partial-Day Validation & Unified Session Actions
+# ==============================================================================
+
+class TestPartialDayValidationAndResolution:
+    """Validate partial-day bounds, session count checks, and conflict detection."""
+
+    @pytest.mark.asyncio
+    async def test_partial_day_request_exceeds_available_periods(
+        self, student_batch1, standard_timetable
+    ):
+        """
+        If Sunday has only 2 scheduled classes, requesting to skip first 3 must raise
+        InvalidSessionCountError with clear clarification (Directive 4).
+        """
+        mock_tt_repo = AsyncMock()
+        mock_tt_repo.get_latest_confirmed_for_student = AsyncMock(return_value=standard_timetable)
+        mock_student_repo = AsyncMock()
+        mock_student_repo.get_by_id = AsyncMock(return_value=student_batch1)
+
+        resolver = ScenarioResolver(mock_tt_repo, mock_student_repo)
+
+        # Sunday 2026-10-04 has only 2 scheduled classes in standard_timetable
+        with pytest.raises(InvalidSessionCountError) as exc_info:
+            await resolver.resolve_scenario(
+                student_id=student_batch1.id,
+                partial_day_scenarios=[
+                    {"date": "2026-10-04", "skip_first_n_periods": 3}
+                ],
+                custom_today=date(2026, 10, 3),
+            )
+        assert "only 2 scheduled classes" in str(exc_info.value)
+        assert "skip the first 3" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_same_session_cannot_be_attend_and_skip(
+        self, student_batch1, standard_timetable
+    ):
+        """
+        A single scheduled session cannot be requested as both ATTEND and SKIP.
+        """
+        mock_tt_repo = AsyncMock()
+        mock_tt_repo.get_latest_confirmed_for_student = AsyncMock(return_value=standard_timetable)
+        mock_student_repo = AsyncMock()
+        mock_student_repo.get_by_id = AsyncMock(return_value=student_batch1)
+
+        resolver = ScenarioResolver(mock_tt_repo, mock_student_repo)
+
+        with pytest.raises(SessionConflictError) as exc_info:
+            await resolver.resolve_scenario(
+                student_id=student_batch1.id,
+                partial_day_scenarios=[
+                    {
+                        "date": "2026-10-05",  # Monday has 4 classes
+                        "periods_to_skip": [1],
+                        "periods_to_attend": [1],
+                    }
+                ],
+                custom_today=date(2026, 10, 4),
+            )
+        assert "both ATTEND and SKIP" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_partial_day_first_n_periods_simulation(
+        self,
+        mock_session,
+        student_batch1,
+        legacy_corrupted_snapshot,
+        standard_timetable,
+    ):
+        """
+        Simulate skipping first 3 classes on Monday and attending the remaining 1.
+        Baseline: 178 / 306.
+        After: 1 attended, 3 missed -> total 4 evaluated -> 179 / 310.
+        """
+        mock_snapshot_repo = AsyncMock()
+        mock_snapshot_repo.get_latest = AsyncMock(return_value=legacy_corrupted_snapshot)
+        mock_timetable_repo = AsyncMock()
+        mock_timetable_repo.get_latest_confirmed_for_student = AsyncMock(return_value=standard_timetable)
+        mock_student_repo = AsyncMock()
+        mock_student_repo.get_by_id = AsyncMock(return_value=student_batch1)
+
+        resolver = ScenarioResolver(mock_timetable_repo, mock_student_repo)
+        sim_service = AttendanceSimulationService(
+            session=mock_session,
+            snapshot_repo=mock_snapshot_repo,
+            timetable_repo=mock_timetable_repo,
+            student_repo=mock_student_repo,
+        )
+
+        scenario = await resolver.resolve_scenario(
+            student_id=student_batch1.id,
+            partial_day_scenarios=[
+                {
+                    "date": "2026-10-05",  # Monday: 4 classes (CS201, CS202, CS203, CS204)
+                    "skip_first_n_periods": 3,
+                    "attend_remaining": True,
+                }
+            ],
+            custom_today=date(2026, 10, 4),
+        )
+
+        # 4 session actions: periods 1,2,3 SKIP; period 4 ATTEND
+        assert len(scenario.session_actions) == 4
+        assert [s.action for s in scenario.session_actions] == [
+            SimulationAction.SKIP,
+            SimulationAction.SKIP,
+            SimulationAction.SKIP,
+            SimulationAction.ATTEND,
+        ]
+
+        result = await sim_service.simulate_schedule_scenario(scenario)
+        assert result.available is True
+        assert result.total_scheduled_periods == 4
+        assert result.total_delta_conducted == 4
+        assert result.total_delta_attended == 1
+        assert result.projected_attended == 179
+        assert result.projected_conducted == 310
+
+
+# ==============================================================================
+# 10. Authoritative Stored Monthly View Verification
+# ==============================================================================
+
+class TestMonthlyBreakdownView:
+    """Validate that view='monthly' displays stored portal monthly fields directly."""
+
+    @pytest.mark.asyncio
+    async def test_render_monthly_subject_attendance_breakdown(
+        self, student_batch1
+    ):
+        """Verify stored monthly fields are rendered accurately without cumulative fallback."""
+        snapshot = AttendanceSnapshot(
+            id=uuid4(),
+            student_id=student_batch1.id,
+            source=AttendanceSource.DOCTUS,
+            captured_at=datetime.now(UTC),
+            overall_attended=178,
+            overall_conducted=306,
+        )
+        s1 = SubjectAttendance(
+            id=uuid4(),
+            snapshot_id=snapshot.id,
+            subject_code="25PC1CS201",
+            subject_name="Operating Systems",
+            monthly_attended=18,
+            monthly_conducted=20,
+            monthly_period="SEP 2026",
+            cumulative_attended=40,
+            cumulative_conducted=60,
+        )
+        s2 = SubjectAttendance(
+            id=uuid4(),
+            snapshot_id=snapshot.id,
+            subject_code="25PC1CS202",
+            subject_name="Data Structures",
+            monthly_attended=14,
+            monthly_conducted=20,
+            monthly_period="SEP 2026",
+            cumulative_attended=50,
+            cumulative_conducted=80,
+        )
+        snapshot.subjects = [s1, s2]
+
+        service = AttendanceService(session=None, sync_service=None)
+        service.get_latest_snapshot = AsyncMock(return_value=snapshot)
+        service._get_student_target = AsyncMock(return_value=75.0)
+        service._get_confirmed_timetable_mapping = AsyncMock(return_value={})
+
+        result = await execute_attendance_tool(
+            attendance_service=service,
+            timetable_service=MagicMock(),
+            tool_name="get_attendance_summary",
+            student_id=str(student_batch1.id),
+            view="monthly",
+        )
+
+        assert result["available"] is True
+        assert result["view"] == "monthly"
+        assert result["monthly_period"] == "SEP 2026"
+        assert len(result["subjects"]) == 2
+
+        # Renderer verification
+        renderer = AttendanceRenderer()
+        text = renderer.render_summary(result)
+
+        assert "Monthly Attendance Breakdown (SEP 2026)" in text
+        assert "Operating Systems" in text
+        assert "18/20" in text
+        assert "90.0%" in text
+        assert "Data Structures" in text
+        assert "14/20" in text
+        assert "70.0%" in text
+
+
+# ==============================================================================
+# 11. MissingGreenlet Elimination via Explicit Repository Injection
+# ==============================================================================
+
+class TestMissingGreenletElimination:
+    """Verify that MissingGreenlet cannot occur when timetable relationship is lazy."""
+
+    @pytest.mark.asyncio
+    async def test_missing_greenlet_prevented_by_entry_repo(
+        self, student_batch1
+    ):
+        """
+        When timetable.entries would raise MissingGreenlet, injecting entry_repo
+        safely loads entries via explicit async database query.
+        """
+        class LazyLoadedTimetableDouble:
+            id = uuid4()
+            student_id = student_batch1.id
+            status = TimetableStatus.CONFIRMED
+
+            @property
+            def entries(self):
+                from sqlalchemy.exc import MissingGreenlet
+                raise MissingGreenlet("greenlet_spawn has not been called; can't call in sync context")
+
+        lazy_tt = LazyLoadedTimetableDouble()
+        mock_tt_repo = AsyncMock()
+        mock_tt_repo.get_latest_confirmed_for_student = AsyncMock(return_value=lazy_tt)
+
+        mock_entry = TimetableEntry(
+            id=uuid4(),
+            timetable_id=lazy_tt.id,
+            day_of_week=0,
+            start_time=time(9, 0),
+            end_time=time(10, 0),
+            course_code="25PC1CS201",
+            activity_name="Operating Systems",
+            activity_type=ActivityType.ACADEMIC,
+        )
+
+        mock_entry_repo = AsyncMock()
+        mock_entry_repo.get_for_timetable = AsyncMock(return_value=[mock_entry])
+
+        mock_student_repo = AsyncMock()
+        mock_student_repo.get_by_id = AsyncMock(return_value=student_batch1)
+
+        resolver = ScenarioResolver(
+            timetable_repo=mock_tt_repo,
+            student_repo=mock_student_repo,
+            entry_repo=mock_entry_repo,
+        )
+
+        # Resolving scenario must use entry_repo and NEVER trigger lazy-load on lazy_tt.entries
+        scenario = await resolver.resolve_scenario(
+            student_id=student_batch1.id,
+            days_to_skip=["2026-10-05"],
+            custom_today=date(2026, 10, 4),
+        )
+
+        assert len(scenario.session_actions) == 1
+        assert scenario.session_actions[0].course_code == "25PC1CS201"
+        assert scenario.session_actions[0].action == SimulationAction.SKIP
+        mock_entry_repo.get_for_timetable.assert_awaited_once_with(lazy_tt.id)
+

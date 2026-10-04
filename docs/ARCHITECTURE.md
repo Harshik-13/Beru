@@ -166,13 +166,20 @@ ResponseStyleLayer (Telegram HTML Sanitization & Entity Escaping) ──► Tele
 **ScenarioResolver** (`app/intelligence/services/scenario_resolver.py`):
 - Pure scenario resolution decoupling natural language / date interpretation from projection calculation
 - Resolves ISO dates, named weekdays (relative to student timezone), and relative instructional day counts ("next N instructional days")
+- Canonical partial-day representation: single canonical parameter `partial_day_scenarios: tuple[PartialDayRequest, ...]`
+- Strict partial-day validation against scheduled session count (`InvalidSessionCountError`, e.g. "Sunday has only 2 scheduled classes, so I cannot skip the first 3")
+- Strict session conflict defense (`SessionConflictError`), preventing any single session from being requested as both ATTEND and SKIP
+- Emits pure `ResolvedSessionAction` records as the sole input to the simulation engine
 - Instructional days defined strictly by presence of confirmed timetable sessions (zero hardcoded Sunday/non-working assumptions)
 - Rejects same-date action conflicts (`ScenarioConflictError`, e.g. ATTEND + SKIP on same date) while allowing mixed actions across distinct dates
 - Enforces Lab Batch Ambiguity Defense (`LabBatchAmbiguityError` if student has `lab_batch = UNKNOWN` on a date with split lab sessions)
 - Resolves natural language subject queries ("OS", "Operating Systems", "DAA") against confirmed timetable entries (`SubjectNotFoundError` if unresolvable)
+- Explicit repository injection: receives `entry_repo: TimetableEntryRepository` explicitly, preventing `MissingGreenlet` exceptions during async execution and avoiding relationship property inspection on detached instances
 
 **AttendanceSimulationService** (`app/intelligence/services/simulation_service.py`):
-- Deterministic simulation engine structurally isolated from `PortalSyncService` (zero network calls to Doctus portal, eliminating any portal lockout risk)
+- Pure deterministic simulation engine driven exclusively by `ResolvedSessionAction` inputs
+- Operates without string parsing or weekday inspection: deltas are aggregated directly from verified session actions
+- Structurally isolated from `PortalSyncService` (zero network calls to Doctus portal, eliminating any portal lockout risk)
 - Reuses authoritative `reconcile_snapshot_overall` to correct legacy 6/6 snapshots to 178/306 on read
 - `simulate_schedule_scenario`: Projects attendance across single-day or multi-day scenarios with mixed attend/skip actions, calculating aggregate delta, projected overall attendance, and per-subject impact breakdown
 - `simulate_subject_periods`: Projects attendance when attending or missing an arbitrary number of periods of a specific course, reporting subject delta and overall ripple effect

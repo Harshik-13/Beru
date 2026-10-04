@@ -1,5 +1,65 @@
 # CHANGELOG.md — Beru
 
+## 2026-10-04 — Partial-Day Simulation, Pure Session Action Topology, MissingGreenlet Fix & Stored Monthly Breakdown
+
+### Task / Change
+Implemented canonical partial-day attendance simulation, pure session action calculation topology, strict period validation against scheduled sessions, explicit repository injection eliminating `MissingGreenlet`, and authoritative stored monthly attendance breakdown reporting.
+
+### Why
+1. During live testing of Beru on Telegram (`@BeruHK_bot`), the user asked to simulate skipping partial days (e.g., "skip first 3 classes on Monday") and to check monthly attendance breakdown.
+2. In live execution, `simulate_schedule_scenario` failed with `sqlalchemy.exc.MissingGreenlet` because accessing lazy-loaded `.entries` on detached/un-eagerly loaded SQLAlchemy models attempted a synchronous query in an async context.
+3. Partial-day requests previously lacked a unified canonical representation, creating ambiguity between whole-day and partial-day parameters.
+4. If a student requested skipping more periods than exist on a day (e.g. "skip first 3 classes" on Sunday when Sunday only has 2 scheduled classes), the system must reject the request with clear clarification rather than silently truncating or guessing.
+5. Monthly attendance queries were reporting cumulative figures or failing to present the dedicated monthly breakdown persisted from the college portal.
+
+### What Changed
+- `backend/app/intelligence/services/scenario_resolver.py`:
+  - Added `InvalidSessionCountError`, `SessionConflictError`, `PartialDayRequest`, and `ResolvedSessionAction`.
+  - Added single canonical parameter `partial_day_scenarios: tuple[PartialDayRequest, ...]`.
+  - Strict partial-day session validation: verifies requested ordinal periods ($N > 0$) against actual timetable sessions on that day; raises `InvalidSessionCountError` if count exceeds available sessions; prevents same-session conflicts (`SessionConflictError`).
+  - Converts all whole-day, relative, and partial-day scenarios into pure `ResolvedSessionAction` records.
+  - Explicit repository injection: accepts `entry_repo: TimetableEntryRepository` in constructor; safely resolves confirmed timetables without touching lazy `.entries` properties.
+- `backend/app/intelligence/services/simulation_service.py`:
+  - Updated `AttendanceSimulationService` to drive deterministic calculations exclusively from `ResolvedSessionAction` inputs without string parsing or weekday inspection.
+  - Added explicit repository injection and awaitable handling for `entry_repo`.
+  - Made `simulate_subject_periods` accept both `subject_code` and `subject_query` seamlessly.
+- `backend/app/intelligence/tools/attendance_tools.py`:
+  - Standardized `simulate_schedule_scenario` tool schema to single canonical `partial_day_scenarios` parameter.
+  - Explicitly instantiated and injected `TimetableEntryRepository(session)` into resolver and simulation service.
+  - Added `view="monthly"` support to `get_attendance_summary`, capturing `monthly_period` from snapshot subjects.
+- `backend/app/intelligence/rendering/attendance_renderer.py`:
+  - Updated `render_summary` to render dedicated monthly breakdown cards (`<b>Monthly Attendance Breakdown (SEP 2026)</b>`) using stored monthly fields (`monthly_attended`, `monthly_conducted`, `monthly_percentage`, `monthly_period`). Made `student_context` optional.
+- `backend/app/intelligence/services/context_builder.py`:
+  - Added system prompt guidance for routing partial-day requests (`partial_day_scenarios`) and monthly stats queries (`view='monthly'`).
+- `backend/tests/test_attendance_simulations.py`:
+  - Added 5 new tests: `test_partial_day_request_exceeds_available_periods`, `test_same_session_cannot_be_attend_and_skip`, `test_partial_day_first_n_periods_simulation`, `test_render_monthly_subject_attendance_breakdown`, and `test_missing_greenlet_prevented_by_entry_repo`. Total suite expanded to 20 passing tests.
+
+### Files Changed
+- `backend/app/intelligence/services/scenario_resolver.py` — Canonical partial-day resolution, session bounds validation, and pure session action generation.
+- `backend/app/intelligence/services/simulation_service.py` — Pure session action calculation engine and repository injection.
+- `backend/app/intelligence/tools/attendance_tools.py` — Unified tool schemas, explicit repository wiring, and monthly summary fields.
+- `backend/app/intelligence/rendering/attendance_renderer.py` — Authoritative monthly breakdown card renderer.
+- `backend/app/intelligence/services/context_builder.py` — LLM system prompt instructions for partial-day and monthly inquiries.
+- `backend/tests/test_attendance_simulations.py` — Dedicated validation suite for partial-day bounds, session conflicts, and greenlet safety.
+- `docs/STATE.md`, `docs/ARCHITECTURE.md`, `docs/REQUIREMENTS.md`, `docs/CHANGELOG.md` — Reconciled canonical documentation.
+
+### Implementation Approach
+Constructed a clean, unidirectional pipeline:
+`Natural Language -> LLM structured tool call -> ScenarioResolver -> ResolvedSessionAction[] -> AttendanceSimulationService -> SimulationResult -> AttendanceRenderer`.
+All natural language and schedule topologies are resolved upfront into pure session actions, leaving the simulation service 100% deterministic and free of calendar/weekday string heuristics.
+
+### Tests & Verification
+- `backend/tests/test_attendance_simulations.py`: 20/20 passing tests.
+- Full regression suite: 463/463 passing tests across the entire repository with 0 failures.
+
+### Security Considerations
+- Backend remains the security boundary: all period bounds and session actions are validated server-side.
+- Zero portal risk: simulations operate purely over local snapshot baselines and confirmed timetables with zero Doctus HTTP calls.
+- Read-only guarantee: simulations never mutate database attendance records.
+
+### Remaining Limitations / Blockers
+- None. Ready for live student interaction on Telegram.
+
 ## 2026-10-04 — Comprehensive Multi-Day, Mixed, and Subject Attendance Simulations & Zero-Portal Isolation
 
 ### Task / Change
