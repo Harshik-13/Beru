@@ -51,6 +51,7 @@ All natural language and schedule topologies are resolved upfront into pure sess
 ### Tests & Verification
 - `backend/tests/test_attendance_simulations.py`: 20/20 passing tests.
 - Full regression suite: 463/463 passing tests across the entire repository with 0 failures.
+- Commit hash: `d8807cf`
 
 ### Security Considerations
 - Backend remains the security boundary: all period bounds and session actions are validated server-side.
