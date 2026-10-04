@@ -121,6 +121,8 @@ ATOMIC_QUERY_TOOLS: frozenset[str] = frozenset({
     "get_course_mapping",
     "calculate_bunk_allowance",
     "get_attendance_extremes",
+    "simulate_schedule_scenario",
+    "simulate_subject_periods",
 })
 
 if TYPE_CHECKING:
@@ -698,6 +700,8 @@ class ConversationService:
                 "calculate_bunk_allowance",
                 "simulate_day_absence",
                 "get_attendance_extremes",
+                "simulate_schedule_scenario",
+                "simulate_subject_periods",
             }
 
             # Sanitize arguments: remove student_id if supplied by LLM

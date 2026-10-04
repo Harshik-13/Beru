@@ -56,6 +56,9 @@
 10. **Resilient Fallback** — If live Doctus synchronization fails (network error, portal maintenance, session expiry), the system falls back to the latest verified cached snapshot with a warning note, rather than failing the user query.
 11. **Dual Attendance Reporting** — Beru must report both overall (cumulative) attendance and current monthly attendance (e.g. October, 2026) when answering general attendance inquiries.
 12. **Natural Conversational Continuity & Course Mapping** — Conversational follow-ups (e.g. "Per subject?") must resolve omitted entities from bounded dialogue state without brittle keyword matching; queries asking what course codes stand for must correlate codes to friendly names from confirmed timetables via `get_course_mapping` and report alternatives if conflicting entries exist.
+13. **Multi-Day & Mixed Schedule Simulations** — Projections across arbitrary dates, named weekdays, and relative instructional day counts ("next N instructional days") must resolve deterministically against confirmed timetables. Instructional days are defined strictly by dates having confirmed scheduled sessions. Rejects conflicting actions on the same calendar date (`ScenarioConflictError`). Halts and requests clarification if student lab batch is unknown for dates containing divided lab sessions (`LabBatchAmbiguityError`).
+14. **Subject-Level Period Simulations & Zero-Portal Isolation** — Projections simulating missing or attending periods of specific courses (resolving natural language subject queries like "OS" against confirmed timetable courses) must run completely offline without Doctus portal HTTP calls to eliminate any risk of account lockouts. Projections must reuse authoritative baseline reconciliation to ensure accurate cumulative attendance baselines.
+
 
 ### Timetable Requirements
 

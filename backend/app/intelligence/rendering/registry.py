@@ -172,6 +172,8 @@ def create_default_renderer_registry() -> ResponseRendererRegistry:
         "set_attendance_target",
         "calculate_bunk_allowance",
         "simulate_day_absence",
+        "simulate_schedule_scenario",
+        "simulate_subject_periods",
         "get_attendance_extremes",
         "get_attendance_summary",
         "get_overall_attendance",

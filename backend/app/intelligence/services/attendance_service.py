@@ -422,8 +422,8 @@ class AttendanceService:
         )
         return result.scalar_one_or_none()
 
+    @staticmethod
     def _reconcile_snapshot_overall(
-        self,
         snapshot: Any,
         target_percentage: float = 75.0,
     ) -> tuple[int, int, float, bool, float, str, float]:
@@ -1383,8 +1383,8 @@ class AttendanceService:
                 "message": f"No classes are scheduled on {day_name} ({target_date.strftime('%d %b')}).",
             }
 
-        # Fetch attendance snapshot
-        snapshot = await self.get_latest_snapshot(str(uid), auto_sync=True)
+        # Fetch attendance snapshot (simulation is 100% offline, never trigger live sync)
+        snapshot = await self.get_latest_snapshot(str(uid), auto_sync=False)
         if not snapshot:
             return {
                 "available": False,
@@ -1586,3 +1586,8 @@ class AttendanceService:
             "semester_id": snapshot.semester_id,
             "overall_percentage": round_percentage(snapshot.overall_percentage()),
         }
+
+
+# Module-level alias for authoritative snapshot reconciliation
+reconcile_snapshot_overall = AttendanceService._reconcile_snapshot_overall
+

@@ -1,5 +1,58 @@
 # CHANGELOG.md — Beru
 
+## 2026-10-04 — Comprehensive Multi-Day, Mixed, and Subject Attendance Simulations & Zero-Portal Isolation
+
+### Task / Change
+Implemented comprehensive multi-day, mixed schedule (attend some days, bunk others), and subject-level attendance simulations with strict date resolution, lab batch ambiguity defense, legacy baseline reconciliation, and zero-portal-risk architectural isolation.
+
+### Why
+1. Previously, Beru could only simulate single-day absences (`simulate_day_absence`) or general future absence counts (`simulate_absence`), leaving students unable to plan complex schedules (e.g. "What if I attend Monday and Tuesday but bunk Wednesday and Thursday?", "What happens to my attendance if I miss the next 3 days?").
+2. Simulating future attendance must never risk locking out the student's college portal account. Any invocation of live portal synchronization during hypothetical what-if queries introduces unnecessary network exposure and authentication strain.
+3. Natural-language dates, relative instructional day counts ("next 3 days"), and mixed actions require decoupled resolution to prevent conflicting user intents (e.g. attempting to both attend and skip the same calendar day) and avoid fragile hardcoded assumptions (such as assuming Sundays or Saturdays never have classes).
+4. For timetables with divided lab batches (Batch 1 vs Batch 2), attempting to simulate attendance when the student's lab batch is unknown could compute inaccurate period counts; a proactive halt with clarification is required.
+5. Legacy attendance snapshots exhibited portal corruption where overall attendance was recorded as single-digit totals (e.g. 6/6) instead of cumulative totals (178/306); simulations must reliably use the reconciled cumulative baseline.
+
+### What Changed
+- `backend/app/intelligence/services/scenario_resolver.py`:
+  - Created `ScenarioResolver` service with typed models (`SimulationAction`, `ResolvedDayAction`, `ResolvedScenario`) and domain exceptions (`ScenarioConflictError`, `LabBatchAmbiguityError`, `SubjectNotFoundError`, `NoConfirmedTimetableError`).
+  - Implemented conflict detection: allows mixed actions across distinct dates (e.g. attend Tuesday + skip Monday) while rejecting same-date conflicts (`ScenarioConflictError`).
+  - Removed Sunday assumptions: instructional days are defined strictly by dates having confirmed scheduled timetable sessions (including Sundays/Saturdays if scheduled; sessionless days are skipped).
+  - Implemented Lab Batch Ambiguity Defense: raises `LabBatchAmbiguityError` if a student with an `UNKNOWN` lab batch attempts to simulate a date containing divided lab batches (`Batch 1` vs `Batch 2`).
+  - Implemented fuzzy subject resolution: resolves natural language subject names ("OS", "Operating Systems", "DAA") against confirmed timetable entries.
+- `backend/app/intelligence/services/simulation_service.py`:
+  - Created `AttendanceSimulationService` structurally isolated from `PortalSyncService` with zero Doctus HTTP calls, ensuring simulations can never lock out the student's portal account.
+  - Implemented `simulate_schedule_scenario`: projects attendance across single-day or multi-day scenarios with mixed attend/skip actions, calculating aggregate delta, projected overall attendance, and per-subject impact breakdown.
+  - Implemented `simulate_subject_periods`: projects attendance when attending or missing an arbitrary number of periods of a specific course, reporting subject delta and overall ripple effect.
+  - Reused authoritative snapshot reconciliation (`reconcile_snapshot_overall`) to correct legacy corrupted snapshots (e.g. 6/6 -> 178/306) on read.
+- `backend/app/intelligence/services/attendance_service.py`:
+  - Exposed `reconcile_snapshot_overall` as a `@staticmethod` and module function for reuse across simulation services.
+  - Ensured offline calculations operate safely without triggering portal sync.
+- `backend/app/intelligence/services/timetable_service.py`:
+  - Removed hardcoded `if day_of_week == 6: return []` in `get_schedule_for_date` and `get_next_class` so timetable queries and instructional day counts are strictly timetable-driven.
+- `backend/app/intelligence/services/briefing.py`:
+  - Updated `generate_briefing` to inspect `briefing_date = self._today()` using `get_schedule_for_date` with async inspect fallback to `get_today_schedule`, ensuring robust briefing generation regardless of calendar weekday.
+- `backend/app/intelligence/tools/attendance_tools.py`:
+  - Added `simulate_schedule_scenario` and `simulate_subject_periods` to `SIMULATION_TOOLS` and `ATTENDANCE_TOOL_DEFINITIONS`.
+  - Wired into `execute_attendance_tool` dispatch.
+- `backend/app/intelligence/rendering/attendance_renderer.py`:
+  - Added `render_schedule_scenario` and `render_subject_periods` with 3-tier safety indicators, snapshot age, and subject breakdowns; made `student_context` optional.
+- `backend/app/intelligence/rendering/registry.py`:
+  - Registered simulation tools in default renderer registry set.
+- `backend/app/intelligence/services/context_builder.py` & `backend/app/intelligence/services/conversation.py`:
+  - Added prompt routing guidance, added tools to `ATOMIC_QUERY_TOOLS` and `attendance_tools` dispatch sets.
+- `backend/tests/test_attendance_simulations.py`:
+  - Added comprehensive test suite with 15 tests verifying single-day attend/skip, multi-day next N instructional days, mixed actions across distinct days, same-date conflict rejections, Sunday session inclusion, lab batch ambiguity halts, legacy 6/6 baseline reconciliation, and natural-language subject period simulations.
+
+### Security Considerations
+- Zero-portal-risk isolation: `AttendanceSimulationService` does not depend on or invoke `PortalSyncService`. All simulations are offline mathematical projections, eliminating portal account lockout risks.
+- Tenant isolation: Multi-user data isolation is strictly preserved through authenticated `student_id`.
+- Non-mutating invariant: Projections never mutate database attendance records.
+- Deterministic calculation boundary: LLMs interpret structured intent; backend performs exact deterministic calculations.
+
+### Verification
+- 15/15 tests passing in `backend/tests/test_attendance_simulations.py`.
+- 458/458 passing tests across the entire test suite.
+
 ## 2026-10-02 — Complete Attendance Intelligence Suite & Action Integrity Invariant
 
 ### Task / Change

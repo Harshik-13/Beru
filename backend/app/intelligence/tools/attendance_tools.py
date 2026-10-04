@@ -5,9 +5,25 @@ These tools provide deterministic access to verified attendance data
 and deterministic simulations.
 """
 
+import logging
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
+from uuid import UUID
+
+from app.intelligence.services.scenario_resolver import (
+    LabBatchAmbiguityError,
+    NoConfirmedTimetableError,
+    ScenarioConflictError,
+    ScenarioResolver,
+    SubjectNotFoundError,
+)
+from app.intelligence.services.simulation_service import AttendanceSimulationService
+from app.repositories.attendance import AttendanceSnapshotRepository
+from app.repositories.student import StudentRepository
+from app.repositories.timetable import TimetableRepository
+
+logger = logging.getLogger(__name__)
 
 # Tool Taxonomy Sets
 MUTATION_TOOLS: frozenset[str] = frozenset({
@@ -21,6 +37,8 @@ SIMULATION_TOOLS: frozenset[str] = frozenset({
     "simulate_day_absence",
     "simulate_absence",
     "calculate_classes_needed",
+    "simulate_schedule_scenario",
+    "simulate_subject_periods",
 })
 
 READ_TOOLS: frozenset[str] = frozenset({
@@ -488,6 +506,120 @@ async def simulate_day_absence(
         return {"available": False, "error": str(e)}
 
 
+async def simulate_schedule_scenario(
+    attendance_service,
+    timetable_service,
+    student_id: str,
+    days_to_skip: list[str] | None = None,
+    days_to_attend: list[str] | None = None,
+    skip_next_n_days: int | None = None,
+    attend_next_n_days: int | None = None,
+    custom_today: date | None = None,
+):
+    """Simulate multi-day, date range, or mixed attendance scenarios."""
+    session = getattr(attendance_service, "session", getattr(attendance_service, "db", None))
+    snapshot_repo = getattr(attendance_service, "snapshot_repo", None) or AttendanceSnapshotRepository(session)
+    timetable_repo = getattr(timetable_service, "timetable_repo", None) or TimetableRepository(session)
+    student_repo = getattr(attendance_service, "student_repo", None) or StudentRepository(session)
+
+    resolver = ScenarioResolver(timetable_repo, student_repo)
+    sim_svc = AttendanceSimulationService(
+        session, snapshot_repo, timetable_repo, student_repo
+    )
+
+    try:
+        resolved = await resolver.resolve_scenario(
+            student_id=student_id,
+            days_to_skip=days_to_skip,
+            days_to_attend=days_to_attend,
+            skip_next_n_days=skip_next_n_days,
+            attend_next_n_days=attend_next_n_days,
+            custom_today=custom_today,
+        )
+        if not resolved.actions:
+            return {
+                "available": False,
+                "error_code": "EMPTY_SCENARIO",
+                "message": "No days or instructional sessions were specified to simulate.",
+            }
+        result = await sim_svc.simulate_schedule_scenario(resolved)
+        return result.to_dict()
+    except ScenarioConflictError as e:
+        return {
+            "available": False,
+            "error_code": "SCENARIO_CONFLICT",
+            "message": str(e),
+        }
+    except LabBatchAmbiguityError as e:
+        return {
+            "available": False,
+            "error_code": "LAB_BATCH_AMBIGUOUS",
+            "message": str(e),
+        }
+    except NoConfirmedTimetableError as e:
+        return {
+            "available": False,
+            "error_code": "NO_TIMETABLE",
+            "message": str(e),
+        }
+    except Exception as e:
+        logger.exception("Error in simulate_schedule_scenario: %s", e)
+        return {
+            "available": False,
+            "error_code": "SIMULATION_FAILED",
+            "message": f"Simulation failed: {e}",
+        }
+
+
+async def simulate_subject_periods(
+    attendance_service,
+    timetable_service,
+    student_id: str,
+    subject_name: str,
+    periods_to_miss: int = 0,
+    periods_to_attend: int = 0,
+):
+    """Simulate missing or attending specific period counts on a single subject."""
+    if periods_to_miss < 0 or periods_to_attend < 0:
+        return {
+            "available": False,
+            "error_code": "INVALID_ARGUMENT",
+            "message": "Period counts must be non-negative.",
+        }
+    if periods_to_miss == 0 and periods_to_attend == 0:
+        return {
+            "available": False,
+            "error_code": "INVALID_ARGUMENT",
+            "message": "Please specify at least one period to attend or miss.",
+        }
+
+    session = getattr(attendance_service, "session", getattr(attendance_service, "db", None))
+    snapshot_repo = getattr(attendance_service, "snapshot_repo", None) or AttendanceSnapshotRepository(session)
+    timetable_repo = getattr(timetable_service, "timetable_repo", None) or TimetableRepository(session)
+    student_repo = getattr(attendance_service, "student_repo", None) or StudentRepository(session)
+
+    resolver = ScenarioResolver(timetable_repo, student_repo)
+    sim_svc = AttendanceSimulationService(
+        session, snapshot_repo, timetable_repo, student_repo
+    )
+
+    try:
+        code, display = await resolver.resolve_subject_query(student_id, subject_name)
+    except SubjectNotFoundError:
+        code, display = subject_name, subject_name
+    except Exception as e:
+        return {"available": False, "error_code": "SUBJECT_NOT_FOUND", "message": str(e)}
+
+    res = await sim_svc.simulate_subject_periods(
+        student_id=student_id,
+        subject_code=code,
+        periods_to_miss=periods_to_miss,
+        periods_to_attend=periods_to_attend,
+        display_name=display,
+    )
+    return res.to_dict()
+
+
 async def get_attendance_extremes(service, student_id: str):
     """Get subjects with lowest and highest attendance."""
     try:
@@ -677,6 +809,72 @@ ATTENDANCE_TOOL_DEFINITIONS = [
                 "message": {"type": ["string", "null"]},
                 "error": {"type": ["string", "null"]},
             },
+        },
+    },
+    {
+        "name": "simulate_schedule_scenario",
+        "description": (
+            "Simulate attendance impact for multi-day, date range, or mixed scenarios "
+            "(e.g., 'If I bunk Saturday, Monday, Tuesday', 'If I bunk next 3 days', "
+            "'If I attend tomorrow and skip Monday'). Uses CONFIRMED timetable to count actual "
+            "instructional periods for each date and computes projected overall and subject percentages. "
+            "Days to attend and days to skip can be used simultaneously."
+        ),
+        "arguments_schema": {
+            "type": "object",
+            "properties": {
+                "student_id": {"type": "string", "format": "uuid"},
+                "days_to_skip": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of explicit days or dates to skip/bunk (e.g. ['Saturday', 'Monday', 'Tuesday'], ['tomorrow']).",
+                },
+                "days_to_attend": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional list of explicit days or dates to attend (e.g. ['Saturday'], ['tomorrow']).",
+                },
+                "skip_next_n_days": {
+                    "type": ["integer", "null"],
+                    "description": "Relative count of upcoming instructional days with timetable classes to skip (e.g. 3 for 'bunk next 3 days').",
+                },
+                "attend_next_n_days": {
+                    "type": ["integer", "null"],
+                    "description": "Relative count of upcoming instructional days with timetable classes to attend.",
+                },
+            },
+            "required": ["student_id"],
+        },
+    },
+    {
+        "name": "simulate_subject_periods",
+        "description": (
+            "Simulate missing or attending a specific number of classes for a given subject "
+            "(e.g., 'What if I miss 2 classes of OS?', 'If I attend 3 classes of OOPJ'). "
+            "Computes projected subject attendance and ripple impact on overall attendance."
+        ),
+        "arguments_schema": {
+            "type": "object",
+            "properties": {
+                "student_id": {"type": "string", "format": "uuid"},
+                "subject_name": {
+                    "type": "string",
+                    "description": "Name or course code of the subject (e.g. 'OS', 'Operating Systems', 'OOPJ', 'ES').",
+                },
+                "periods_to_miss": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 0,
+                    "description": "Number of classes/periods to miss.",
+                },
+                "periods_to_attend": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 0,
+                    "description": "Number of classes/periods to attend.",
+                },
+            },
+            "required": ["student_id", "subject_name"],
         },
     },
     {
@@ -1041,6 +1239,26 @@ async def execute_attendance_tool(
             timetable_service,
             student_id,
             kwargs.get("day", "tomorrow"),
+        )
+    elif tool_name == "simulate_schedule_scenario":
+        return await simulate_schedule_scenario(
+            attendance_service,
+            timetable_service,
+            student_id,
+            days_to_skip=kwargs.get("days_to_skip"),
+            days_to_attend=kwargs.get("days_to_attend"),
+            skip_next_n_days=kwargs.get("skip_next_n_days"),
+            attend_next_n_days=kwargs.get("attend_next_n_days"),
+            custom_today=kwargs.get("custom_today"),
+        )
+    elif tool_name == "simulate_subject_periods":
+        return await simulate_subject_periods(
+            attendance_service,
+            timetable_service,
+            student_id,
+            subject_name=kwargs.get("subject_name", kwargs.get("subject_code", "")),
+            periods_to_miss=kwargs.get("periods_to_miss", 0),
+            periods_to_attend=kwargs.get("periods_to_attend", 0),
         )
     elif tool_name == "get_attendance_extremes":
         return await get_attendance_extremes(attendance_service, student_id)

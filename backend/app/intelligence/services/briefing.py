@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+import inspect
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -125,10 +126,20 @@ class BriefingService:
         student_id = student_context.student_id
         profile = student_context.profile
 
+        briefing_date = self._today()
         timetable = await self._timetable_service.get_confirmed_timetable(student_id)
         classes: tuple[BriefingClass, ...] = ()
         if timetable is not None:
-            entries = await self._timetable_service.get_today_schedule(student_id)
+            entries = []
+            if hasattr(self._timetable_service, "get_schedule_for_date"):
+                res = self._timetable_service.get_schedule_for_date(student_id, briefing_date)
+                if inspect.isawaitable(res):
+                    entries = await res
+                else:
+                    entries = await self._timetable_service.get_today_schedule(student_id)
+            else:
+                entries = await self._timetable_service.get_today_schedule(student_id)
+
             classes = tuple(
                 self._to_class(entry)
                 for entry in sorted(entries, key=lambda e: (e.start_time, e.end_time))

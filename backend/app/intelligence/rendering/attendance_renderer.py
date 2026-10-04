@@ -55,6 +55,10 @@ class AttendanceRenderer:
             return self.render_below_target(result, student_context)
         elif tool_name == "calculate_classes_needed":
             return self.render_recovery(result, student_context)
+        elif tool_name == "simulate_schedule_scenario":
+            return self.render_schedule_scenario(result, student_context)
+        elif tool_name == "simulate_subject_periods":
+            return self.render_subject_periods(result, student_context)
         elif tool_name == "sync_attendance":
             return self.render_sync_result(result, student_context)
 
@@ -302,6 +306,133 @@ class AttendanceRenderer:
         lines.append(
             "<i>📅 Based on your confirmed timetable and verified attendance records.</i>"
         )
+        return "\n".join(lines).strip()
+
+    def render_schedule_scenario(
+        self, result: dict[str, Any], student_context: StudentContext | None = None
+    ) -> str:
+        """Render multi-day or mixed schedule simulation results."""
+        if not result.get("available"):
+            msg = result.get("message") or result.get("error") or "Simulation unavailable."
+            return f"<b>Schedule Simulation:</b>\n\n⚠️ {msg}"
+
+        dates = result.get("scenario_dates", [])
+        total_periods = result.get("total_scheduled_periods", 0)
+        target = float(result.get("target_percentage", 75.0))
+        curr_pct = float(result.get("current_percentage", 0.0))
+        proj_pct = float(result.get("projected_percentage", 0.0))
+        change = float(result.get("percentage_change", 0.0))
+        is_safe = result.get("is_safe", False)
+        overall_safe = result.get("overall_safe", False)
+        subjects_safe = result.get("subjects_safe", False)
+        critical_breaches = result.get("critical_breaches", [])
+        snapshot_age = result.get("snapshot_age_hours")
+
+        lines = ["<b>Schedule Simulation:</b>", ""]
+        if snapshot_age is not None:
+            lines.append(f"<i>ℹ️ Based on attendance snapshot from {snapshot_age}h ago (offline simulation)</i>")
+            lines.append("")
+
+        if dates:
+            lines.append("<b>Simulated Dates:</b>")
+            for d_desc in dates:
+                lines.append(f"• {d_desc}")
+            lines.append("")
+
+        lines.append(f"• <b>Total Periods:</b> <code>{total_periods}</code>")
+        lines.append(
+            f"• <b>Overall Attendance:</b> {format_percentage(curr_pct)} → "
+            f"<b>{format_percentage(proj_pct)}</b> ({change:+.1f}%)"
+        )
+        lines.append(f"• <b>Target:</b> {format_percentage(target)}")
+
+        # Safety verdict
+        if is_safe:
+            status_text = (
+                f"{CHECK_MARK} <b>Safe:</b> Both overall attendance and individual subjects "
+                f"remain at or above {target:.0f}%."
+            )
+        elif overall_safe and not subjects_safe:
+            status_text = (
+                f"{WARNING_SIGN} <b>Caution:</b> Overall attendance stays above {target:.0f}%, "
+                f"but {len(critical_breaches)} subject(s) drop below target: {', '.join(critical_breaches)}."
+            )
+        else:
+            breach_info = f" ({', '.join(critical_breaches)})" if critical_breaches else ""
+            status_text = (
+                f"{WARNING_SIGN} <b>High Risk:</b> Projected attendance drops below your "
+                f"{target:.0f}% target{breach_info}."
+            )
+
+        lines.append(f"• <b>Feasibility:</b> {status_text}")
+
+        # Per-subject breakdown
+        breakdown = result.get("subject_breakdown", [])
+        if breakdown:
+            lines.append("")
+            lines.append("<b>Subject Breakdown:</b>")
+            for s in breakdown:
+                s_name = s.get("subject_name") or s.get("subject_code")
+                s_curr = float(s.get("current_percentage", 0.0))
+                s_proj = float(s.get("projected_percentage", 0.0))
+                s_safe = s.get("is_safe", True)
+                d_att = s.get("delta_attended", 0)
+                d_cond = s.get("delta_conducted", 0)
+                badge = CHECK_MARK if s_safe else WARNING_SIGN
+                period_note = f"+{d_att}/+{d_cond} periods" if d_att > 0 else f"{d_cond} periods missed"
+                lines.append(
+                    f"• <b>{s_name}:</b> {format_percentage(s_curr)} → <b>{format_percentage(s_proj)}</b> "
+                    f"({period_note}) {badge}"
+                )
+
+        return "\n".join(lines).strip()
+
+    def render_subject_periods(
+        self, result: dict[str, Any], student_context: StudentContext | None = None
+    ) -> str:
+        """Render subject period simulation results."""
+        if not result.get("available"):
+            msg = result.get("message") or result.get("error") or "Simulation unavailable."
+            return f"<b>Subject Simulation:</b>\n\n⚠️ {msg}"
+
+        sub_code = result.get("subject_code", "Subject")
+        sub_name = result.get("subject_name") or sub_code
+        missed = result.get("periods_missed", 0)
+        attended = result.get("periods_attended", 0)
+        target = float(result.get("target_percentage", 75.0))
+
+        s_curr = float(result.get("subject_current_percentage", 0.0))
+        s_proj = float(result.get("subject_projected_percentage", 0.0))
+        s_safe = result.get("subject_is_safe", True)
+
+        o_curr = float(result.get("overall_current_percentage", 0.0))
+        o_proj = float(result.get("overall_projected_percentage", 0.0))
+        o_change = float(result.get("overall_percentage_change", 0.0))
+        o_safe = result.get("overall_is_safe", True)
+        snapshot_age = result.get("snapshot_age_hours")
+
+        lines = [f"<b>Subject Simulation: {sub_name}:</b>", ""]
+        if snapshot_age is not None:
+            lines.append(f"<i>ℹ️ Based on attendance snapshot from {snapshot_age}h ago (offline simulation)</i>")
+            lines.append("")
+
+        if attended > 0 and missed > 0:
+            lines.append(f"• <b>Simulation:</b> Attending {attended} & missing {missed} periods")
+        elif missed > 0:
+            lines.append(f"• <b>Simulation:</b> Missing <code>{missed}</code> periods")
+        else:
+            lines.append(f"• <b>Simulation:</b> Attending <code>{attended}</code> periods")
+
+        lines.append(
+            f"• <b>{sub_code} Attendance:</b> {format_percentage(s_curr)} → <b>{format_percentage(s_proj)}</b> "
+            f"({CHECK_MARK if s_safe else WARNING_SIGN})"
+        )
+        lines.append(
+            f"• <b>Overall Attendance:</b> {format_percentage(o_curr)} → <b>{format_percentage(o_proj)}</b> "
+            f"({o_change:+.1f}%) ({CHECK_MARK if o_safe else WARNING_SIGN})"
+        )
+        lines.append(f"• <b>Target:</b> {format_percentage(target)}")
+
         return "\n".join(lines).strip()
 
     def render_extremes(

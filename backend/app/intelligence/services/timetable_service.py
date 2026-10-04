@@ -302,10 +302,7 @@ class TimetableService:
         if not timetable:
             return []
 
-        day_of_week = target_date.weekday()  # 0=Monday, 5=Saturday, 6=Sunday
-        if day_of_week == 6:  # Sunday (no classes)
-            return []
-
+        day_of_week = target_date.weekday()
         entries = await self.entry_repo.get_for_timetable(timetable.id)
         return [e for e in entries if e.day_of_week == day_of_week]
 
@@ -325,8 +322,6 @@ class TimetableService:
         """Get the next class from a given time (defaults to now)."""
         today = date.today()
         day_of_week = today.weekday()
-        if day_of_week == 6:  # Sunday
-            return None
 
         timetable = await self.get_confirmed_timetable(student_id)
         if not timetable:
@@ -405,10 +400,9 @@ class TimetableService:
         if not timetable:
             return 0
 
-        day_of_week = target_date.weekday()  # 0=Monday, 5=Saturday, 6=Sunday
-        if day_of_week == 6:  # Sunday (no classes)
+        day_of_week = target_date.weekday()
+        if day_of_week == 6:  # Sunday
             return 0
-
         entries = await self.entry_repo.get_for_timetable(timetable.id)
         day_entries = [e for e in entries if e.day_of_week == day_of_week]
 

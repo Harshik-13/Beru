@@ -107,7 +107,7 @@ TelegramMessageHandler._handle_message(message)
 
 - `ToolRegistry` in `app/intelligence/tools/registry.py`
 - All confirmed timetable tools and verified attendance tools auto-registered at startup via `register_builtin_tools()`
-- Tools: `confirm_timetable`, `get_today_schedule`, `get_tomorrow_schedule`, `get_next_class`, `get_first_class_tomorrow`, `get_timetable_status`, `needs_lab_batch`, `set_lab_batch`, `get_extracted_timetable`, `update_timetable_entry`, `add_timetable_entry`, `delete_timetable_entry`, `find_activity_details`, `find_faculty_details`, `find_room_details`, `query_schedule_analytics`, `get_course_mapping`, `get_overall_attendance`, `get_subject_attendance`, `get_attendance_summary`, `get_subjects_below_target`, `simulate_absence`, `calculate_classes_needed`, `get_attendance_snapshot_info`, `sync_attendance`
+- Tools: `confirm_timetable`, `get_today_schedule`, `get_tomorrow_schedule`, `get_next_class`, `get_first_class_tomorrow`, `get_timetable_status`, `needs_lab_batch`, `set_lab_batch`, `get_extracted_timetable`, `update_timetable_entry`, `add_timetable_entry`, `delete_timetable_entry`, `find_activity_details`, `find_faculty_details`, `find_room_details`, `query_schedule_analytics`, `get_course_mapping`, `get_overall_attendance`, `get_subject_attendance`, `get_attendance_summary`, `get_subjects_below_target`, `simulate_absence`, `calculate_classes_needed`, `get_attendance_snapshot_info`, `sync_attendance`, `set_attendance_target`, `calculate_bunk_allowance`, `simulate_day_absence`, `get_attendance_extremes`, `simulate_schedule_scenario`, `simulate_subject_periods`
 - Phase 1: Photo uploads routed through existing `HybridTimetableExtractor` (no new OCR/vision provider)
 - Phase 2: Review tools (`get_extracted_timetable`, `update/add/delete_timetable_entry`) for corrections during REVIEW_REQUIRED; context builder blocks schedule queries from pending timetables
 - Phase 3: `set_briefing_time`, `get_week_schedule`, `get_schedule_for_weekday`, `get_timetable_metadata` tools; course_metadata mapped onto entries during extraction
@@ -161,6 +161,23 @@ ResponseStyleLayer (Telegram HTML Sanitization & Entity Escaping) ──► Tele
 - Simulation formula: `((x + (N - m)) / (y + N)) * 100`
 - No LLM involvement in arithmetic
 - Snapshots with provenance (source, captured_at, semester_id)
+- Read-time legacy snapshot reconciliation (`reconcile_snapshot_overall` static/module method)
+
+**ScenarioResolver** (`app/intelligence/services/scenario_resolver.py`):
+- Pure scenario resolution decoupling natural language / date interpretation from projection calculation
+- Resolves ISO dates, named weekdays (relative to student timezone), and relative instructional day counts ("next N instructional days")
+- Instructional days defined strictly by presence of confirmed timetable sessions (zero hardcoded Sunday/non-working assumptions)
+- Rejects same-date action conflicts (`ScenarioConflictError`, e.g. ATTEND + SKIP on same date) while allowing mixed actions across distinct dates
+- Enforces Lab Batch Ambiguity Defense (`LabBatchAmbiguityError` if student has `lab_batch = UNKNOWN` on a date with split lab sessions)
+- Resolves natural language subject queries ("OS", "Operating Systems", "DAA") against confirmed timetable entries (`SubjectNotFoundError` if unresolvable)
+
+**AttendanceSimulationService** (`app/intelligence/services/simulation_service.py`):
+- Deterministic simulation engine structurally isolated from `PortalSyncService` (zero network calls to Doctus portal, eliminating any portal lockout risk)
+- Reuses authoritative `reconcile_snapshot_overall` to correct legacy 6/6 snapshots to 178/306 on read
+- `simulate_schedule_scenario`: Projects attendance across single-day or multi-day scenarios with mixed attend/skip actions, calculating aggregate delta, projected overall attendance, and per-subject impact breakdown
+- `simulate_subject_periods`: Projects attendance when attending or missing an arbitrary number of periods of a specific course, reporting subject delta and overall ripple effect
+- Non-mutating: All projections are pure mathematical calculations over verified snapshot data and confirmed timetable sessions without mutating database state
+
 
 **BriefingService** (`app/intelligence/services/briefing.py`):
 - Transport-agnostic; no Telegram/WhatsApp imports
