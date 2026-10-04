@@ -4,6 +4,7 @@
 
 | Commit | Date | Purpose | Subsystem | Verification |
 |--------|------|---------|-----------|--------------|
+| `d26f4d3` | 2026-10-04 | Multi-day, mixed, and subject attendance simulations with zero portal risk | Attendance, Intelligence, Simulation | 458 tests pass |
 | `c290bc1` | 2026-10-02 | Complete attendance intelligence suite & Action Integrity Invariant | Attendance, Intelligence, Security | 443 tests pass |
 | `b196cea` | 2026-10-02 | Fix portal sync greenlet error, add read-time snapshot reconciliation, and clarify attendance target status | Portal, Attendance, Rendering | 428 tests pass |
 | `e33cac9` | 2026-10-02 | Allow null for optional tool arguments preventing Groq 400 validation error | Intelligence, Tools | 423 tests pass |
