@@ -4,6 +4,7 @@
 
 | Commit | Date | Purpose | Subsystem | Verification |
 |--------|------|---------|-----------|--------------|
+| `fe0efc9` | 2026-10-06 | Defend against transient portal errors (503/timeouts) and isolate credential invalidation | Portal, Sync, Security | 473 tests pass |
 | `2568bfb` | 2026-10-06 | Two-Tier Tool Architecture, LLM schema pruning (62.1% reduction) & execution pipeline defense | Intelligence, Tools, Security | 472 tests pass |
 | `d8807cf` | 2026-10-04 | Canonical partial-day simulation, pure session topology, MissingGreenlet fix & stored monthly breakdown | Attendance, Intelligence, Simulation | 463 tests pass |
 | `d26f4d3` | 2026-10-04 | Multi-day, mixed, and subject attendance simulations with zero portal risk | Attendance, Intelligence, Simulation | 458 tests pass |
