@@ -215,5 +215,7 @@ None.
 ## CURRENT NEXT ACTION
 
 1. **Two-Tier Tool Architecture & Schema Pruning**: Completed, verified with 472 passing tests, and pushed to `main` branch at `https://github.com/Harshik-13/Beru`.
-2. **Qwen 3.8 27B Benchmark**: Phase 1 verified with 100% tool routing accuracy (36/36) and 100% execution pipeline safety at ~0.58s latency. Phase 2 (Multi-turn Contextual Continuity) paused pending Groq daily token quota (200,000 TPD) reset.
-3. **Next Focus**: When quota resets, execute Phase 2 Cluster A; otherwise proceed with upcoming feature domains.
+2. **Qwen 3.8 27B Benchmark**: Phase 1 verified with 100% tool routing accuracy (36/36) and 100% execution pipeline safety at ~0.58s latency.
+3. **Next Focus**: Once Qwen daily quota resets:
+   - Implement `FallbackLLMProvider` (`qwen/qwen3.8-27b` primary with `openai/gpt-oss-120b` instant fallback on 429/TPD wall).
+   - Resume and complete Phase 2 benchmark evaluation.
