@@ -32,11 +32,34 @@ class DoctusAdapterError(Exception):
 
 
 class DoctusLoginError(DoctusAdapterError):
-    """Raised when login fails."""
+    """Raised when login fails.
 
-    def __init__(self, message: str, status_code: int | None = None):
+    Distinguishes between genuine credential rejection (e.g. invalid password,
+    account locked) and transient server/infrastructure issues (e.g. HTTP 503,
+    pre-flight failures, timeouts).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        is_credential_rejection: bool | None = None,
+    ):
         super().__init__(message)
         self.status_code = status_code
+        if is_credential_rejection is not None:
+            self.is_credential_rejection = is_credential_rejection
+        else:
+            # Server errors (5xx) or pre-flight / network issues are not credential rejections
+            if status_code is not None and status_code >= 500:
+                self.is_credential_rejection = False
+            elif any(
+                s in message.lower()
+                for s in ("pre-flight", "timeout", "unavailable", "server error", "format")
+            ):
+                self.is_credential_rejection = False
+            else:
+                self.is_credential_rejection = True
 
 
 class DoctusSessionError(DoctusAdapterError):
@@ -232,7 +255,11 @@ class DoctusAdapter:
                     error_msg = f"Account temporarily blocked until {blocked_until}."
                 elif raw_msg and isinstance(raw_msg, str):
                     error_msg = raw_msg.strip()
-            raise DoctusLoginError(f"Login failed: {error_msg}")
+            raise DoctusLoginError(
+                f"Login failed: {error_msg}",
+                status_code=200,
+                is_credential_rejection=True,
+            )
 
         self._roll_number = roll_number.strip().upper()
 

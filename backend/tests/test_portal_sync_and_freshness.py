@@ -242,6 +242,44 @@ class TestPortalFreshnessAndSync:
         assert "login failed" in notice.lower()
 
     @pytest.mark.asyncio
+    async def test_transient_portal_503_does_not_mark_reconnect_required(self, mock_session, student_id):
+        """When portal returns transient 503 or pre-flight failure, status remains unchanged."""
+        service = PortalSyncService(mock_session)
+        stale_time = datetime.now(UTC) - timedelta(hours=6)
+        stale_snapshot = self._make_snapshot(student_id, stale_time)
+
+        service.snapshot_repo.get_latest_for_student_with_subjects = AsyncMock(
+            return_value=stale_snapshot
+        )
+        mock_cred = PortalCredential(
+            student_id=student_id,
+            portal="doctus",
+            roll_number="25MIS0001",
+            encrypted_password="encrypted_blob",
+            status=PortalCredentialStatus.CONNECTED,
+        )
+        mock_cred.id = uuid4()
+        service.credential_repo.get_by_student_and_portal = AsyncMock(return_value=mock_cred)
+        service.credential_repo.update_status = AsyncMock()
+
+        # Simulate transient 503 server error (is_credential_rejection=False)
+        service.sync_attendance = AsyncMock(
+            side_effect=DoctusLoginError(
+                "Portal returned status 503 during pre-flight",
+                status_code=503,
+                is_credential_rejection=False,
+            )
+        )
+
+        snapshot, provenance, notice = await service.get_or_sync_attendance(student_id)
+
+        assert snapshot == stale_snapshot
+        assert provenance == AttendanceProvenance.PORTAL_SNAPSHOT_STALE
+        assert "unavailable" in notice.lower() or "503" in notice.lower()
+        # Ensure update_status was NEVER called to mark RECONNECT_REQUIRED
+        service.credential_repo.update_status.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_redirect_notice_in_get_or_sync_attendance(self, mock_session, student_id):
         """When portal redirect occurs during sync, clear diagnostic notice is returned."""
         service = PortalSyncService(mock_session)

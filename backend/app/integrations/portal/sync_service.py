@@ -229,22 +229,41 @@ class PortalSyncService:
                 await self.sync_attendance(student_id, semester_id)
                 refreshed = await self.snapshot_repo.get_latest_for_student_with_subjects(student_id)
                 return refreshed, AttendanceProvenance.PORTAL_LIVE_SYNC, None
-            except DoctusLoginError as e:
+            except (DoctusLoginError, PortalLoginError) as e:
+                is_cred_rej = getattr(e, "is_credential_rejection", False) or isinstance(e, PortalLoginError)
+                if is_cred_rej:
+                    logger.warning(
+                        "Portal authentication failed during sync for student %s: %s",
+                        student_id,
+                        e,
+                    )
+                    if latest_snapshot:
+                        return (
+                            latest_snapshot,
+                            AttendanceProvenance.PORTAL_SNAPSHOT_STALE,
+                            "Portal login failed. Please reconnect credentials.",
+                        )
+                    return (
+                        None,
+                        AttendanceProvenance.PORTAL_SNAPSHOT_STALE,
+                        "Portal login failed. Please reconnect credentials.",
+                    )
                 logger.warning(
-                    "Portal authentication failed during sync for student %s: %s",
+                    "Portal login encountered transient error during sync for student %s: %s",
                     student_id,
                     e,
                 )
+                user_msg = f"Live portal refresh unavailable: {e}"
                 if latest_snapshot:
                     return (
                         latest_snapshot,
                         AttendanceProvenance.PORTAL_SNAPSHOT_STALE,
-                        "Portal login failed. Please reconnect credentials.",
+                        user_msg,
                     )
                 return (
                     None,
                     AttendanceProvenance.PORTAL_SNAPSHOT_STALE,
-                    "Portal login failed. Please reconnect credentials.",
+                    user_msg,
                 )
             except Exception as e:
                 logger.warning("Portal sync failed for student %s: %s", student_id, e)
@@ -309,16 +328,23 @@ class PortalSyncService:
             try:
                 await adapter.login(credential.roll_number, password)
             except DoctusLoginError as e:
-                await self.credential_repo.update_status(
+                if getattr(e, "is_credential_rejection", False):
+                    await self.credential_repo.update_status(
+                        student_id,
+                        credential.portal,
+                        PortalCredentialStatus.RECONNECT_REQUIRED,
+                        last_auth_failure_at=datetime.now(UTC),
+                    )
+                    await self.session.commit()
+                    raise PortalLoginError(
+                        f"Portal login failed: {e}", status_code=e.status_code
+                    ) from e
+                logger.warning(
+                    "Doctus login encountered transient portal error for student %s: %s",
                     student_id,
-                    credential.portal,
-                    PortalCredentialStatus.RECONNECT_REQUIRED,
-                    last_auth_failure_at=datetime.now(UTC),
+                    e,
                 )
-                await self.session.commit()
-                raise PortalLoginError(
-                    f"Portal login failed: {e}", status_code=e.status_code
-                ) from e
+                raise PortalSyncError(f"College portal temporarily unavailable: {e}") from e
             except DoctusAdapterError as e:
                 raise PortalSyncError(f"Portal communication error: {e}") from e
 

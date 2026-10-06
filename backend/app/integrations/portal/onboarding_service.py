@@ -157,27 +157,35 @@ class PortalCredentialOnboardingService:
             except DoctusLoginError as e:
                 now = datetime.now(UTC)
                 logger.warning(
-                    "Doctus login rejected during onboarding for student %s: %s",
+                    "Doctus login rejected during onboarding for student %s: %s (credential_rejection=%s)",
                     student_id,
                     e,
+                    getattr(e, "is_credential_rejection", False),
                 )
-                # If student already has stored credentials, update last_auth_failure_at without degrading CONNECTED status
-                cred_repo = PortalCredentialRepository(session)
-                existing = await cred_repo.get_by_student_and_portal(student_id, "doctus")
-                if existing:
-                    await cred_repo.update_status(
-                        student_id,
-                        "doctus",
-                        status=existing.status,
-                        last_auth_failure_at=now,
-                    )
-                    await session.commit()
+                if getattr(e, "is_credential_rejection", False):
+                    # If student already has stored credentials, update last_auth_failure_at without degrading CONNECTED status
+                    cred_repo = PortalCredentialRepository(session)
+                    existing = await cred_repo.get_by_student_and_portal(student_id, "doctus")
+                    if existing:
+                        await cred_repo.update_status(
+                            student_id,
+                            "doctus",
+                            status=existing.status,
+                            last_auth_failure_at=now,
+                        )
+                        await session.commit()
 
+                    self.cancel_flow(student_id)
+                    return (
+                        False,
+                        f"Sir, authentication failed with the Doctus portal: {e}. "
+                        "Your existing credentials (if any) remain unchanged. Please verify your password and try again.",
+                    )
                 self.cancel_flow(student_id)
                 return (
                     False,
-                    f"Sir, authentication failed with the Doctus portal: {e}. "
-                    "Your existing credentials (if any) remain unchanged. Please verify your password and try again.",
+                    f"Sir, the college portal is temporarily unavailable ({e}). "
+                    "Your credentials could not be verified right now. Please try connecting again shortly.",
                 )
             except Exception as e:
                 logger.error("Doctus communication error during onboarding: %s", e)

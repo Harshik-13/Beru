@@ -1,5 +1,44 @@
 # CHANGELOG.md — Beru
 
+## 2026-10-06 — Transient Portal Error Defense & Credential Status Isolation
+
+### Task / Change
+Distinguished genuine credential rejection (`is_credential_rejection=True`, e.g. invalid username/password or account locked) from transient college portal/network errors (HTTP 503 Service Unavailable, 502/504 Bad Gateway, timeouts, pre-flight token drops), preventing transient portal outages from falsely degrading student credentials to `RECONNECT_REQUIRED`.
+
+### Why
+1. During live interaction on Telegram, the college portal's IIS web server (`automation.vnrvjiet.ac.in`) experienced a transient 60-second `HTTP 503 Service Unavailable` spike while recycling its application pool.
+2. `DoctusAdapter.login()` raised `DoctusLoginError` on the 503 response.
+3. `PortalSyncService.sync_attendance()` previously caught all `DoctusLoginError` instances and unconditionally marked `status = RECONNECT_REQUIRED` in PostgreSQL, assuming any login failure was due to invalid credentials.
+4. Once marked `RECONNECT_REQUIRED`, the backend refused to attempt automatic syncs, locking the connection until the user re-entered their password, even though their stored credentials were 100% valid.
+5. In `OnboardingService`, transient pre-flight 503 errors previously told users their password was wrong rather than notifying them that the portal was temporarily busy/down.
+
+### What Changed
+- `backend/app/integrations/portal/doctus.py`:
+  - Added `is_credential_rejection: bool | None = None` parameter to `DoctusLoginError`. Automatically classifies HTTP 5xx errors, timeouts, and pre-flight failures as `is_credential_rejection=False`. Explicitly sets `is_credential_rejection=True` only when the portal returns status 200 with `Status != 1` ("Invalid username or password" or "Account temporarily blocked").
+- `backend/app/integrations/portal/sync_service.py`:
+  - In `sync_attendance()`, updated the `DoctusLoginError` catch block to only update credential status to `PortalCredentialStatus.RECONNECT_REQUIRED` when `e.is_credential_rejection` is `True`.
+  - Transient portal failures (503, timeouts, 502) now raise `PortalSyncError` and preserve the `CONNECTED` credential status in PostgreSQL.
+  - In `get_or_sync_attendance()`, catches non-rejection login errors and returns the cached snapshot with `PORTAL_SNAPSHOT_STALE` provenance and a diagnostic notice (`Live portal refresh unavailable: {e}`) instead of claiming credentials failed.
+- `backend/app/integrations/portal/onboarding_service.py`:
+  - In `receive_password()`, checks `e.is_credential_rejection` to distinguish genuine auth failure from transient portal unavailability, advising the student to retry shortly rather than claiming their password was wrong.
+- `backend/tests/test_portal_sync_and_freshness.py`:
+  - Added `test_transient_portal_503_does_not_mark_reconnect_required` verifying that a 503 during sync falls back to cached data and leaves `update_status` uncalled.
+
+### Files Changed
+- `backend/app/integrations/portal/doctus.py` — `DoctusLoginError` rejection classification.
+- `backend/app/integrations/portal/sync_service.py` — Conditional `RECONNECT_REQUIRED` update and friendly fallback notice.
+- `backend/app/integrations/portal/onboarding_service.py` — Differentiated onboarding error messaging.
+- `backend/tests/test_portal_sync_and_freshness.py` — Unit test for transient 503 defense.
+
+### Tests & Verification
+- Unit test suite: `backend/tests/test_portal_sync_and_freshness.py` passes 18/18 tests.
+- Full regression suite: 473/473 tests passing across the entire repository.
+- Live database check: Verified stored credentials for student against live Doctus with 200 OK.
+
+### Security Considerations
+- Security boundaries untouched: Authentic invalid credentials (`is_credential_rejection=True`) still strictly trigger `RECONNECT_REQUIRED`.
+- Zero credential leakage: Error messages continue stripping sensitive payload details.
+
 ## 2026-10-06 — Two-Tier Tool Architecture, LLM Schema Pruning (62.1% Reduction) & Pipeline Defense
 
 ### Task / Change
