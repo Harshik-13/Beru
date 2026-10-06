@@ -52,7 +52,7 @@ Decoupled tool policy from conversation handling: `ConversationService` queries 
   - Tool schemas reduced from 17,805 chars (~4,451 tokens) to 6,751 chars (~1,687 tokens) — **62.1% reduction**.
   - Total baseline request payload: **~4,057 tokens** ($\le 5,000$ token target achieved).
 - Full regression suite: 472/472 passing tests across the entire repository with 0 failures.
-- Commit hash: `505fbc7`
+- Commit hash: `2568bfb`
 
 ### Security Considerations
 - LLM is not a security boundary: LLM cannot invoke extended tools simply because they are registered in the backend.
