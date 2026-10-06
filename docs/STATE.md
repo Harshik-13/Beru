@@ -203,20 +203,17 @@ None.
 
 | Commit | Description |
 |--------|-------------|
+| `12e54d7` | docs: update branch reference to main and commit index |
+| `2568bfb` | feat(intelligence): two-tier tool architecture, 62% schema bloat pruning & execution pipeline defense |
+| `d8807cf` | feat(intelligence): canonical partial-day attendance simulation, pure session topology, MissingGreenlet fix |
+| `d26f4d3` | feat(attendance): multi-day, mixed, and subject attendance simulations with zero portal risk |
+| `c290bc1` | feat(attendance): complete attendance intelligence suite & Action Integrity Invariant |
+| `b196cea` | fix(portal): fix portal sync greenlet error, read-time snapshot reconciliation, target status clarity |
 | `e33cac9` | Allow null for optional tool arguments preventing Groq 400 validation error |
 | `e043673` | Dual overall/monthly attendance, multi-turn dialogue state & course mapping |
-| `fdaea24` | Fix LLM async promise hallucination and normalize weekday tool arguments |
-| `cdbfef3` | Fix duplicate slash-lab entries during timetable extraction |
-| `77f9271` | Fix MultipleResultsFound on timetable queries with limit(1) |
-| `c2833d0` | Phase 4C: Full E2E pipeline, briefing scheduler integration & natural-language paraphrase simulation |
-| `5c0c5f2` | Phase 4B: Security, boundary, failure-path & duplicate-upload hardening |
-| `fabf9d2` | Phase 4A: Enrich academic profile, college domain self-model, and semantic tool definitions |
-| `054488e` | Phase 3: Briefing time, week/weekday/metadata tools, course_metadata mapping |
-| `f765640` | Fix Groq 400 by stripping student_id from LLM tool schemas and add graceful error fallback |
-| `de13925` | Implement hybrid timetable extractor with RapidOCR fallback for scanned/image PDFs and photos |
-| `f9ed817` | Fix timetable extraction state machine transition to REVIEW_REQUIRED before auto-confirmation and auto-increment version |
-| `ec4fad8` | Fill real-usage gaps: Telegram PDF/media ingestion, timetable proactive prompt, confirm_timetable tool, multi-turn conversation context |
 
 ## CURRENT NEXT ACTION
 
-Phase 4 (Timetable Domain Complete) fully USER_VERIFIED. Timetable extraction, confirmation, lab batch resolution, correction tools, and natural-language schedule queries are operating live and verified on Telegram. Ready to proceed to next planned domain (Doctus portal live verification / attendance workflows).
+1. **Two-Tier Tool Architecture & Schema Pruning**: Completed, verified with 472 passing tests, and pushed to `main` branch at `https://github.com/Harshik-13/Beru`.
+2. **Qwen 3.8 27B Benchmark**: Phase 1 verified with 100% tool routing accuracy (36/36) and 100% execution pipeline safety at ~0.58s latency. Phase 2 (Multi-turn Contextual Continuity) paused pending Groq daily token quota (200,000 TPD) reset.
+3. **Next Focus**: When quota resets, execute Phase 2 Cluster A; otherwise proceed with upcoming feature domains.
