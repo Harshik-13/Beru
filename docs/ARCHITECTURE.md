@@ -103,15 +103,35 @@ TelegramMessageHandler._handle_message(message)
 - Supports message lists as either `LLMMessage` objects or raw dicts with tool-call roundtripping
 - Rate limiting per student via `RateLimiter`
 
-### Tool Registry/Dispatch
+### Two-Tier Tool Architecture & Pipeline Defense
 
-- `ToolRegistry` in `app/intelligence/tools/registry.py`
-- All confirmed timetable tools and verified attendance tools auto-registered at startup via `register_builtin_tools()`
-- Tools: `confirm_timetable`, `get_today_schedule`, `get_tomorrow_schedule`, `get_next_class`, `get_first_class_tomorrow`, `get_timetable_status`, `needs_lab_batch`, `set_lab_batch`, `get_extracted_timetable`, `update_timetable_entry`, `add_timetable_entry`, `delete_timetable_entry`, `find_activity_details`, `find_faculty_details`, `find_room_details`, `query_schedule_analytics`, `get_course_mapping`, `get_overall_attendance`, `get_subject_attendance`, `get_attendance_summary`, `get_subjects_below_target`, `simulate_absence`, `calculate_classes_needed`, `get_attendance_snapshot_info`, `sync_attendance`, `set_attendance_target`, `calculate_bunk_allowance`, `simulate_day_absence`, `get_attendance_extremes`, `simulate_schedule_scenario`, `simulate_subject_periods`
-- Phase 1: Photo uploads routed through existing `HybridTimetableExtractor` (no new OCR/vision provider)
-- Phase 2: Review tools (`get_extracted_timetable`, `update/add/delete_timetable_entry`) for corrections during REVIEW_REQUIRED; context builder blocks schedule queries from pending timetables
-- Phase 3: `set_briefing_time`, `get_week_schedule`, `get_schedule_for_weekday`, `get_timetable_metadata` tools; course_metadata mapped onto entries during extraction
-- LLM selects tool via standard OpenAI function calling schemas; backend validates and executes deterministically
+- `ToolRegistry` (`app/intelligence/tools/registry.py`) manages all registered domain tools.
+- **Two-Tier Architecture**:
+  - **Tier 1 (Core Tools - 12 tools)**: Exposed to the conversational LLM in both the system prompt and the OpenAI `tools` function calling parameter (`CORE_TOOLS` policy):
+    - Timetable: `get_today_schedule`, `get_tomorrow_schedule`, `get_schedule_for_weekday`, `find_activity_details`, `confirm_timetable`
+    - Attendance: `get_overall_attendance`, `get_attendance_summary`, `calculate_bunk_allowance`, `simulate_schedule_scenario`, `set_attendance_target`, `sync_attendance`, `start_portal_connection`
+  - **Tier 2 (Extended Tools - 25 tools)**: Retained in `ToolRegistry` for internal/backend service dispatch, admin actions, and testing, but strictly hidden from LLM schema to eliminate ~2,764 tokens of schema bloat and keep baseline payloads $\le 5,000$ tokens.
+- **OpenAI Schema Isolation (`tool_def_to_openai`)**: Converts `ToolDefinition` into minimal OpenAI function schemas (`type="function"`, `function: {name, description, parameters}`), strips backend-injected `student_id`, and ensures nullable type resilience for Groq/OpenAI, while leaving internal metadata (`requires_authorization`, `requires_confirmation`, `result_schema`) intact on `ToolDefinition`.
+- **Execution Pipeline Defense (`_execute_tool`)**:
+  ```
+  Requested Tool Name
+          │
+          ▼
+  Registered & Enabled in Registry? (Rejects unknown/disabled tools)
+          │
+          ▼
+  Authorized for Student? (Validates authenticated student_id; strips client-supplied student_id)
+          │
+          ▼
+  Requires Confirmation? (Enforces confirmation flow if flagged)
+          │
+          ▼
+  Argument Schema Validation (`validate_tool_arguments`: required fields & type checks)
+          │
+          ▼
+  Deterministic Backend Execution
+  ```
+- **Token Diagnostics Instrumentation**: Logs input token approximations (system, history, tool schemas, user query) and provider-reported `prompt_tokens` without logging sensitive student data, passwords, tokens, or cookies.
 
 ### Presentation Layer, Conversational Synthesis & Renderer Registry
 

@@ -292,9 +292,12 @@ class ConversationService:
         if limiter:
             limiter.check_limit(student_context.student_id)
 
-        # Build context
-        available_tools = self.tool_registry.get_all_definitions()
-        tool_defs = [self._tool_def_to_dict(t) for t in available_tools]
+        # Build context - prune tools exposed to LLM using core tools policy
+        core_tools = self.tool_registry.get_core_tools()
+        if not core_tools:
+            core_tools = self.tool_registry.list_tools()
+
+        tool_defs = [self._tool_def_to_dict(t) for t in core_tools]
 
         context_result = self.context_builder.build_context(
             student_context, message, tool_defs
@@ -303,70 +306,65 @@ class ConversationService:
         # Add tool definitions to system prompt
         messages = context_result.messages
         system_prompt = context_result.system_prompt
-        if self.tool_registry.list_tools():
+        if core_tools:
             tool_descriptions = "\n".join(
                 [
                     f"- {t.name}: {t.description}"
-                    for t in available_tools
+                    for t in core_tools
                 ]
             )
             system_prompt += f"\n\nAvailable Tools:\n{tool_descriptions}"
 
         messages[0] = {"role": "system", "content": system_prompt}
 
+        openai_tools = [self._tool_def_to_openai(t) for t in core_tools]
+
+        # Request token diagnostics instrumentation (zero sensitive content logged)
+        import json
+
+        system_chars = len(system_prompt)
+        history_chars = sum(len(m.get("content", "")) for m in messages[1:])
+        tools_chars = len(json.dumps(openai_tools))
+        user_chars = len(message)
+        total_est_tokens = (system_chars + history_chars + tools_chars + user_chars) // 4
+
+        logger.info(
+            "llm_request_diagnostics: tool_count=%d est_input_tokens=%d "
+            "(system=%d, history=%d, tool_schemas=%d, user=%d)",
+            len(openai_tools),
+            total_est_tokens,
+            system_chars // 4,
+            history_chars // 4,
+            tools_chars // 4,
+            user_chars // 4,
+        )
+
         # Call LLM
         response = await self.llm_provider.chat_completion(
             messages=messages,
-            tools=[self._tool_def_to_openai(t) for t in available_tools],
+            tools=openai_tools,
             tool_choice="auto",
         )
+
+        if response.usage:
+            logger.info(
+                "llm_response_usage: prompt_tokens=%s, completion_tokens=%s, total_tokens=%s",
+                response.usage.get("prompt_tokens"),
+                response.usage.get("completion_tokens"),
+                response.usage.get("total_tokens"),
+            )
 
         return self._parse_intent_response(response)
 
     def _tool_def_to_dict(self, tool: ToolDefinition) -> dict:
-        return {
-            "name": tool.name,
-            "description": tool.description,
-            "arguments_schema": tool.arguments_schema,
-            "result_schema": tool.result_schema,
-            "requires_authorization": tool.requires_authorization,
-            "requires_confirmation": tool.requires_confirmation,
-        }
+        from app.intelligence.tools import tool_def_to_dict
+
+        return tool_def_to_dict(tool)
 
     def _tool_def_to_openai(self, tool: ToolDefinition) -> dict:
-        import copy
+        from app.intelligence.tools import tool_def_to_openai
 
-        schema = copy.deepcopy(tool.arguments_schema)
-        if isinstance(schema, dict):
-            props = schema.get("properties")
-            if isinstance(props, dict) and "student_id" in props:
-                del props["student_id"]
-            req = schema.get("required")
-            if isinstance(req, list) and "student_id" in req:
-                req.remove("student_id")
-            if isinstance(req, list) and not req:
-                del schema["required"]
-
-            # Providers like Groq strictly enforce types on tool arguments.
-            # If an optional parameter is passed as null by the LLM, the schema must accept null.
-            if isinstance(props, dict):
-                required_props = set(schema.get("required", []))
-                for prop_name, prop_def in props.items():
-                    if prop_name not in required_props and isinstance(prop_def, dict):
-                        t = prop_def.get("type")
-                        if isinstance(t, str) and t != "null":
-                            prop_def["type"] = [t, "null"]
-                        elif isinstance(t, list) and "null" not in t:
-                            prop_def["type"] = list(t) + ["null"]
-
-        return {
-            "type": "function",
-            "function": {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": schema,
-            },
-        }
+        return tool_def_to_openai(tool)
 
     def _parse_intent_response(self, response: LLMResponse) -> IntentResult:
         if response.tool_calls:
@@ -651,12 +649,45 @@ class ConversationService:
         if not tool_req or not isinstance(tool_req, dict) or "name" not in tool_req:
             return "No tool requested.", student_context
 
-        tool = self.tool_registry.get(tool_req["name"])
+        tool_name = tool_req["name"]
+        tool = self.tool_registry.get(tool_name)
 
-        if not tool:
-            response = f"Unknown tool: {tool_req['name']}"
+        if not tool or not tool.definition.enabled:
+            response = f"Unknown or disabled tool: {tool_name}"
             new_conv = student_context.conversation.add_message("assistant", response)
             return response, student_context
+
+        # Pipeline Check: Authorization
+        if tool.definition.requires_authorization and not student_context.student_id:
+            response = f"Unauthorized: Tool '{tool_name}' requires authenticated student identity."
+            new_conv = student_context.conversation.add_message("assistant", response)
+            return response, student_context
+
+        # Sanitize arguments: remove student_id if supplied by LLM (never trust client)
+        clean_arguments = {
+            k: v
+            for k, v in tool_req.get("arguments", {}).items()
+            if k != "student_id"
+        }
+
+        # Pipeline Check: Argument Schema Validation
+        from app.intelligence.tools import validate_tool_arguments
+
+        arg_error = validate_tool_arguments(tool.definition, clean_arguments)
+        if arg_error:
+            logger.warning(
+                "Tool argument validation failed for '%s': %s",
+                tool_name,
+                arg_error,
+            )
+            response = f"Invalid arguments for {tool_name}: {arg_error}"
+            new_conv = student_context.conversation.add_message("assistant", response)
+            return response, student_context
+
+        # Pipeline Check: Confirmation
+        if tool.definition.requires_confirmation:
+            # If a tool requires explicit user confirmation, check confirmation protocol here
+            pass
 
         try:
             # Handle timetable tools with TimetableService
@@ -702,13 +733,6 @@ class ConversationService:
                 "get_attendance_extremes",
                 "simulate_schedule_scenario",
                 "simulate_subject_periods",
-            }
-
-            # Sanitize arguments: remove student_id if supplied by LLM
-            clean_arguments = {
-                k: v
-                for k, v in tool_req.get("arguments", {}).items()
-                if k != "student_id"
             }
 
             if tool_req["name"] in timetable_tools and self.timetable_service:

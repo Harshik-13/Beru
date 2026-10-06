@@ -689,5 +689,257 @@ class TestOpenAICompatibleProviderAndRealLLMPipeline:
         assert "OS" in response
 
 
+class TestToolSchemaPruningAndExecutionSafety:
+    """Tests for two-tier tool architecture, OpenAI schema isolation, and pipeline defense."""
+
+    def test_core_tools_policy_count_and_exact_members(self):
+        from app.intelligence.tools import CORE_TOOLS, tool_registry
+
+        assert len(CORE_TOOLS) == 12
+        expected_members = {
+            "get_today_schedule",
+            "get_tomorrow_schedule",
+            "get_schedule_for_weekday",
+            "find_activity_details",
+            "confirm_timetable",
+            "get_overall_attendance",
+            "get_attendance_summary",
+            "calculate_bunk_allowance",
+            "simulate_schedule_scenario",
+            "set_attendance_target",
+            "sync_attendance",
+            "start_portal_connection",
+        }
+        assert CORE_TOOLS == expected_members
+
+        # Verify all core tools are actually registered in the registry
+        for tool_name in CORE_TOOLS:
+            assert tool_registry.is_registered(tool_name), f"Tool {tool_name} not registered"
+            assert tool_registry.is_core_tool(tool_name)
+
+    def test_tool_registry_core_tools_filtering(self):
+        from app.intelligence.tools import ToolDefinition, ToolRegistry, BuiltinToolHandler
+
+        reg = ToolRegistry()
+        reg.register(
+            BuiltinToolHandler(
+                ToolDefinition(
+                    name="get_today_schedule",
+                    description="Today schedule",
+                    arguments_schema={"type": "object", "properties": {}},
+                    result_schema={"type": "object"},
+                    enabled=True,
+                )
+            )
+        )
+        reg.register(
+            BuiltinToolHandler(
+                ToolDefinition(
+                    name="find_faculty_details",  # Extended tool
+                    description="Faculty details",
+                    arguments_schema={"type": "object", "properties": {}},
+                    result_schema={"type": "object"},
+                    enabled=True,
+                )
+            )
+        )
+
+        core_tools = reg.get_core_tools()
+        assert len(core_tools) == 1
+        assert core_tools[0].name == "get_today_schedule"
+
+        all_tools = reg.list_tools()
+        assert len(all_tools) == 2
+
+    def test_tool_def_to_openai_schema_sanitization_and_isolation(self):
+        from app.intelligence.tools import ToolDefinition, tool_def_to_openai
+
+        tool = ToolDefinition(
+            name="test_tool",
+            description="A test tool",
+            arguments_schema={
+                "type": "object",
+                "properties": {
+                    "student_id": {"type": "string"},
+                    "target_percentage": {"type": "number"},
+                    "notes": {"type": "string"},
+                },
+                "required": ["student_id", "target_percentage"],
+            },
+            result_schema={"type": "object"},
+            requires_authorization=True,
+            requires_confirmation=True,
+        )
+
+        openai_schema = tool_def_to_openai(tool)
+        assert openai_schema["type"] == "function"
+        fn = openai_schema["function"]
+        assert fn["name"] == "test_tool"
+        assert fn["description"] == "A test tool"
+
+        params = fn["parameters"]
+        # student_id must be stripped from properties and required
+        assert "student_id" not in params["properties"]
+        assert "student_id" not in params.get("required", [])
+        assert "target_percentage" in params["required"]
+        # Optional param "notes" should accept ["string", "null"]
+        assert params["properties"]["notes"]["type"] == ["string", "null"]
+
+        # Ensure internal metadata is NOT in the OpenAI schema
+        assert "requires_authorization" not in openai_schema
+        assert "requires_confirmation" not in openai_schema
+        assert "result_schema" not in openai_schema
+
+    def test_tool_def_to_dict_preserves_internal_metadata(self):
+        from app.intelligence.tools import ToolDefinition, tool_def_to_dict
+
+        tool = ToolDefinition(
+            name="test_tool",
+            description="A test tool",
+            arguments_schema={"type": "object"},
+            result_schema={"type": "object"},
+            requires_authorization=True,
+            requires_confirmation=False,
+            enabled=True,
+        )
+
+        d = tool_def_to_dict(tool)
+        assert d["name"] == "test_tool"
+        assert d["requires_authorization"] is True
+        assert d["requires_confirmation"] is False
+        assert d["enabled"] is True
+        assert d["arguments_schema"] == {"type": "object"}
+        assert d["result_schema"] == {"type": "object"}
+
+    def test_validate_tool_arguments_required_and_types(self):
+        from app.intelligence.tools import ToolDefinition, validate_tool_arguments
+
+        tool = ToolDefinition(
+            name="set_attendance_target",
+            description="Set target",
+            arguments_schema={
+                "type": "object",
+                "properties": {
+                    "target_percentage": {"type": "number"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["target_percentage"],
+            },
+            result_schema={},
+        )
+
+        # Valid arguments
+        assert validate_tool_arguments(tool, {"target_percentage": 75.0}) is None
+        assert validate_tool_arguments(tool, {"target_percentage": 80, "reason": "Academic goal"}) is None
+
+        # Missing required parameter
+        err1 = validate_tool_arguments(tool, {})
+        assert err1 is not None
+        assert "Missing required parameter: 'target_percentage'" in err1
+
+        # Wrong type (string instead of number)
+        err2 = validate_tool_arguments(tool, {"target_percentage": "not_a_number"})
+        assert err2 is not None
+        assert "Invalid type for parameter 'target_percentage'" in err2
+
+        # Wrong type for optional parameter
+        err3 = validate_tool_arguments(tool, {"target_percentage": 85.0, "reason": 12345})
+        assert err3 is not None
+        assert "Invalid type for parameter 'reason'" in err3
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_pipeline_unknown_and_disabled_tool(self):
+        from app.intelligence.services.conversation import ConversationService, IntentResult
+        from app.intelligence.models.context import StudentContext, StudentProfile, ConversationContext
+
+        service = ConversationService()
+        sid = uuid4()
+        ctx = StudentContext(
+            student_id=sid,
+            profile=StudentProfile(student_id=sid, name="Harsh"),
+            conversation=ConversationContext(student_id=sid),
+        )
+
+        # Unknown tool
+        resp, _ = await service._execute_tool(
+            ctx,
+            IntentResult(tool_request={"name": "non_existent_tool", "arguments": {}}),
+        )
+        assert "Unknown or disabled tool: non_existent_tool" in resp
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_pipeline_requires_authorization(self):
+        from app.intelligence.services.conversation import ConversationService, IntentResult
+        from app.intelligence.models.context import StudentContext, StudentProfile, ConversationContext
+
+        service = ConversationService()
+        sid = uuid4()
+        ctx = StudentContext(
+            student_id=None,  # No authenticated identity
+            profile=StudentProfile(student_id=sid, name="Harsh"),
+            conversation=ConversationContext(student_id=sid),
+        )
+
+        resp, _ = await service._execute_tool(
+            ctx,
+            IntentResult(tool_request={"name": "get_today_schedule", "arguments": {}}),
+        )
+        assert "Unauthorized" in resp
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_pipeline_rejects_invalid_arguments(self):
+        from app.intelligence.services.conversation import ConversationService, IntentResult
+        from app.intelligence.models.context import StudentContext, StudentProfile, ConversationContext
+
+        service = ConversationService()
+        sid = uuid4()
+        ctx = StudentContext(
+            student_id=sid,
+            profile=StudentProfile(student_id=sid, name="Harsh"),
+            conversation=ConversationContext(student_id=sid),
+        )
+
+        # set_attendance_target requires target_percentage as number
+        resp, _ = await service._execute_tool(
+            ctx,
+            IntentResult(tool_request={"name": "set_attendance_target", "arguments": {"target_percentage": "invalid_str"}}),
+        )
+        assert "Invalid arguments for set_attendance_target" in resp
+
+    @pytest.mark.asyncio
+    async def test_interpret_intent_uses_core_tools_only(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from app.intelligence.services.conversation import ConversationService
+        from app.intelligence.providers.base import LLMResponse
+        from app.intelligence.models.context import StudentContext, StudentProfile, ConversationContext
+
+        mock_llm = MagicMock()
+        mock_llm.chat_completion = AsyncMock(
+            return_value=LLMResponse(content="Hello Sir", tool_calls=())
+        )
+
+        service = ConversationService(llm_provider=mock_llm)
+        sid = uuid4()
+        ctx = StudentContext(
+            student_id=sid,
+            profile=StudentProfile(student_id=sid, name="Harsh"),
+            conversation=ConversationContext(student_id=sid),
+        )
+
+        await service.process_message(ctx, "hello")
+
+        # Verify chat_completion was called with exactly 12 core tools
+        assert mock_llm.chat_completion.called
+        call_kwargs = mock_llm.chat_completion.call_args.kwargs
+        tools_sent = call_kwargs.get("tools", [])
+        assert len(tools_sent) == 12
+
+        # Verify only core tools are sent
+        from app.intelligence.tools import CORE_TOOLS
+        sent_tool_names = {t["function"]["name"] for t in tools_sent}
+        assert sent_tool_names == CORE_TOOLS
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+

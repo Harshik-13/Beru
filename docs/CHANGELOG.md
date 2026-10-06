@@ -1,5 +1,64 @@
 # CHANGELOG.md — Beru
 
+## 2026-10-06 — Two-Tier Tool Architecture, LLM Schema Pruning (62.1% Reduction) & Pipeline Defense
+
+### Task / Change
+Implemented a policy-level Two-Tier Tool Architecture pruning LLM function calling schemas from ~4,451 tokens down to ~1,687 tokens (62.1% reduction), isolated minimal OpenAI schemas while preserving internal `ToolDefinition` metadata, established a 5-stage defense pipeline in `_execute_tool()`, and instrumented zero-leak request token diagnostics.
+
+### Why
+1. In production and testing with Groq's free tier (8,000 TPM/ITPM limit), sending all 37 tool definitions in every LLM request consumed ~4,451 tokens. Combined with the system prompt (~2,363 tokens) and history, baseline requests approached ~7,800 tokens, leaving almost zero headroom for user input or model output and triggering HTTP 429 rate limit exceptions.
+2. Tool availability is an intelligence-policy concern that belongs at the tool registry layer, not hardcoded inside `ConversationService`.
+3. Extended tools retained for internal/backend dispatch must never be invocable by LLMs merely because they exist in the registry. `_execute_tool()` required a formal 5-stage validation pipeline verifying registration, authorization, confirmation, and argument schemas before dispatch.
+4. Internal security and confirmation metadata (`requires_authorization`, `requires_confirmation`, `result_schema`) must not be stripped from internal definitions to satisfy provider schemas; an explicit converter (`tool_def_to_openai`) was needed to maintain clean separation.
+5. Accurate serialization measurements and zero-leak token instrumentation were required to monitor request sizes without leaking sensitive student or portal data.
+
+### What Changed
+- `backend/app/intelligence/tools/registry.py`:
+  - Added `CORE_TOOLS: frozenset[str]` policy defining the 12 core semantic tools for conversational LLM exposure:
+    - Timetable (5): `get_today_schedule`, `get_tomorrow_schedule`, `get_schedule_for_weekday`, `find_activity_details`, `confirm_timetable`.
+    - Attendance (7): `get_overall_attendance`, `get_attendance_summary`, `calculate_bunk_allowance`, `simulate_schedule_scenario`, `set_attendance_target`, `sync_attendance`, `start_portal_connection`.
+  - Added `get_core_tools()` and `is_core_tool()` to `ToolRegistry`.
+  - Added `tool_def_to_openai()` isolating the minimal OpenAI function calling schema, stripping backend-injected `student_id`, and configuring nullable optional parameter types for Groq compatibility.
+  - Added `tool_def_to_dict()` preserving internal fields (`requires_authorization`, `requires_confirmation`, `result_schema`, `arguments_schema`, `enabled`).
+  - Added `validate_tool_arguments()` validating required fields and parameter types against `ToolDefinition.arguments_schema`.
+  - Added `.to_dict()` and `.to_openai_schema()` convenience methods to `ToolDefinition`.
+- `backend/app/intelligence/tools/__init__.py`:
+  - Exported `CORE_TOOLS`, `BuiltinToolHandler`, `tool_def_to_dict`, `tool_def_to_openai`, and `validate_tool_arguments`.
+- `backend/app/intelligence/services/conversation.py`:
+  - In `_interpret_intent()`, consumed `self.tool_registry.get_core_tools()` to format system prompt tool descriptions and populate OpenAI `tools` request parameters.
+  - Added structured token diagnostics logging (`llm_request_diagnostics: tool_count=... est_input_tokens=...`) and provider usage logging (`llm_response_usage: prompt_tokens=...`) with zero sensitive content logged.
+  - In `_execute_tool()`, implemented the 5-stage defense pipeline:
+    1. Tool registered & enabled check.
+    2. Student authorization check (validates `student_id`; strips client-supplied `student_id`).
+    3. Confirmation check (`requires_confirmation`).
+    4. Argument schema validation (`validate_tool_arguments`).
+    5. Deterministic dispatch to service handlers.
+- `backend/tests/test_intelligence.py`:
+  - Added `TestToolSchemaPruningAndExecutionSafety` suite with 9 dedicated unit tests covering core tools membership, registry filtering, OpenAI schema isolation, internal metadata preservation, argument validation, unauthorized execution rejection, disabled tool rejection, and intent interpretation core-tool exposure.
+
+### Files Changed
+- `backend/app/intelligence/tools/registry.py` — Core tools policy, registry methods, OpenAI schema converter, argument validation.
+- `backend/app/intelligence/tools/__init__.py` — Exported core tools policy and validation utilities.
+- `backend/app/intelligence/services/conversation.py` — Core tools integration, token diagnostics logging, 5-stage execution pipeline defense.
+- `backend/tests/test_intelligence.py` — 9 new unit tests verifying pruning, schema isolation, and pipeline safety.
+- `docs/ARCHITECTURE.md`, `docs/STATE.md`, `docs/CHANGELOG.md` — Reconciled canonical documentation.
+
+### Implementation Approach
+Decoupled tool policy from conversation handling: `ConversationService` queries `ToolRegistry.get_core_tools()` without domain-specific tool lists. `_execute_tool()` enforces backend boundaries deterministically.
+
+### Tests & Verification
+- Unit test suite: `backend/tests/test_intelligence.py` passes 56/56 tests.
+- Serialized payload measurement: Verified with `scratch/measure_token_payload.py`:
+  - Tool schemas reduced from 17,805 chars (~4,451 tokens) to 6,751 chars (~1,687 tokens) — **62.1% reduction**.
+  - Total baseline request payload: **~4,057 tokens** ($\le 5,000$ token target achieved).
+- Full regression suite: 472/472 passing tests across the entire repository with 0 failures.
+- Commit hash: `505fbc7`
+
+### Security Considerations
+- LLM is not a security boundary: LLM cannot invoke extended tools simply because they are registered in the backend.
+- Resource ownership enforced: `student_id` is always injected from authenticated `student_context.student_id` and stripped from caller arguments.
+- Zero-leak logging: Token diagnostics instrument character/token counts only; never log credentials, passwords, session tokens, or portal HTML.
+
 ## 2026-10-04 — Partial-Day Simulation, Pure Session Action Topology, MissingGreenlet Fix & Stored Monthly Breakdown
 
 ### Task / Change
