@@ -1,63 +1,34 @@
-# Beru — College Copilot
+# Beru — AI College Copilot
 
-A personal AI-powered college assistant. Telegram-first (Personal Alpha); WhatsApp-ready (future).
+A privacy-first, multi-tenant AI backend that helps college students manage timetables, attendance tracking, absence simulations, and daily morning briefings directly inside **Telegram** (with a replaceable adapter architecture ready for WhatsApp).
 
-## Quick Start
+> **Status:** Personal Alpha — Live Telegram bot, deterministic domain services, encrypted portal sync, and per-user briefing scheduler operational.
 
-```bash
-# 1. Create virtual environment
-python -m venv .venv
-.venv\Scripts\activate  # Windows
-# source .venv/bin/activate  # macOS/Linux
+<!-- Replace with a 20–30 second screen recording GIF of an attendance simulation + morning briefing -->
+<!-- ![Beru Telegram Demo](docs/assets/demo.gif) -->
 
-# 2. Install dependencies
-pip install -e ".[dev]"
+---
 
-# 3. Copy environment config
-cp .env.example .env
+## Key Engineering Decisions
 
-# 4. Run the application
-uvicorn backend.app.main:app --reload
+Most student AI projects are thin LLM wrappers. Beru is built as a deterministic backend system where the LLM is strictly sandboxed:
 
-# 5. Verify
-# Open http://localhost:8000/health
-```
+* **Backend as the Security & Determinism Boundary:** The LLM never touches raw credentials, enforces authorization, or performs attendance arithmetic. It strictly extracts intent/entities and formats final responses; all calculations execute in typed, deterministic domain services.
+* **5-Stage Timetable State Machine:** Image/PDF timetable uploads move through an explicit lifecycle (`UPLOADED → EXTRACTING → REVIEW_REQUIRED → CONFIRMED → ARCHIVED`), handling slash-separated lab batches before becoming queryable.
+* **Challenge-Based Identity & Multi-User Isolation:** No username/password auth. Students link accounts via a `/start` challenge-verify flow backed by immutable audit logs, with `Student` enforced as the strict ownership root across all repository queries.
+* **Idempotent Scheduling & Portal Sync:** Per-student timezone-aware morning briefings use idempotent delivery keys to prevent duplicate sends. College portal (Doctus) credentials are stored encrypted at rest and synced into immutable attendance snapshots.
 
-## Testing
+---
 
-```bash
-pytest backend/tests/ -v
-```
+## System Architecture
 
-## Linting & Type Checking
-
-```bash
-ruff check backend/
-ruff format backend/
-mypy backend/
-```
-
-## Project Status
-
-**Phase: Personal Alpha.** Telegram bot is live and functional. Core intelligence pipeline (LLM → tool dispatch → deterministic backend) is wired. Briefing scheduler is operational.
-
-## Documentation
-
-| Document | Purpose |
-|----------|---------|
-| `AGENTS.md` | Agent rules and conventions |
-| `docs/PROJECT.md` | Project identity and scope |
-| `docs/ARCHITECTURE.md` | Current system architecture |
-| `docs/REQUIREMENTS.md` | Locked requirements |
-| `docs/STATE.md` | Current live state |
-| `docs/CHANGELOG.md` | Engineering history |
-| `docs/COMMITS.md` | Git commit index |
-| `docs/DOCUMENTATION_INDEX.md` | Documentation map |
-
-## Development Rules
-
-See `AGENTS.md` for non-negotiable rules and conventions.
-
-## License
-
-MIT
+```mermaid
+flowchart LR
+    TG[Telegram Bot Adapter] --> ID[Identity & Authz Resolver]
+    ID --> LLM1[LLM Intent Parser]
+    LLM1 --> TD[Typed Tool Dispatcher]
+    TD --> SVC[Deterministic Domain Services<br/>Timetable · Attendance · Simulations]
+    SVC --> DB[(Database & Encrypted<br/>Credential Store)]
+    SVC --> LLM2[LLM Response Formatter]
+    LLM2 --> TG
+    SCH[Timezone Briefing Scheduler] -->|Idempotent| SVC
